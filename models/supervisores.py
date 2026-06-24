@@ -1,0 +1,8 @@
+from utils.db import db
+from models.base_model import BaseModel
+
+class Supervisors(BaseModel):
+    __tablename__ = "supervisores"
+
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String)
