@@ -1,0 +1,55 @@
+:root{
+    --primary: #066B40;
+    --secondary: #3DC43D;
+
+    --background: #fff;
+    --accent: #4BD66E;
+
+    --text-secondary: #757575;
+    --text-primary: #272323;
+}
+
+/* Backgrounds */
+.bg{
+    background-color: var(--background) !important;
+    color: var(--text-primary);
+}
+
+.bg-primary{
+    background-color: var(--primary) !important;
+    color: white;
+}
+
+.bg-secondary{
+    background-color: var(--secondary) !important;
+    color: white;
+}
+
+/* Buttons */
+.btn-primary{
+    border: none !important;
+    background-color: var(--primary) !important;
+    color: #fff !important;
+
+    &:hover{
+        background-color: var(--primary) !important;
+        opacity: .96 !important;
+    }
+}
+
+
+/* Textos */
+.text-accent{
+    color: var(--accent);
+    & a {
+        text-decoration: none;
+        color: var(--accent);
+        cursor: pointer;
+        font-weight: 700;
+    }
+}
+
+/* Flex */
+.flex-basis-200{
+    flex-basis: 200px !important;
+}
