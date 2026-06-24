@@ -1,5 +1,5 @@
 # ./app.py
-from flask import Flask, render_template
+from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
 from os import getenv
@@ -12,8 +12,6 @@ load_dotenv() # Carrega o dotenv
 DEBUG = getenv("DEBUG")
 PORT = getenv("PORT", 8590)
 HOST = getenv("HOST")
-
-print(HOST, PORT, DEBUG)
 
 # Variaveis Comuns
 app = Flask(__name__)
