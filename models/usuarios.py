@@ -12,4 +12,4 @@ class Users(BaseModel):
     hash = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now())
     last_login = db.Column(db.DateTime)
-    perm = db.Column(db.String)
+    role = db.Column(db.String, default="USER")

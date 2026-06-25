@@ -23,4 +23,9 @@ class AuthService:
         user.last_login = dt.now() # Atualiza o ultimo login (Atual)
         db.session.commit() # Salva os dados
 
-        return jsonify({"display_name": user.nome, "access_token": token, "last_login": last_login}), 200
+        return jsonify({
+            "display_name": user.nome, 
+            "access_token": token, 
+            "role": user.role, 
+            "last_login": last_login
+        }), 200
