@@ -27,7 +27,7 @@ jobs: # Jobs will run
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd /home/guibs/apitmhub
-            git pull origin main
-            venv/bin/pip install -r requirements.txt
+            cd /home/guibs/api_tmhub
+            sudo git pull origin main
+            sudo venv/bin/pip install -r requirements.txt
             sudo systemctl restart apitmhub
