@@ -58,5 +58,4 @@ def on_command_done(data):
     print(f"Agente {data['agent_id']} concluiu o comando: {data['status']}")
 
 # Inicia o servidor
-if __name__ == "__main__":
-    socketio.run(app, debug=DEBUG, port=PORT, host=HOST)
+if __name__ == "__main__": socketio.run(app, debug=DEBUG, port=PORT, host=HOST)
