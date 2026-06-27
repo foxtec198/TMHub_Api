@@ -25,7 +25,6 @@ jobs: # Jobs will run
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
           script: |
             cd /home/guibs/api_tmhub
             sudo git pull origin main
