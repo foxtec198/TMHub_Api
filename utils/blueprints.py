@@ -9,5 +9,5 @@ blueprints = {
     worksheet_bp: "/update",
     auth_bp: "/login",
     user_bp: "/usuarios",
-    center_bp: "/centro"
+    center_bp: "/centro",
 }
