@@ -1,0 +1,33 @@
+name: Atualização na API - TM Hub
+on: # Call event
+  push: # This is a PUSH event listener
+    branches: [ "main" ] # Is a main branch
+  
+  pull_request: # This is a PRs event listiner
+    types: [ closed ] # Is a condition - CLOSED!
+    branches: [ "main" ] # Is a main branch
+
+jobs: # Jobs will run
+  deploy: # This a deploy 
+    if: | # Its a condition for CLOSE, PUSH and MERGED (Is obrigatory)
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    
+    runs-on: ubuntu-latest # This is a RUN on Ubuntu (LINUX)
+
+    steps: # And this is steps for Deploy!
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd /home/guibs/apitmhub
+            git pull origin main
+            venv/bin/pip install -r requirements.txt
+            sudo systemctl restart apitmhub
