@@ -19,7 +19,7 @@ class AuthService:
         if not user: return jsonify("Usuário nao encontrado!"), 404 # Retorna NOT FOUND, 404
         if not check_password_hash(password, user.hash): return jsonify("Senha incorreta!"), 400 # Confirma se a senha esta correta
         token = create_token({"id": user.id, "perm": user.perm}) # Cria o access_token
-        last_login = user.last_login # Salva o ultimo login registra
+        last_login = user.last_login # Salva o ultimo login registrado
         user.last_login = dt.now() # Atualiza o ultimo login (Atual)
         db.session.commit() # Salva os dados
 
