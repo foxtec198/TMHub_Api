@@ -4,11 +4,9 @@ from utils.safe_route import safe_route
 from utils.check_field import check_field
 
 class ServiceSupervisors():
-    @safe_route
     def read(self):
         sups = Supervisors().query.all()
-
-        return jsonify([s.to_dict() for s in sups])
+        return jsonify([s.to_dict() for s in sups]), 200
     
     @safe_route
     def create(self):

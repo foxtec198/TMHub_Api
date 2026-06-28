@@ -1,10 +1,10 @@
 from flask import request, Blueprint
-from services.supervisores import ServiceSupervisors
+from services.funcionarios import EmployeesService
 
-supervisores_bp = Blueprint("Supervisores", __name__)
-service = ServiceSupervisors()
+funcionarios_bp = Blueprint("Funcionarios", __name__)
+service = EmployeesService()
 
-@supervisores_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
+@funcionarios_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:
         case "GET": return service.read()
