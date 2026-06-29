@@ -7,6 +7,7 @@ from models.colaboradores import Employees
 from models.centros_de_custo import CostCenters
 from models.supervisores import Supervisors
 from models.reposicoes import Reposicoes, Requisicao, db
+from utils.socket import socketio
 
 class ReplaceService:
     @safe_route
@@ -71,5 +72,6 @@ class RequestService:
         else: new_rq.warning = advertencia
         db.session.add(new_rq)
         db.session.commit()
+        socketio.emit("new_request")
         
         return jsonify("Requisição criada"), 201

@@ -3,8 +3,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from os import getenv
 from utils.blueprints import blueprints
+from utils.socket import socketio
 from utils.db import db
-from flask_socketio import SocketIO
 load_dotenv()  # Carrega o dotenv
 
 # Variaveis de Instancia
@@ -15,7 +15,7 @@ HOST = getenv("HOST")
 # Variaveis Comuns
 agents = {}
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
+socketio.init_app(app, cors_allowed_origins="*", async_mode="gevent")
 CORS(app, allow_headers="*")  # Carrega os CORS security
 
 # Configs do APP
