@@ -1,5 +1,5 @@
 from flask import jsonify
-from models.funcionarios import Employees, db
+from models.colaboradores import Employees, db
 from utils.safe_route import safe_route
 
 class EmployeesService:

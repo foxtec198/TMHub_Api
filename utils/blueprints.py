@@ -4,6 +4,7 @@ from routes.auth import auth_bp
 from routes.usuarios import user_bp
 from routes.centros import center_bp
 from routes.funcionarios import funcionarios_bp
+from routes.reposicao import replace_bp
 
 blueprints = {
     supervisores_bp: "/supervisores",
@@ -12,4 +13,5 @@ blueprints = {
     auth_bp: "/login",
     user_bp: "/usuarios",
     center_bp: "/centro",
+    replace_bp: "/repo",
 }
