@@ -1,3 +1,3 @@
-from app import app, HOST, PORT
+from app import socketio, app
 
-if __name__ == "__main__": app.run()
+if __name__ == "__main__": socketio.run(app)
