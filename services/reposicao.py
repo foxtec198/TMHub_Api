@@ -73,6 +73,7 @@ class RequestService:
 
         db.session.add(new_rq)
         db.session.commit()
+        socketio.emit("teste", {})
         socketio.emit("new_request")
         
         return jsonify("Requisição criada"), 201
