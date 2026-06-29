@@ -5,7 +5,7 @@ from flask import jsonify, request
 from utils.safe_route import safe_route
 from pandas import read_excel
 
-from models.funcionarios import Employees, db
+from models.colaboradores import Employees, db
 from models.supervisores import Supervisors
 from models.centros_de_custo import CostCenters
 
@@ -60,11 +60,6 @@ class WorkSheet:
 
         # Itera sobre os Objetos e cadastra caso nao exista no banco!
         for employee in employees:
-            # Funcionario do banco
-            query_employee = (
-                Employees().query.filter_by(id=employee.get("codigo")).first()
-            )
-
             # Dados do funcionario
             codigo = employee["codigo"]
             nome = employee["nome"]
@@ -72,30 +67,30 @@ class WorkSheet:
             data_admissao = employee["admissao"]
             cargo = employee["cargo"]
             situacao = employee["situacao"]
+            
+            # Funcionario do banco
+            query_employee = Employees().query.filter_by(matricula=str(employee.get("codigo"))).first()
+            if query_employee:
 
-            # Updates caso seja diferenciado
-            if nome != query_employee.nome:
-                query_employee.nome = nome
-            if centro_id != query_employee.centro_id:
-                query_employee.centro_id = centro_id
-            if data_admissao != query_employee.data_admissao:
-                query_employee.data_admissao = data_admissao
-            if cargo != query_employee.cargo:
-                query_employee.cargo = cargo
-            if situacao != query_employee.situacao:
-                query_employee.situacao = situacao
-
-            if not query_employee:
-                new_employee = Employees(
-                    id=codigo,
-                    nome=nome,
-                    centro_id=centro_id,
-                    data_admissao=data_admissao,
-                    cargo=cargo,
-                    situacao=situacao,
-                )
-                db.session.add(new_employee)
+                # Updates caso seja diferenciado
+                if nome != query_employee.nome: query_employee.nome = nome
+                if centro_id != query_employee.centro_id: query_employee.centro_id = centro_id
+                if data_admissao != query_employee.data_admissao: query_employee.data_admissao = data_admissao
+                if cargo != query_employee.cargo: query_employee.cargo = cargo
+                if situacao != query_employee.situacao: query_employee.situacao = situacao
+                continue
+            
+            new_employee = Employees(
+                matricula=codigo,
+                nome=nome,
+                centro_id=centro_id,
+                data_admissao=data_admissao,
+                cargo=cargo,
+                situacao=situacao,
+            )
+            db.session.add(new_employee)
         db.session.commit()
+        
         return (
             jsonify(
                 {
