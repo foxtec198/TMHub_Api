@@ -59,7 +59,6 @@ class RequestService:
             Reserva=reserva_id,
             Local=centro_id,
             colaborador=colaborador_id,
-            Advertencia=advertencia
         )
         
         if not ok: return jsonify(error), 400
@@ -68,9 +67,10 @@ class RequestService:
             reserva_id=reserva_id, ausente_id=colaborador_id, 
             cc=centro_id, supervisor_id=supervisor_id
         )
+        
         if advertencia == "waiting": new_rq.waiting_certificate = True;
         else: new_rq.warning = advertencia
-        
+
         db.session.add(new_rq)
         db.session.commit()
         socketio.emit("new_request")
