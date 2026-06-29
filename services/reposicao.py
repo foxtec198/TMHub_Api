@@ -70,6 +70,7 @@ class RequestService:
         )
         if advertencia == "waiting": new_rq.waiting_certificate = True;
         else: new_rq.warning = advertencia
+        
         db.session.add(new_rq)
         db.session.commit()
         socketio.emit("new_request")
