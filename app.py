@@ -1,5 +1,4 @@
-# Importante manter em primeira instancia
-from gevent import monkey; monkey.patch_all()
+from gevent import monkey; monkey.patch_all() # Importante manter em primeira instancia
 
 from flask import Flask, render_template, request as rq, jsonify
 from flask_cors import CORS
