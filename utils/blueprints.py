@@ -5,6 +5,8 @@ from routes.usuarios import user_bp
 from routes.centros import center_bp
 from routes.funcionarios import funcionarios_bp
 from routes.reposicao import replace_bp
+from estoque.routes.produtos import produtos_bp
+from estoque.routes.movimentacoes import movimentacoes_bp
 
 blueprints = {
     supervisores_bp: "/supervisores",
@@ -14,4 +16,7 @@ blueprints = {
     user_bp: "/usuarios",
     center_bp: "/centro",
     replace_bp: "/repo",
+        #Estoque 
+    produtos_bp: "/estoque/produtos",
+    movimentacoes_bp: "/estoque/movimentos",
 }
