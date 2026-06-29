@@ -1,3 +1,6 @@
+# Importante manter em primeira instancia
+from gevent import monkey; monkey.patch_all()
+
 from flask import Flask, render_template, request as rq, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -41,7 +44,6 @@ def set_command():
         socketio.emit("command", command, to=agents[agent_id])
         return jsonify({"ok": True}), 200
     return jsonify({"error": "Agente offline"}), 404
-
 
 @socketio.on("register") # Registra um novo AGENTE
 def on_register(data):
