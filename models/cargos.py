@@ -8,4 +8,4 @@ class Cargos(BaseModel):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String)
     multa = db.Column(db.Float)
-    active = db.Column(db.Bool)
+    active = db.Column(db.Boolean)
