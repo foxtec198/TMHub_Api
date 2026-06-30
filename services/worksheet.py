@@ -32,7 +32,7 @@ class WorkSheet:
 
         # Variaveis
         sheet = load_workbook(file).active
-        init = 4
+        init = body.get("init", 4)
         columns = {}
         employees = []
 
