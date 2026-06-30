@@ -6,7 +6,7 @@ from sqlalchemy.orm import aliased
 from models.colaboradores import Employees
 from models.centros_de_custo import CostCenters
 from models.supervisores import Supervisors
-from models.reposicoes import Reposicoes, Requisicao, db
+from models.reposicoes import History, Requisicao, db
 from utils.socket import socketio
 
 class ReplaceService:
