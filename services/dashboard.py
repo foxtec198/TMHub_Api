@@ -22,11 +22,8 @@ class DashboardService:
         if init and end: init = dt.now().strptime(init, "%d/%m/%Y"); end = dt.now().strptime(end, "%d/%m/%Y")
         else: init = dt.now().replace(day=1); end = init + relativedelta(months=1)
 
-        response = {"counts": {}, "historico": [], "multas": [], "meter": {'total': 0, 'cobertas': 0, 'sem_cobertura': 0}}
-        response.get("counts")["realizadas"] = History.query.filter(History.created_at.between(init, end)).count()
-        response.get("counts")["aprovadas"] = History.query.filter(History.created_at.between(init, end), History.status == "approve").count()
-        response.get("counts")["reprovadas"] = History.query.filter(History.created_at.between(init, end), History.status == "reproved").count()
-        response.get("counts")["abertas"] = Requisicao.query.count()
+        response = {"abertas": 0, "historico": [], "multas": [], "meter": {'total': 0, 'cobertas': 0, 'sem_cobertura': 0}}
+        response["abertas"] = Requisicao.query.filter(Requisicao.created_at.between(init, end)).count()
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
@@ -41,11 +38,14 @@ class DashboardService:
                 History.obs,
                 Supervisors.nome.label("supervisor"),
                 CostCenters.local.label("local"),
-                CostCenters.departamento.label("dpto")
+                CostCenters.departamento.label("dpto"),
+                History.status,
+                Cargos.multa
             )
             .select_from(History)
             .join(Ausente, Ausente.id == History.ausente_id)
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
+            .outerjoin(Cargos, Cargos.id == Reserva.cargo)
             .join(CostCenters, CostCenters.id == History.cc)
             .join(Supervisors, Supervisors.id == History.supervisor_id)
             .filter(History.created_at.between(init, end))
@@ -54,20 +54,20 @@ class DashboardService:
         )
         response["historico"] = [h._asdict() for h in hists]
 
-        multas = (
-            db.session.query(
-                extract("day", History.created_at).label("dia"),
-                func.sum(Cargos.multa).label("total_multas"),
-            )
-            .select_from(History)
-            .join(Employees, Employees.id == History.reserva_id)
-            .join(Cargos, Cargos.id == Employees.cargo)
-            .filter(History.created_at.between(init, end))
-            .group_by(extract("day", History.created_at))
-            .order_by(extract("day", History.created_at))
-            .all()
-        )
-        response["multas"] = [m._asdict() for m in multas]
+        # multas = (
+        #     db.session.query(
+        #         extract("day", History.created_at).label("dia"),
+        #         func.sum(Cargos.multa).label("total_multas"),
+        #     )
+        #     .select_from(History)
+        #     .join(Employees, Employees.id == History.reserva_id)
+        #     .join(Cargos, Cargos.id == Employees.cargo)
+        #     .filter(History.created_at.between(init, end))
+        #     .group_by(extract("day", History.created_at))
+        #     .order_by(extract("day", History.created_at))
+        #     .all()
+        # )
+        # response["multas"] = [m._asdict() for m in multas]
 
         key_list = (
             db.session.query(
@@ -81,18 +81,7 @@ class DashboardService:
             .all()
         )
         response["repos"] = [k._asdict() for k in key_list]
-
-        meter = (
-            db.session.query(
-                func.count(History.id).label("total"),
-                func.sum(case((History.reserva_id != 0, 1), else_=0)).label("cobertas"),
-                func.sum(case((History.reserva_id == 0, 1), else_=0)).label(
-                    "sem_cobertura"
-                ),
-            )
-            .filter(History.created_at.between(init, end))
-            .first()
-        )
-        if meter: response["meter"] = meter._asdict()
+        
+        print(response)
 
         return jsonify(response), 200
