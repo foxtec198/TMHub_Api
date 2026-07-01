@@ -32,7 +32,7 @@ class DashboardService:
                 History.created_at,
                 Ausente.nome.label("ausente"),
                 case(
-                    (History.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
+                    (History.reserva_id == 0, "SEM INFORMAÇÃO"), else_=Reserva.nome
                 ).label("reserva"),
                 History.motivo,
                 History.obs,
@@ -53,7 +53,5 @@ class DashboardService:
             .all()
         )
         response["historico"] = [h._asdict() for h in hists]
-
-        print(response)
-
+        
         return jsonify(response), 200
