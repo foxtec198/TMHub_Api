@@ -54,34 +54,6 @@ class DashboardService:
         )
         response["historico"] = [h._asdict() for h in hists]
 
-        # multas = (
-        #     db.session.query(
-        #         extract("day", History.created_at).label("dia"),
-        #         func.sum(Cargos.multa).label("total_multas"),
-        #     )
-        #     .select_from(History)
-        #     .join(Employees, Employees.id == History.reserva_id)
-        #     .join(Cargos, Cargos.id == Employees.cargo)
-        #     .filter(History.created_at.between(init, end))
-        #     .group_by(extract("day", History.created_at))
-        #     .order_by(extract("day", History.created_at))
-        #     .all()
-        # )
-        # response["multas"] = [m._asdict() for m in multas]
-
-        key_list = (
-            db.session.query(
-                extract("day", History.created_at).label("dia"),
-                func.count(History.ausente_id).label("ausentes"),
-                func.sum(case((History.reserva_id != 0, 1), else_=0)).label("reservas"),
-            )
-            .filter(History.created_at.between(init, end))
-            .group_by(extract("day", History.created_at))
-            .order_by(extract("day", History.created_at))
-            .all()
-        )
-        response["repos"] = [k._asdict() for k in key_list]
-        
         print(response)
 
         return jsonify(response), 200
