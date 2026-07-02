@@ -51,8 +51,8 @@ class RequestService:
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
         centro_id = bd.get("centro_id")
-        ausente_id = bd.get("colaborador_id")
-        advertencia = bd.get("advertencia")
+        ausente_id = bd.get("ausente_id")
+        advertencia = str(bd.get("advertencia"))
         motivo = bd.get("motivo")
 
         ok, error = check_field(
@@ -62,14 +62,14 @@ class RequestService:
             Ausente=ausente_id,
             Motivo=motivo
         )
-        
-        adv = True if advertencia.lower() == "aplicado" else False
+
+        adv = True if advertencia and advertencia.lower() == "aplicado" else False
         
         if not ok: return jsonify(error), 400
 
         new_rq = Requisicao(
             reserva_id=reserva_id, ausente_id=ausente_id, 
-            cc=centro_id, supervisor_id=supervisor_id, advertencia=adv,
+            cc=centro_id, supervisor_id=supervisor_id, warning=adv,
             motivo=motivo
         )
         
