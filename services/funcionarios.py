@@ -4,7 +4,7 @@ from utils.safe_route import safe_route
 
 class EmployeesService:
     def read(self):
-        emp = Employees.query.all()
+        emp = Employees.query.filter(Employees.situacao == 1).all()
         return jsonify([e.to_dict() for e in emp]), 200
 
     @safe_route
