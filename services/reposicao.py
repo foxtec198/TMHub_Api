@@ -29,8 +29,8 @@ class RequestService:
             Reserva.nome.label("reserva"),
             CostCenters.local,
             Supervisors.nome.label("supervisor"),
-            Requisicao.waiting_certificate,
             Requisicao.warning,
+            Requisicao.motivo
         ).join(
             Ausente, Ausente.id == Requisicao.ausente_id
         ).join(
@@ -51,26 +51,28 @@ class RequestService:
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
         centro_id = bd.get("centro_id")
-        colaborador_id = bd.get("colaborador_id")
+        ausente_id = bd.get("colaborador_id")
         advertencia = bd.get("advertencia")
+        motivo = bd.get("motivo")
 
         ok, error = check_field(
             Supervisor=supervisor_id, 
             Reserva=reserva_id,
             Local=centro_id,
-            colaborador=colaborador_id,
+            Ausente=ausente_id,
+            Motivo=motivo
         )
+        
+        adv = True if advertencia.lower() == "aplicado" else False
         
         if not ok: return jsonify(error), 400
 
         new_rq = Requisicao(
-            reserva_id=reserva_id, ausente_id=colaborador_id, 
-            cc=centro_id, supervisor_id=supervisor_id
+            reserva_id=reserva_id, ausente_id=ausente_id, 
+            cc=centro_id, supervisor_id=supervisor_id, advertencia=adv,
+            motivo=motivo
         )
         
-        if advertencia == "waiting": new_rq.waiting_certificate = True;
-        else: new_rq.warning = advertencia
-
         db.session.add(new_rq)
         db.session.commit()
         socketio.emit("new_request")

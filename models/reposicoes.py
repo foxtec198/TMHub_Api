@@ -26,5 +26,5 @@ class Requisicao(BaseModel):
     cc = db.Column(db.Integer, nullable=True)
     supervisor_id = db.Column(db.Integer, nullable=False)
     warning = db.Column(db.Boolean, default=False)
-    waiting_certificate = db.Column(db.Boolean, default=True)
+    motivo = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now())
