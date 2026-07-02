@@ -5,7 +5,6 @@ from utils.check_field import check_field
 
 
 class ProductsServices:
-    @safe_route
     def read(self):
         id = rq.args.get("id")
 
