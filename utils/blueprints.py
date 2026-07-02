@@ -6,6 +6,7 @@ from routes.centros import center_bp
 from routes.funcionarios import funcionarios_bp
 from routes.reposicao import replace_bp
 from routes.dashboard import dashboards_bp
+from routes.rpa import rpa_bp
 
 from estoque.routes.produtos import produtos_bp
 from estoque.routes.movimentacoes import movimentacoes_bp
@@ -19,6 +20,7 @@ blueprints = {
     center_bp: "/centro",
     replace_bp: "/repo",
     dashboards_bp: "/dash",
+    rpa_bp: "/rpa",
 
     #Estoque 
     produtos_bp: "/estoque/produtos",
