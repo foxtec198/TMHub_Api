@@ -9,5 +9,5 @@ class Task(BaseModel):
     name = db.Column(db.String, nullable=False)
     status = db.Column(db.String, default="pending")
     command = db.Column(db.String)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)
     ended_at = db.Column(db.DateTime)
