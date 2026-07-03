@@ -10,5 +10,5 @@ class Employees(BaseModel):
     nome = db.Column(db.String)
     centro_id = db.Column(db.Integer)
     data_admissao = db.Column(db.DateTime, default=dt.now())
-    cargo = db.Column(db.String)
+    cargo = db.Column(db.Integer)
     situacao = db.Column(db.Integer)

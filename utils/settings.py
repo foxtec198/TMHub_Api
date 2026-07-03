@@ -1,0 +1,1 @@
+ALLOW_CITIES = ["Londrina", "Ibiporã", "Birigui", "Botucatu", "Maringá", "Apucarana"]

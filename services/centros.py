@@ -1,6 +1,8 @@
 from flask import request as rq, jsonify
-from models.centros_de_custo import CostCenters
 from utils.safe_route import safe_route
+from models.centros_de_custo import CostCenters
+from models.citys import Cities
+from utils.settings import ALLOW_CITIES
 
 class CostsCenterService():
     def read(self):
@@ -10,7 +12,7 @@ class CostsCenterService():
             cost = CostCenters().query.filter_by(id=id).first()
             return jsonify(cost), 200 if cost else jsonify("Centro de custo não encontrado"), 404
         
-        costs = CostCenters().query.all()
+        costs = CostCenters().query.join(Cities, Cities.id == CostCenters.cidade_id).filter(Cities.descricao.in_(ALLOW_CITIES)).all()
         return jsonify([c.to_dict() for c in costs])
         
     @safe_route
