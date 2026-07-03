@@ -57,8 +57,7 @@ class RequestService:
         advertencia = str(bd.get("advertencia"))
         motivo = bd.get("motivo")
         data = bd.get("data")
-        
-        print(data)
+        obs = bd.get("obs")
 
         ok, error = check_field(
             Supervisor=supervisor_id, Local=centro_id, Ausente=ausente_id, Motivo=motivo
@@ -78,6 +77,7 @@ class RequestService:
         )
         
         if data: new_rq.created_at = data
+        if obs: new_rq.obs = str(obs).strip().upper()
 
         db.session.add(new_rq)
         db.session.commit()
