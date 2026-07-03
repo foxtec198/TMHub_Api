@@ -8,3 +8,5 @@ class CostCenters(BaseModel):
     local = db.Column(db.String)
     departamento = db.Column(db.String)
     supervisor_id = db.Column(db.Integer)
+    cidade_id = db.Column(db.Integer)
+    
