@@ -11,7 +11,7 @@ class Reposicoes(BaseModel):
     request_id = db.Column(db.Integer)
     cc = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)
     ended_at = db.Column(db.DateTime)
     
 class Requisicao(BaseModel):
@@ -24,4 +24,4 @@ class Requisicao(BaseModel):
     supervisor_id = db.Column(db.Integer, nullable=False)
     warning = db.Column(db.Boolean, default=False)
     waiting_certificate = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)
