@@ -10,6 +10,6 @@ class Users(BaseModel):
     email = db.Column(db.String)
     cpf = db.Column(db.String, unique=True, nullable=False)
     hash = db.Column(db.String)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)
     last_login = db.Column(db.DateTime)
     role = db.Column(db.String, default="USER")
