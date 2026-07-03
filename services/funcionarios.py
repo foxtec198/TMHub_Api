@@ -1,10 +1,12 @@
 from flask import jsonify
+from models.centros_de_custo import CostCenters
+from models.citys import Cities
 from models.colaboradores import Employees, db
 from utils.safe_route import safe_route
 
 class EmployeesService:
     def read(self):
-        emp = Employees.query.filter(Employees.situacao == 1).all()
+        emp = Employees.query.all()
         return jsonify([e.to_dict() for e in emp]), 200
 
     @safe_route
