@@ -8,8 +8,9 @@ from routes.reposicao import replace_bp
 from routes.dashboard import dashboards_bp
 from routes.rpa import rpa_bp
 
-from estoque.routes.produtos import produtos_bp
-from estoque.routes.movimentacoes import movimentacoes_bp
+from routes.categorias import categorias_bp
+from routes.produtos import produtos_bp
+from routes.movimentos import movimentos_bp
 
 blueprints = {
     supervisores_bp: "/supervisores",
@@ -22,7 +23,8 @@ blueprints = {
     dashboards_bp: "/dash",
     rpa_bp: "/rpa",
 
-    #Estoque 
+    #Estoque
+    categorias_bp: "/estoque/categorias",
     produtos_bp: "/estoque/produtos",
-    movimentacoes_bp: "/estoque/movimentos",
+    movimentos_bp: "/estoque/movimentos",
 }
