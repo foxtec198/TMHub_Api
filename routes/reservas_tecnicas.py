@@ -1,10 +1,10 @@
 from flask import request, Blueprint
 from services.reservas_tecnicas import FloaterService
 
-routers_bp = Blueprint("Reservas Tecnicas", __name__)
+floaters_bp = Blueprint("Reservas Tecnicas", __name__)
 service = FloaterService()
 
-@routers_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
+@floaters_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:
         case "GET": return service.read()
