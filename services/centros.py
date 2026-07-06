@@ -1,7 +1,7 @@
 from flask import request as rq, jsonify
 from utils.safe_route import safe_route
 from models.centros_de_custo import CostCenters
-from models.citys import Cities
+from models.cidades import Cities
 from utils.settings import ALLOW_CITIES
 
 class CostsCenterService():
