@@ -39,9 +39,21 @@ class MovementService:
             produto.quantidade -= quantidade
 
         new_mov = Movement(
-            item_id=item_id, tipo=tipo, quantidade=quantidade,
+            item_id=item_id, produto=produto.nome, tipo=tipo, quantidade=quantidade,
             observacao=observacao, origem=origem
         )
         db.session.add(new_mov)
         db.session.commit()
         return jsonify("Movimento registrado com sucesso"), 201
+
+    @safe_route
+    def delete(self, id, token_data=None):
+        if not token_data or token_data.get("perm") != "ADMIN":
+            return jsonify("Apenas administradores podem excluir movimentações"), 403
+
+        mov = Movement.query.filter_by(id=id).first()
+        if not mov: return jsonify("Movimentação não encontrada"), 404
+
+        db.session.delete(mov)
+        db.session.commit()
+        return jsonify("Movimentação removida com sucesso"), 200

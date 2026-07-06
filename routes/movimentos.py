@@ -9,3 +9,7 @@ def movimentos_root():
     match request.method:
         case "GET": return movement_service.read()
         case "POST": return movement_service.create()
+        
+@movimentos_bp.route("/<int:id>", methods=["DELETE"])
+def movimentos_by_id(id):
+    return movement_service.delete(id)
