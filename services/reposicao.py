@@ -9,15 +9,48 @@ from models.supervisores import Supervisors
 from models.reposicoes import History, Requisicao, db
 from utils.socket import socketio
 from sqlalchemy import case
-
+from datetime import datetime as dt
 
 class ReplaceService:
     @safe_route
-    def read(self): ...
+    def read(self):
+        ...
 
-    @safe_route
-    def create(self): ...
+    # @safe_route
+    def create(self):
+        bd = request.get_json()
+        id = bd.get("id")
+        status = bd.get("status", "reproved")
+        req = Requisicao.query.filter(Requisicao.id == id).first()
 
+        requisicao_id = req.id
+        reserva_id = req.reserva_id if status == "approved" else 0
+        ausente_id = req.ausente_id
+        cc_id = req.cc
+        status = status
+        created_at = req.created_at
+        supervisor_id = req.supervisor_id
+        motivo = req.motivo
+        ended_at = dt.now()
+        obs = req.obs
+
+        db.session.add(
+            History(
+                requisicao_id=requisicao_id,
+                reserva_id=reserva_id,
+                ausente_id = ausente_id,
+                cc = cc_id, status=status,
+                created_at=created_at,
+                ended_at=ended_at,
+                supervisor_id=supervisor_id,
+                motivo=motivo, obs=obs
+            )
+        )
+
+        db.session.delete(req)
+        db.session.commit()
+        socketio.emit("new_request")
+        return jsonify("Sucesso"), 201
 
 class RequestService:
     def read(self):
@@ -26,10 +59,11 @@ class RequestService:
 
         reqs = (
             db.session.query(
+                Requisicao.id,
                 Requisicao.created_at.label("data"),
                 Ausente.nome.label("ausencia"),
                 case(
-                    (Requisicao.reserva_id == 0, "SEM COBERTURA"), else_= Reserva.nome
+                    (Requisicao.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
                 ).label("reserva"),
                 CostCenters.local,
                 Supervisors.nome.label("supervisor"),
@@ -73,14 +107,13 @@ class RequestService:
             cc=centro_id,
             supervisor_id=supervisor_id,
             warning=adv,
-            motivo=motivo,
+            motivo=motivo
         )
-        
+
         if data: new_rq.created_at = data
         if obs: new_rq.obs = str(obs).strip().upper()
 
         db.session.add(new_rq)
         db.session.commit()
         socketio.emit("new_request")
-
         return jsonify("Requisição criada"), 201
