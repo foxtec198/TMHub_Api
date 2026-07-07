@@ -7,7 +7,6 @@ from utils.safe_route import safe_route
 class UserServices:
     def read(self):
         allUser = db.session.query(Users.id, Users.nome).all()
-        print(allUser)
         return jsonify([u._asdict() for u in allUser])
 
     @safe_route

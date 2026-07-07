@@ -25,6 +25,7 @@ class AuthService:
         db.session.commit() # Salva os dados
 
         return jsonify({
+            "id": user.id,
             "display_name": user.nome, 
             "access_token": token, 
             "role": user.role, 
