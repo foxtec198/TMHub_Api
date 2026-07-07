@@ -1,4 +1,4 @@
-from import_col.cols import cols
+from cols import cols
 from sqlalchemy import create_engine, text
 from os import getenv
 from dotenv import load_dotenv
@@ -19,8 +19,10 @@ def create_cost_centers():
             centros_de_custos.append({
                 "id": item["centro_custo_num"],
                 "local": item["centro_custo"],
-                "dpto": item["departamento_codigo"],
-                "cidade_id": item["cidade_id"],
+                # funcionarios.json não traz departamento/cidade — ficam com
+                # valor padrão até existir essa regra de negócio disponível.
+                "dpto": item.get("departamento_codigo"),
+                "cidade_id": item.get("cidade_id"),
         })
             
         # -------------------------------------------------------------- #
@@ -52,10 +54,12 @@ def create_cobs():
         for item in cols["empregados"]:
             mat = item.get("codigo")
             nome = item.get("nome")
+            carga_horaria = item.get("hor")
+            carga_horaria = carga_horaria.replace(".", "").replace(",", ".") if carga_horaria else 0
             center_id = item.get("centro_custo_num")
-            dt_admissao = item.get("data_admissao")
+            dt_admissao = item.get("admissao")
             cargo = item.get("cargo")
-            situacao = item.get("situacao_codigo")
+            situacao = item.get("situacao")
 
             admissao = dt.now().strptime(dt_admissao, "%d/%m/%Y")
             nome = sub(r"[\d'\".,]", "", nome)
@@ -66,10 +70,10 @@ def create_cobs():
             cargo_id = cargo_id[0] if cargo_id else 0
 
             if exists:
-                conn.execute(text(f"""UPDATE COLABORADORES SET NOME = '{nome}', CENTRO_ID = {center_id}, data_admissao = '{admissao}', cargo = {cargo_id}, situacao = {situacao} WHERE MATRICULA = '{mat}' """))
+                conn.execute(text(f"""UPDATE COLABORADORES SET NOME = '{nome}', CENTRO_ID = {center_id}, data_admissao = '{admissao}', cargo = {cargo_id}, situacao = {situacao}, carga_horaria = {carga_horaria} WHERE MATRICULA = '{mat}' """))
                 up += 1
             else:
-                conn.execute(text(f"""INSERT INTO COLABORADORES(MATRICULA, NOME, CENTRO_ID, DATA_ADMISSAO, CARGO, SITUACAO) VALUES('{mat}', '{nome}', {center_id}, '{admissao}', {situacao}, {cargo_id})"""))
+                conn.execute(text(f"""INSERT INTO COLABORADORES(MATRICULA, NOME, CENTRO_ID, DATA_ADMISSAO, CARGO, SITUACAO, CARGA_HORARIA) VALUES('{mat}', '{nome}', {center_id}, '{admissao}', {situacao}, {cargo_id}, {carga_horaria})"""))
                 cont += 1
             pbar.update(1)
     conn.commit()
