@@ -1,5 +1,7 @@
 from utils.db import db
 
+
+# COMETARIOA DE TESTE
 class Project(db.Model):
     __tablename__ = "pj_projects"
     
