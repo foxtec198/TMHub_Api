@@ -1,4 +1,5 @@
 from flask import jsonify, request as rq
+from utils.safe_route import safe_route
 from utils.token import create_token
 from models.usuarios import Users, db
 from utils.check_field import check_field, check_password_hash
@@ -29,3 +30,4 @@ class AuthService:
             "role": user.role, 
             "last_login": last_login
         }), 200
+    
