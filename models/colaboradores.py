@@ -12,3 +12,4 @@ class Employees(BaseModel):
     data_admissao = db.Column(db.DateTime, default=dt.now())
     cargo = db.Column(db.Integer)
     situacao = db.Column(db.Integer)
+    carga_horaria  =  db.Column(db.Integer)
