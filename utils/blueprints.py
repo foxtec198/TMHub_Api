@@ -15,6 +15,8 @@ from routes.categorias import categorias_bp
 from routes.produtos import produtos_bp
 from routes.movimentos import movimentos_bp
 
+from routes.admissao import admissao_bp
+
 blueprints = {
     supervisores_bp: "/supervisores",
     funcionarios_bp: "/funcionarios",
@@ -32,4 +34,7 @@ blueprints = {
     categorias_bp: "/estoque/categorias",
     produtos_bp: "/estoque/produtos",
     movimentos_bp: "/estoque/movimentos",
+
+    #Admissão
+    admissao_bp: "/admissao/vagas"
 }
