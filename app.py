@@ -10,7 +10,7 @@ load_dotenv()  # Carrega o dotenv
 
 # Variaveis de Instancia - SandBox()
 DEBUG = getenv("DEBUG")
-PORT = getenv("PORT", 8590)
+PORT = int(getenv("PORT", 8590))
 HOST = getenv("HOST")
 
 # Variaveis Comuns
