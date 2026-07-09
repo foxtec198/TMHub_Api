@@ -6,13 +6,15 @@ replace_bp = Blueprint("Reposições", __name__)
 service = ReplaceService()
 rq_service = RequestService()
 
-@replace_bp.route("", methods=["GET", "POST"])
-def root():
-    match rq.method:
-        case "GET": response = service.read()
-        case "POST": response = service.create()
-    return response
+# Salva o historico das requisições
+@replace_bp.route("", methods=["POST"])
+def root(): return service.create()
 
+# Obtem o historico salvo
+@replace_bp.route("/history", methods=["POST"])
+def get_history(): return service.read()
+
+# Requisições
 @replace_bp.route("/request", methods=["GET", "POST"])
 def request():
     match rq.method:
