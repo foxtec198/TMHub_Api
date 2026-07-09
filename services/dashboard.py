@@ -6,9 +6,10 @@ from sqlalchemy import case, func, extract
 from sqlalchemy.orm import aliased
 from calendar import monthrange
 
-from models.centros_de_custo import CostCenters
+from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
-from models.reposicoes import Requisicao, History, db
+from models.rp_historico import History
+from models.rp_requisicao import Requisicao
 from models.supervisores import Supervisors
 from models.cargos import Cargos
 
