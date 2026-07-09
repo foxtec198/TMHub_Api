@@ -6,9 +6,10 @@ from sqlalchemy import case, func, extract
 from sqlalchemy.orm import aliased
 from calendar import monthrange
 
-from models.centros_de_custo import CostCenters
+from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
-from models.reposicoes import Requisicao, History, db
+from models.rp_historico import History
+from models.rp_requisicao import Requisicao
 from models.supervisores import Supervisors
 from models.cargos import Cargos
 
@@ -38,18 +39,19 @@ class DashboardService:
         Reserva = aliased(Employees)
         hists = (
             db.session.query(
-                History.created_at,
+                History.id,
                 Ausente.nome.label("ausente"),
                 case(
-                    (History.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
+                    (History.reserva_id == 0 or not History.reserva_id, "SEM COBERTURA"), else_=Reserva.nome
                 ).label("reserva"),
-                History.motivo,
-                History.obs,
                 Supervisors.nome.label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
+                History.created_at,
                 History.status,
-                Cargos.multa
+                Cargos.multa,
+                History.motivo,
+                History.obs,
             )
             .select_from(History)
             .join(Ausente, Ausente.id == History.ausente_id)
