@@ -1,8 +1,8 @@
 from flask import jsonify, request
+from models.cargos import Cargos
 from utils.check_field import check_field
 from utils.safe_route import safe_route
 from sqlalchemy.orm import aliased
-
 from models.colaboradores import Employees
 from models.centros_de_custo import CostCenters
 from models.supervisores import Supervisors
@@ -10,13 +10,59 @@ from models.reposicoes import History, Requisicao, db
 from utils.socket import socketio
 from sqlalchemy import case
 from datetime import datetime as dt
+from dateutils import relativedelta
+from calendar import monthrange
 
 class ReplaceService:
-    @safe_route
-    def read(self):
-        ...
-
     # @safe_route
+    def read(self):
+        bd = request.get_json()
+
+        init = bd.get("init", None)
+        end = bd.get("end", None)
+        
+        if init and end: # Se passar os dois
+            init = dt.now().strptime(init, "%d/%m/%Y").replace(hour=0, minute=0, second=0); 
+            end = dt.now().strptime(end, "%d/%m/%Y").replace(hour=23, minute=59, second=59)
+        elif init: # Se for passado somente o init
+            init = dt.now().strptime(init, "%d/%m/%Y").replace(hour=0, minute=0, second=0); 
+            end = init.replace(hour=23, minute=59, second=59)
+        else: # Se nao for passado nenhum
+            init = dt.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0); 
+            dias_no_mes = monthrange(init.year, init.month)[1]
+            end = init + relativedelta(day=dias_no_mes , hour=23, minute=59, second=59)
+        
+        Ausente = aliased(Employees)
+        Reserva = aliased(Employees)
+        hists = (
+            db.session.query(
+                History.id,
+                History.created_at.label("abertura"),
+                Ausente.nome.label("ausente"),
+                case(
+                    (History.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
+                ).label("reserva"),
+                History.motivo,
+                History.obs,
+                Supervisors.nome.label("supervisor"),
+                CostCenters.local.label("local"),
+                CostCenters.departamento.label("dpto"),
+                History.status,
+                Cargos.multa,
+                
+            )
+            .select_from(History)
+            .join(Ausente, Ausente.id == History.ausente_id)
+            .outerjoin(Reserva, Reserva.id == History.reserva_id)
+            .outerjoin(Cargos, Cargos.id == Reserva.cargo)
+            .join(CostCenters, CostCenters.id == History.cc)
+            .join(Supervisors, Supervisors.id == History.supervisor_id)
+            .filter(History.created_at.between(init, end))
+            .order_by(History.created_at.desc())
+            .all()
+        )
+        return jsonify([h._asdict() for h in hists]), 200
+
     def create(self):
         bd = request.get_json()
         id = bd.get("id")
