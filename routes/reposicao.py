@@ -11,17 +11,22 @@ timeline_service = TimelineService()
 @replace_bp.route("", methods=["POST"])
 def root(): return history_service.create()
 
-# Obtem o historico salvo
-@replace_bp.route("/history", methods=["POST"])
-def get_history(): return history_service.read()
+# Historico
+@replace_bp.route("/history", methods=["POST", "PATCH", "DELETE"])
+def history():
+    match rq.method:
+        case "POST": return history_service.read()
+        case "PATCH": return history_service.update()
+        case "DELETE": return history_service.delete()
 
 # Requisições
-@replace_bp.route("/request", methods=["GET", "POST", "PATCH"])
+@replace_bp.route("/request", methods=["GET", "POST", "PATCH", "DELETE"])
 def request():
     match rq.method:
         case "GET": return rq_service.read()
         case "POST": return rq_service.create()
         case "PATCH": return rq_service.update()
+        case "DELETE": return rq_service.delete()
 
 # Timeline de eventos
 @replace_bp.route("/timeline", methods=["GET"])

@@ -4,12 +4,13 @@ from services.projetos import ProjectService
 project_bp = Blueprint("Projetos", __name__)
 service = ProjectService()
 
-@project_bp.route("", methods=["GET", "POST", "PATCH"])
+@project_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match rq.method:
         case "GET": response = service.read()
         case "POST": response = service.create()
         case "PATCH": response = service.update()
+        case "DELETE": response = service.delete()
     return response
 
 
