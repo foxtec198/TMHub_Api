@@ -91,16 +91,17 @@ class RequestService:
         if data: new_rq.created_at = data
         if obs: new_rq.obs = str(obs).strip().upper()
         
+        db.session.add(new_rq)
+        db.session.commit()
+        socketio.emit("new_request")
+
         TimelineService().create_event(
             req=new_rq,
             status=status,
             tipo="Criado a requisição",
             obs=obs
         )
-
-        db.session.add(new_rq)
-        db.session.commit()
-        socketio.emit("new_request")
+        
         return jsonify("Requisição criada"), 201
 
     def update(self):
