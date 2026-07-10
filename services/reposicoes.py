@@ -11,6 +11,7 @@ from models.cargos import Cargos
 from datetime import datetime as dt
 from dateutils import relativedelta
 from flask import jsonify, request
+from routes import reposicao
 from utils.socket import socketio
 from calendar import monthrange
 from sqlalchemy import case
@@ -49,10 +50,10 @@ class RequestService:
             .join(CostCenters, CostCenters.id == Requisicao.cc)
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .order_by(Requisicao.created_at.desc())
+            .filter(Requisicao.status == status)
         )
         
         if id: reqs.filter(Requisicao.id == id)
-        if status: reqs.filter(Requisicao.status == status)
         if limit: reqs.limit(limit=limit)
         reqs = reqs.all()
         return jsonify([r._asdict() for r in reqs]), 200
