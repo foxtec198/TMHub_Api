@@ -1,12 +1,14 @@
 from collections import defaultdict
 from flask import jsonify, request as rq
-from models.colaboradores import Employees
+from models.usuarios import Users
 from models.pj_card import ProjectCard
 from models.pj_card_member import ProjectCardMember
 from models.pj_column import ProjectColumn
 from models.pj_members import ProjectMember
 from models.pj_projects import Project
 from utils.db import db
+from utils.safe_route import safe_route
+from sqlalchemy import or_
 
 DEFAULT_COLUMNS = ("A Fazer", "Em Andamento", "Concluido")
 
@@ -17,8 +19,8 @@ def _as_int(value):
 class ProjectService:
     def _serialize(self, project):
         members = (
-            db.session.query(Employees.id, Employees.nome)
-            .join(ProjectMember, ProjectMember.employee_id == Employees.id)
+            db.session.query(Users.id, Users.nome)
+            .join(ProjectMember, ProjectMember.employee_id == Users.id)
             .filter(ProjectMember.project_id == project.id)
             .all()
         )
@@ -43,8 +45,8 @@ class ProjectService:
             .all()
         )
         card_members = (
-            db.session.query(ProjectCardMember.card_id, Employees.id, Employees.nome)
-            .join(Employees, Employees.id == ProjectCardMember.employee_id)
+            db.session.query(ProjectCardMember.card_id, Users.id, Users.nome)
+            .join(Users, Users.id == ProjectCardMember.employee_id)
             .filter(ProjectCardMember.card_id.in_([card.id for card in cards] or [0]))
             .all()
         )
@@ -114,9 +116,17 @@ class ProjectService:
         for employee_id in sorted(set([item for item in member_ids if item is not None])):
             db.session.add(ProjectCardMember(card_id=card_id, employee_id=employee_id))
 
-    def read(self):
+    @safe_route
+    def read(self, token_data):
         project_id = rq.args.get("id")
-        query = Project.query
+        user_id = _as_int(token_data.get("id"))
+        member_project_ids = (
+            db.session.query(ProjectMember.project_id)
+            .filter(ProjectMember.employee_id == user_id)
+        )
+        query = Project.query.filter(
+            or_(Project.dono == user_id, Project.id.in_(member_project_ids))
+        )
 
         if project_id:
             query = query.filter_by(id=project_id)
@@ -131,13 +141,16 @@ class ProjectService:
 
         return jsonify(response), 200
 
-    def create(self):
+    @safe_route
+    def create(self, token_data):
         body = rq.get_json() or {}
         nome = (body.get("nome") or "").strip()
         if not nome:
             return jsonify("Nome do projeto obrigatorio"), 400
 
-        dono = _as_int(body.get("donoId")) or _as_int(body.get("dono")) or 0
+        dono = _as_int(token_data.get("id"))
+        if not dono:
+            return jsonify("Usuario autenticado invalido"), 401
         project = Project(nome=nome, cor=body.get("cor") or "#7c5cff", dono=dono)
         db.session.add(project)
         db.session.flush()
@@ -153,27 +166,59 @@ class ProjectService:
         db.session.commit()
         return jsonify(self._serialize(project)), 201
 
-    def update(self):
-        project_id = rq.args.get("id") or (rq.get_json() or {}).get("id")
+    @safe_route
+    def update(self, token_data):
+        body = rq.get_json() or {}
+        project_id = rq.args.get("id") or body.get("id")
         project = Project.query.filter_by(id=project_id).first()
         if not project:
             return jsonify("Projeto nao encontrado"), 404
 
-        body = rq.get_json() or {}
-        if "nome" in body:
-            project.nome = body["nome"]
-        if "cor" in body:
-            project.cor = body["cor"]
-        if "memberIds" in body:
-            member_ids = [_as_int(item) for item in body.get("memberIds", [])]
-            if project.dono:
+        user_id = _as_int(token_data.get("id"))
+        is_owner = project.dono == user_id
+        is_member = ProjectMember.query.filter_by(project_id=project.id, employee_id=user_id).first() is not None
+        if not is_owner and not is_member:
+            return jsonify("Sem permissao para alterar este projeto"), 403
+
+        if is_owner:
+            if "nome" in body:
+                project.nome = body["nome"]
+            if "cor" in body:
+                project.cor = body["cor"]
+            if "memberIds" in body:
+                member_ids = [_as_int(item) for item in body.get("memberIds", [])]
                 member_ids.append(project.dono)
-            self._sync_members(project.id, member_ids)
+                self._sync_members(project.id, member_ids)
         if "columns" in body and "cards" in body:
             self._sync_board(project, body["columns"], body["cards"])
 
         db.session.commit()
         return jsonify(self._serialize(project)), 200
+
+    @safe_route
+    def delete(self, token_data):
+        body = rq.get_json(silent=True) or {}
+        project_id = rq.args.get("id") or body.get("id")
+        project = Project.query.filter_by(id=project_id).first()
+        if not project:
+            return jsonify("Projeto nao encontrado"), 404
+
+        user_id = _as_int(token_data.get("id"))
+        if project.dono != user_id:
+            return jsonify("Somente o dono pode excluir este projeto"), 403
+
+        column_ids = [item.id for item in ProjectColumn.query.filter_by(project_id=project.id).all()]
+        card_ids = [
+            item.id for item in ProjectCard.query.filter(ProjectCard.column_id.in_(column_ids or [0])).all()
+        ]
+
+        ProjectCardMember.query.filter(ProjectCardMember.card_id.in_(card_ids or [0])).delete(synchronize_session=False)
+        ProjectCard.query.filter(ProjectCard.id.in_(card_ids or [0])).delete(synchronize_session=False)
+        ProjectColumn.query.filter(ProjectColumn.id.in_(column_ids or [0])).delete(synchronize_session=False)
+        ProjectMember.query.filter_by(project_id=project.id).delete(synchronize_session=False)
+        db.session.delete(project)
+        db.session.commit()
+        return jsonify("Projeto excluido"), 200
 
     def _sync_board(self, project, columns_payload, cards_payload):
         kept_column_ids = []
@@ -229,8 +274,14 @@ class ProjectService:
         for column in old_columns:
             db.session.delete(column)
 
-    def create_card(self, project_id):
+    @safe_route
+    def create_card(self, project_id, token_data):
         body = rq.get_json() or {}
+        user_id = _as_int(token_data.get("id"))
+        project = Project.query.filter_by(id=project_id).first()
+        is_member = ProjectMember.query.filter_by(project_id=project_id, employee_id=user_id).first() is not None
+        if not project or (project.dono != user_id and not is_member):
+            return jsonify("Sem permissao para criar cards neste projeto"), 403
         column_id = _as_int(body.get("columnId") or body.get("column_id"))
         column = ProjectColumn.query.filter_by(id=column_id, project_id=project_id).first()
         if not column:
@@ -254,10 +305,21 @@ class ProjectService:
         db.session.commit()
         return jsonify(self._serialize(Project.query.filter_by(id=project_id).first())), 201
 
-    def update_card(self, card_id):
+    @safe_route
+    def update_card(self, card_id, token_data):
         card = ProjectCard.query.filter_by(id=card_id).first()
         if not card:
             return jsonify("Card nao encontrado"), 404
+
+        project = (
+            Project.query.join(ProjectColumn, ProjectColumn.project_id == Project.id)
+            .filter(ProjectColumn.id == card.column_id)
+            .first()
+        )
+        user_id = _as_int(token_data.get("id"))
+        is_member = ProjectMember.query.filter_by(project_id=project.id, employee_id=user_id).first() is not None
+        if project.dono != user_id and not is_member:
+            return jsonify("Sem permissao para alterar cards neste projeto"), 403
 
         body = rq.get_json() or {}
         if "titulo" in body:
@@ -269,15 +331,11 @@ class ProjectService:
         if "memberIds" in body:
             self._sync_card_members(card.id, [_as_int(item) for item in body["memberIds"]])
 
-        project = (
-            Project.query.join(ProjectColumn, ProjectColumn.project_id == Project.id)
-            .filter(ProjectColumn.id == card.column_id)
-            .first()
-        )
         db.session.commit()
         return jsonify(self._serialize(project)), 200
 
-    def delete_card(self, card_id):
+    @safe_route
+    def delete_card(self, card_id, token_data):
         card = ProjectCard.query.filter_by(id=card_id).first()
         if not card:
             return jsonify("Card nao encontrado"), 404
@@ -287,6 +345,10 @@ class ProjectService:
             .filter(ProjectColumn.id == card.column_id)
             .first()
         )
+        user_id = _as_int(token_data.get("id"))
+        is_member = ProjectMember.query.filter_by(project_id=project.id, employee_id=user_id).first() is not None
+        if project.dono != user_id and not is_member:
+            return jsonify("Sem permissao para excluir cards neste projeto"), 403
         ProjectCardMember.query.filter_by(card_id=card.id).delete()
         db.session.delete(card)
         db.session.commit()
