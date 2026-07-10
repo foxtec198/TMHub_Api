@@ -90,24 +90,23 @@ class RequestService:
 
         if data: new_rq.created_at = data
         if obs: new_rq.obs = str(obs).strip().upper()
-        
         db.session.add(new_rq)
         db.session.commit()
-        socketio.emit("new_request")
 
         TimelineService().create_event(
             req=new_rq,
             status=status,
-            tipo="Criado a requisição",
+            tipo="Criação da requisição",
             obs=obs
         )
         
+        socketio.emit("new_request")
         return jsonify("Requisição criada"), 201
 
     def update(self):
         bd = request.get_json()
-
         id = bd.get("id")
+
         req = Requisicao.query.filter(Requisicao.id == id).first()
         if not req: return jsonify("Requisição não encontrada"), 404
 
@@ -115,15 +114,15 @@ class RequestService:
         if "centro_id" in bd: req.cc = bd.get("centro_id")
         if "ausente_id" in bd: req.ausente_id = bd.get("ausente_id")
         if "motivo" in bd: req.motivo = bd.get("motivo")
+        db.session.commit()
 
         TimelineService().create_event(
             req=req,
             status="updated",
-            tipo="alteracao",
+            tipo="Alteração de Dados",
             obs=bd.get("obs", req.obs)
         )
 
-        db.session.commit()
         socketio.emit("new_request")
         return jsonify("Requisição alterada"), 200
         
@@ -182,7 +181,6 @@ class HistoryService:
         bd = request.get_json()
         id = bd.get("id")
         status = bd.get("status", "reproved")
-
         req = Requisicao.query.filter(Requisicao.id == id).first()
 
         requisicao_id = req.id
@@ -210,6 +208,10 @@ class HistoryService:
             )
         )
         
+        req.status = status
+        req.reserva_id = reserva_id
+        db.session.commit()
+        
         TimelineService().create_event(
             req= req,
             status= status,
@@ -217,10 +219,6 @@ class HistoryService:
             obs= obs
         )
 
-        req.status = status
-        req.reserva_id = reserva_id
-
-        db.session.commit()
         socketio.emit("new_history")
         return jsonify("Sucesso"), 201
 
@@ -239,6 +237,7 @@ class TimelineService:
                 obs=obs or req.obs
             )
         )
+        db.session.commit()
 
     def read(self):
         requisicao_id = request.args.get("requisicao_id")
@@ -271,8 +270,6 @@ class TimelineService:
             .order_by(Timeline.created_at.desc())
         )
 
-        if requisicao_id:
-            query = query.filter(Timeline.requisicao_id == requisicao_id)
-
+        if requisicao_id: query = query.filter(Timeline.requisicao_id == requisicao_id)
         timelines = query.all()
         return jsonify([t._asdict() for t in timelines]), 200
