@@ -11,7 +11,6 @@ from models.cargos import Cargos
 from datetime import datetime as dt
 from dateutils import relativedelta
 from flask import jsonify, request
-from routes import reposicao
 from utils.socket import socketio
 from calendar import monthrange
 from sqlalchemy import case
