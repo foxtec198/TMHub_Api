@@ -26,7 +26,3 @@ def request():
 # Timeline de eventos
 @replace_bp.route("/timeline", methods=["GET"])
 def timeline(): return timeline_service.read()
-
-# Alterar requisição aberta
-@replace_bp.route("/request/<int:id>", methods=["PATCH"])
-def update_request(id): return rq_service.update(id)
