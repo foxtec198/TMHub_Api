@@ -29,6 +29,7 @@ class AuthService:
             "display_name": user.nome, 
             "access_token": token, 
             "role": user.role, 
+            "email": user.email,
+            "foto_perfil": user.foto_perfil,
             "last_login": last_login
         }), 200
-    

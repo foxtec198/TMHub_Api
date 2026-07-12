@@ -13,3 +13,7 @@ class Users(BaseModel):
     created_at = db.Column(db.DateTime, default=dt.now)
     last_login = db.Column(db.DateTime)
     role = db.Column(db.String, default="USER")
+    foto_perfil = db.Column(db.Text)
+    email_pendente = db.Column(db.String)
+    email_codigo_hash = db.Column(db.String)
+    email_codigo_expira_em = db.Column(db.DateTime)

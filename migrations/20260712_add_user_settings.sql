@@ -1,0 +1,4 @@
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_perfil TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email_pendente VARCHAR;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email_codigo_hash VARCHAR;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email_codigo_expira_em TIMESTAMP;
