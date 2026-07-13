@@ -39,7 +39,7 @@ class DashboardService:
             .join(Situations, Situations.id == Employees.situacao)
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .outerjoin(Cities, Cities.id == CostCenters.cidade_id)
-            .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento != 0)
+            .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento.notin_([0, 10, 24]))
         )
 
         employees = query.order_by(

@@ -1,4 +1,4 @@
-from flask import request as rq, jsonify
+from flask import request as rq, jsonify, send_file
 from models.usuarios import Users, db
 from utils.check_field import check_field
 from hashlib import sha256
@@ -9,44 +9,231 @@ from os import getenv
 import re
 import secrets
 import smtplib
+from io import BytesIO
+from openpyxl import Workbook, load_workbook
 
 PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PHOTO_PATTERN = re.compile(r"^data:image/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$")
 
 class UserServices:
-    def read(self):
-        allUser = db.session.query(Users.id, Users.nome).all()
-        return jsonify([u._asdict() for u in allUser])
+    @staticmethod
+    def _is_admin(token_data):
+        return str(token_data.get("perm", "")).upper() == "ADMIN"
+
+    @staticmethod
+    def _normalize_cpf(value):
+        return re.sub(r"\D", "", str(value or ""))
 
     @safe_route
-    def create(self):
-        # Dados vindos do request
-        body = rq.get_json()
-        nome = body.get("nome")
-        cpf = body.get("cpf")
-        email = body.get("email")
-        pwd = body.get("password")
+    def read(self, token_data):
+        detailed = rq.args.get("detail") == "1"
+        users = Users.query.order_by(Users.nome).all()
 
-        ok, error = check_field(nome=nome, cpf=cpf, senha=pwd)
-        if not ok:
-            return jsonify(error), 400  # Retorna BAD REQUEST
+        if not detailed:
+            return jsonify([{"id": user.id, "nome": user.nome} for user in users]), 200
 
-        new_user = Users(nome=nome, cpf=cpf, hash=sha256(str(pwd).encode()).hexdigest())
-        if email:
-            new_user.email = email  # Seta o email somente se houver
-
-        db.session.add(new_user)  # Adiciona o novo usuario ao banco
-        db.session.commit()  # Commit geral
-
-        # Retoran 201, CREATED
-        return jsonify("Usuário criado com sucesso!"), 201
+        is_admin = self._is_admin(token_data)
+        return jsonify([{
+            "id": user.id,
+            "nome": user.nome,
+            "email": user.email,
+            "cpf": user.cpf if is_admin else None,
+            "role": user.role,
+            "created_at": user.created_at,
+            "last_login": user.last_login,
+        } for user in users]), 200
 
     @safe_route
-    def update(self): ...
+    def create(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem criar usuários."), 403
+
+        user, error = self._build_user(rq.get_json(silent=True) or {})
+        if error:
+            return jsonify(error), 400
+
+        db.session.add(user)
+        db.session.commit()
+        return jsonify(self._serialize_admin(user)), 201
+
+    @safe_route
+    def update(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem modificar usuários."), 403
+
+        body = rq.get_json(silent=True) or {}
+        user = db.session.get(Users, body.get("id"))
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+
+        error = self._apply_user_changes(user, body)
+        if error:
+            return jsonify(error), 400
+
+        db.session.commit()
+        return jsonify(self._serialize_admin(user)), 200
 
     @safe_route
     def delete(self): ...
+
+    @safe_route
+    def import_users(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem importar usuários."), 403
+
+        uploaded = rq.files.get("file")
+        if not uploaded or not uploaded.filename.lower().endswith(".xlsx"):
+            return jsonify("Envie uma planilha no formato .xlsx."), 400
+
+        try:
+            workbook = load_workbook(uploaded.stream, read_only=True, data_only=True)
+            rows = workbook.active.iter_rows(values_only=True)
+            headers = [str(value or "").strip().lower() for value in next(rows)]
+        except (StopIteration, ValueError, OSError):
+            return jsonify("Não foi possível ler a planilha."), 400
+
+        required = ["nome", "cpf", "email", "role", "password"]
+        if any(header not in headers for header in required):
+            return jsonify(f"A planilha deve conter as colunas: {', '.join(required)}."), 400
+
+        indexes = {header: headers.index(header) for header in required}
+        created = []
+        errors = []
+
+        for row_number, row in enumerate(rows, start=2):
+            if not any(value is not None and str(value).strip() for value in row):
+                continue
+            if row_number > 1001:
+                errors.append("A planilha pode conter no máximo 1000 usuários.")
+                break
+
+            data = {key: row[indexes[key]] for key in required}
+            user, error = self._build_user(data)
+            if error:
+                errors.append(f"Linha {row_number}: {error}")
+                continue
+            db.session.add(user)
+            db.session.flush()
+            created.append(user)
+
+        if errors:
+            db.session.rollback()
+            return jsonify({"message": "A importação foi cancelada.", "errors": errors}), 400
+        if not created:
+            return jsonify("A planilha não contém usuários para importar."), 400
+
+        db.session.commit()
+        return jsonify({"message": f"{len(created)} usuários importados com sucesso.", "total": len(created)}), 201
+
+    @safe_route
+    def download_template(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem baixar o modelo de importação."), 403
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Usuarios"
+        worksheet.append(["nome", "cpf", "email", "role", "password"])
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = "A1:E1"
+        for column, width in {"A": 32, "B": 16, "C": 34, "D": 12, "E": 24}.items():
+            worksheet.column_dimensions[column].width = width
+
+        instructions = workbook.create_sheet("Instrucoes")
+        instructions.append(["Campo", "Regra"])
+        instructions.append(["nome", "Obrigatório"])
+        instructions.append(["cpf", "Opcional; quando informado, use 11 dígitos sem pontuação"])
+        instructions.append(["email", "Opcional, válido e único"])
+        instructions.append(["role", "SUPERVISOR, GERENTE, USER ou ADMIN"])
+        instructions.append(["password", "Mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo"])
+
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="modelo_importacao_usuarios.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def _build_user(self, body):
+        nome = str(body.get("nome") or "").strip()
+        cpf = self._normalize_cpf(body.get("cpf")) or None
+        email = str(body.get("email") or "").strip().lower() or None
+        role = str(body.get("role") or "USER").strip().upper()
+        password = str(body.get("password") or "")
+
+        ok, error = check_field(nome=nome, senha=password)
+        if not ok:
+            return None, error
+        if cpf and len(cpf) != 11:
+            return None, "O CPF deve conter 11 dígitos."
+        if email and not EMAIL_PATTERN.fullmatch(email):
+            return None, "Informe um e-mail válido."
+        if role not in {"SUPERVISOR", "GERENTE", "USER", "ADMIN"}:
+            return None, "A role deve ser SUPERVISOR, GERENTE, USER ou ADMIN."
+        if not PASSWORD_PATTERN.fullmatch(password):
+            return None, "A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."
+        if cpf and Users.query.filter_by(cpf=cpf).first():
+            return None, "CPF já cadastrado."
+        if email and Users.query.filter_by(email=email).first():
+            return None, "E-mail já cadastrado."
+
+        return Users(nome=nome, cpf=cpf, email=email, role=role, hash=sha256(password.encode()).hexdigest()), None
+
+    def _apply_user_changes(self, user, body):
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password")):
+            return "Nenhuma alteração informada."
+
+        if "nome" in body:
+            nome = str(body.get("nome") or "").strip()
+            if len(nome) < 2:
+                return "Informe um nome válido."
+            user.nome = nome
+
+        if "cpf" in body:
+            cpf = self._normalize_cpf(body.get("cpf")) or None
+            if cpf and len(cpf) != 11:
+                return "O CPF deve conter 11 dígitos."
+            if cpf and Users.query.filter(Users.cpf == cpf, Users.id != user.id).first():
+                return "CPF já cadastrado."
+            user.cpf = cpf
+
+        if "email" in body:
+            email = str(body.get("email") or "").strip().lower() or None
+            if email and not EMAIL_PATTERN.fullmatch(email):
+                return "Informe um e-mail válido."
+            if email and Users.query.filter(Users.email == email, Users.id != user.id).first():
+                return "E-mail já cadastrado."
+            user.email = email
+
+        if "role" in body:
+            role = str(body.get("role") or "").strip().upper()
+            if role not in {"SUPERVISOR", "GERENTE", "USER", "ADMIN"}:
+                return "A role deve ser SUPERVISOR, GERENTE, USER ou ADMIN."
+            user.role = role
+
+        if body.get("password"):
+            password = str(body["password"])
+            if not PASSWORD_PATTERN.fullmatch(password):
+                return "A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."
+            user.hash = sha256(password.encode()).hexdigest()
+
+        return None
+
+    @staticmethod
+    def _serialize_admin(user):
+        return {
+            "id": user.id,
+            "nome": user.nome,
+            "email": user.email,
+            "cpf": user.cpf,
+            "role": user.role,
+            "created_at": user.created_at,
+            "last_login": user.last_login,
+        }
 
     @safe_route
     def profile(self, token_data):

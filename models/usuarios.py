@@ -8,7 +8,7 @@ class Users(BaseModel):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String)
     email = db.Column(db.String)
-    cpf = db.Column(db.String, unique=True, nullable=False)
+    cpf = db.Column(db.String, unique=True, nullable=True)
     hash = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)
     last_login = db.Column(db.DateTime)

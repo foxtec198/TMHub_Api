@@ -13,6 +13,12 @@ def root():
         case "DELETE": response = service.delete()
     return response
 
+@user_bp.post("/importar")
+def import_users(): return service.import_users()
+
+@user_bp.get("/modelo-importacao")
+def download_import_template(): return service.download_template()
+
 @user_bp.get("/perfil")
 def profile(): return service.profile()
 
