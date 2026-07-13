@@ -14,4 +14,7 @@ class Requisicao(BaseModel):
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now())
+    # Persist the calculated absence range so daily availability queries remain deterministic.
+    end_at = db.Column(db.DateTime)
+    quantidade_dias = db.Column(db.Integer, default=1)
     status = db.Column(db.String, default="pending")
