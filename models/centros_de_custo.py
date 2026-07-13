@@ -6,7 +6,7 @@ class CostCenters(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
     local = db.Column(db.String)
-    departamento = db.Column(db.String)
+    departamento = db.Column(db.Integer)
     supervisor_id = db.Column(db.Integer)
     cidade_id = db.Column(db.Integer)
     
