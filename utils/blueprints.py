@@ -16,6 +16,7 @@ from routes.produtos import produtos_bp
 from routes.movimentos import movimentos_bp
 
 from routes.admissao import admissao_bp
+from routes.ponto48 import ponto48_bp
 
 blueprints = {
     supervisores_bp: "/supervisores",
@@ -36,5 +37,6 @@ blueprints = {
     movimentos_bp: "/estoque/movimentos",
 
     #Admissão
-    admissao_bp: "/admissao/vagas"
+    admissao_bp: "/admissao/vagas",
+    ponto48_bp: "/dash/ponto-48h",
 }
