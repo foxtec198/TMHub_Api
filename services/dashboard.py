@@ -12,8 +12,44 @@ from models.rp_historico import History
 from models.rp_requisicao import Requisicao
 from models.supervisores import Supervisors
 from models.cargos import Cargos
+from models.cidades import Cities
+from models.situacoes import Situations
 
 class DashboardService:
+    @safe_route
+    def get_employees_by_department(self):
+        query = (
+            db.session.query(
+                Employees.id,
+                Employees.nome,
+                Employees.matricula,
+                Employees.data_admissao,
+                Situations.id.label("situacao_id"),
+                Situations.tipo.label("situacao"),
+                CostCenters.id.label("centro_id"),
+                CostCenters.local.label("centro_custo"),
+                CostCenters.departamento,
+                Supervisors.id.label("supervisor_id"),
+                Supervisors.nome.label("supervisor"),
+                Cities.id.label("cidade_id"),
+                Cities.descricao.label("cidade"),
+            )
+            .select_from(Employees)
+            .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .join(Situations, Situations.id == Employees.situacao)
+            .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
+            .outerjoin(Cities, Cities.id == CostCenters.cidade_id)
+            .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento != 0)
+        )
+
+        employees = query.order_by(
+            CostCenters.departamento,
+            CostCenters.local,
+            Employees.nome,
+        ).all()
+
+        return jsonify([employee._asdict() for employee in employees]), 200
+
     @safe_route
     def get_repos(self):
         bd = rq.get_json()
