@@ -74,3 +74,99 @@ class Ponto48HorasExtras(BaseModel):
     batida_impar = db.Column(db.Boolean, nullable=False, default=False)
     batida_irregular = db.Column(db.Boolean, nullable=False, default=False)
     irregularidade = db.Column(db.String(500))
+
+
+class Ponto48AjusteImport(BaseModel):
+    __tablename__ = "pt48_ajuste_importacoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    periodo_inicio = db.Column(db.Date, nullable=False, index=True)
+    periodo_fim = db.Column(db.Date, nullable=False, index=True)
+    arquivo_ajustes = db.Column(db.String(255), nullable=False)
+    criado_por_usuario_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
+
+
+class Ponto48Ajuste(BaseModel):
+    __tablename__ = "pt48_ajustes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    importacao_id = db.Column(
+        db.Integer,
+        db.ForeignKey("pt48_ajuste_importacoes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    nome_colaborador = db.Column(db.String(255), nullable=False)
+    nome_normalizado = db.Column(db.String(255), nullable=False, index=True)
+    match_status = db.Column(db.String(20), nullable=False, default="unmatched")
+    data = db.Column(db.Date, nullable=False, index=True)
+    entrada_1 = db.Column(db.String(5))
+    saida_1 = db.Column(db.String(5))
+    entrada_2 = db.Column(db.String(5))
+    saida_2 = db.Column(db.String(5))
+    entrada_3 = db.Column(db.String(5))
+    saida_3 = db.Column(db.String(5))
+    quantidade_batidas = db.Column(db.Integer, nullable=False, default=0)
+    batida_impar = db.Column(db.Boolean, nullable=False, default=False)
+    ajustado_por = db.Column(db.String(255))
+    alterado_em = db.Column(db.DateTime)
+    solicitado_em = db.Column(db.DateTime)
+    motivo = db.Column(db.String(255))
+    solicitacao = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class Ponto48EspelhoImport(BaseModel):
+    __tablename__ = "pt48_espelho_importacoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    periodo_inicio = db.Column(db.Date, nullable=False, index=True)
+    periodo_fim = db.Column(db.Date, nullable=False, index=True)
+    arquivo_espelho = db.Column(db.String(255), nullable=False)
+    criado_por_usuario_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
+
+
+class Ponto48Espelho(BaseModel):
+    __tablename__ = "pt48_espelho_ponto"
+
+    id = db.Column(db.Integer, primary_key=True)
+    importacao_id = db.Column(
+        db.Integer,
+        db.ForeignKey("pt48_espelho_importacoes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    nome_colaborador = db.Column(db.String(255), nullable=False)
+    nome_normalizado = db.Column(db.String(255), nullable=False, index=True)
+    match_status = db.Column(db.String(20), nullable=False, default="unmatched")
+    data = db.Column(db.Date, nullable=False, index=True)
+    entrada_1 = db.Column(db.String(5))
+    saida_1 = db.Column(db.String(5))
+    entrada_2 = db.Column(db.String(5))
+    saida_2 = db.Column(db.String(5))
+    entrada_3 = db.Column(db.String(5))
+    saida_3 = db.Column(db.String(5))
+    quantidade_batidas = db.Column(db.Integer, nullable=False, default=0)
+    batida_impar = db.Column(db.Boolean, nullable=False, default=False)
+    credito_minutos = db.Column(db.Integer, nullable=False, default=0)
+    debito_minutos = db.Column(db.Integer, nullable=False, default=0)
+    intervalo_minutos = db.Column(db.Integer, nullable=False, default=0)
+    horas_normais_minutos = db.Column(db.Integer, nullable=False, default=0)
+    horas_extras_1_minutos = db.Column(db.Integer, nullable=False, default=0)
+    horas_extras_2_minutos = db.Column(db.Integer, nullable=False, default=0)
+    adicional_noturno_minutos = db.Column(db.Integer, nullable=False, default=0)
+    saldo_minutos = db.Column(db.Integer, nullable=False, default=0)
+    motivo = db.Column(db.Text)
