@@ -507,6 +507,7 @@ class HistoryService:
                 ).label("reserva"),
                 History.motivo,
                 History.obs,
+                Requisicao.quantidade_dias.label("dias"),
                 Supervisors.nome.label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
@@ -516,6 +517,7 @@ class HistoryService:
             )
             .select_from(History)
             .join(latest_history, History.id == latest_history.c.id)
+            .outerjoin(Requisicao, Requisicao.id == History.requisicao_id)
             .join(Ausente, Ausente.id == History.ausente_id)
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
