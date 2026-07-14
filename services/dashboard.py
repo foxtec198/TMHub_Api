@@ -69,7 +69,11 @@ class DashboardService:
             end = init + relativedelta(day=dias_no_mes , hour=23, minute=59, second=59)
         
         response = {"abertas": 0, "historico": [], "multas": [], "meter": {'total': 0, 'cobertas': 0, 'sem_cobertura': 0}}
-        response["abertas"] = Requisicao.query.filter(Requisicao.created_at.between(init, end)).count()
+        # Open requests follow the same status contract used by the operational request queue.
+        response["abertas"] = Requisicao.query.filter(
+            Requisicao.created_at.between(init, end),
+            Requisicao.status.in_(["pending", "updated"]),
+        ).count()
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
