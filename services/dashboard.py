@@ -77,6 +77,15 @@ class DashboardService:
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        # Keep one closed history row per request so dashboard totals are not inflated by legacy duplicates.
+        latest_history = (
+            db.session.query(
+                History.requisicao_id,
+                func.max(History.id).label("id"),
+            )
+            .group_by(History.requisicao_id)
+            .subquery()
+        )
         hists = (
             db.session.query(
                 History.id,
@@ -94,12 +103,16 @@ class DashboardService:
                 History.obs,
             )
             .select_from(History)
+            .join(latest_history, History.id == latest_history.c.id)
             .join(Ausente, Ausente.id == History.ausente_id)
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
             .join(CostCenters, CostCenters.id == History.cc)
             .join(Supervisors, Supervisors.id == History.supervisor_id)
-            .filter(History.created_at.between(init, end))
+            .filter(
+                History.created_at.between(init, end),
+                History.status.in_(["approved", "reproved"]),
+            )
             .order_by(History.created_at.desc())
             .all()
         )
