@@ -19,6 +19,10 @@ class Vacancy(BaseModel):
     # Preenchimento manual
     horario_trabalho = db.Column(db.String)
     motivo_saida = db.Column(db.String)
+    # Nome livre: a pessoa ainda não existe na tabela de colaboradores.
+    colaborador_entrada = db.Column(db.String)
+    # Dia em que o supervisor avisou a vaga ou encaminhou o currículo.
+    data_aviso = db.Column(db.Date)
 
     # Status da vaga
     status = db.Column(db.String, default="aberta")
