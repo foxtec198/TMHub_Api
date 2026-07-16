@@ -1,7 +1,7 @@
 from flask import jsonify, request as rq
 from utils.safe_route import safe_route
 from utils.check_field import check_field
-from datetime import datetime as dt
+from datetime import date, datetime as dt
 
 from models.colaboradores import Employees
 from models.cargos import Cargos
@@ -11,6 +11,13 @@ from models.admissao import Vacancy, db
 STATUS_VALIDOS = ("aberta", "entrevista", "certidoes_tj", "aguardando_aso", "unico", "concluido")
 
 class VacancyService:
+    def _parse_date(self, value):
+        """Normaliza datas do JSON sem carregar horário ou conversão de fuso."""
+        if not value: return None
+        if isinstance(value, dt): return value.date()
+        if isinstance(value, date): return value
+        return date.fromisoformat(str(value)[:10])
+
     def _lookup_employee(self, matricula):
         return (
             db.session.query(
@@ -71,6 +78,8 @@ class VacancyService:
     def create(self):
         body = rq.get_json()
         matricula = body.get("matricula")
+        colaborador_entrada = (body.get("colaborador_entrada") or "").strip() or None
+        data_aviso_raw = body.get("data_aviso")
         horario_trabalho = body.get("horario_trabalho")
         motivo_saida = body.get("motivo_saida")
 
@@ -80,6 +89,11 @@ class VacancyService:
         emp = self._lookup_employee(matricula)
         if not emp: return jsonify("Colaborador não encontrado na base"), 404
 
+        try:
+            data_aviso = self._parse_date(data_aviso_raw)
+        except ValueError:
+            return jsonify("Data do aviso inválida"), 400
+
         nova_vaga = Vacancy(
             matricula=emp.matricula,
             colaborador=emp.nome,
@@ -88,6 +102,8 @@ class VacancyService:
             centro_id=emp.centro_id,
             funcao=emp.funcao,
             carga_horaria=emp.carga_horaria,
+            colaborador_entrada=colaborador_entrada,
+            data_aviso=data_aviso,
             horario_trabalho=horario_trabalho,
             motivo_saida=motivo_saida,
         )
@@ -122,7 +138,13 @@ class VacancyService:
 
             vaga.status = novo_status
 
-        campos = ("horario_trabalho", "motivo_saida", "entrevistador", "entrevista_data")
+        if "data_aviso" in body:
+            try:
+                vaga.data_aviso = self._parse_date(body["data_aviso"])
+            except ValueError:
+                return jsonify("Data do aviso inválida"), 400
+
+        campos = ("horario_trabalho", "motivo_saida", "entrevistador", "entrevista_data", "colaborador_entrada")
         for campo in campos:
             if campo in body: setattr(vaga, campo, body[campo])
 
