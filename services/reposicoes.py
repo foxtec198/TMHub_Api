@@ -8,6 +8,7 @@ from models.rp_historico import History
 from models.cargos import Cargos
 from models.usuarios import Users
 from models.reservas_tecnicas import Floaters
+from models.situacoes import Situations
 
 # Utils
 from datetime import date, datetime as dt, timedelta
@@ -15,7 +16,7 @@ from dateutils import relativedelta
 from flask import jsonify, request, send_file
 from utils.socket import socketio
 from calendar import monthrange
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func
 from utils.check_field import check_field
 from utils.safe_route import safe_route
 from sqlalchemy.orm import aliased
@@ -429,11 +430,43 @@ class RequestService:
                 Requisicao.status.in_(["pending", "updated", "approved"]),
             ).distinct().all()
         }
+        # Último contrato considera todo uso registrado até o fim do dia consultado.
+        # A janela mantém somente a requisição mais recente de cada reserva.
+        last_usage = (
+            db.session.query(
+                Requisicao.reserva_id.label("reserva_id"),
+                CostCenters.local.label("ultimo_contrato"),
+                func.row_number().over(
+                    partition_by=Requisicao.reserva_id,
+                    order_by=Requisicao.created_at.desc(),
+                ).label("ordem"),
+            )
+            .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .filter(
+                Requisicao.created_at <= end,
+                Requisicao.reserva_id > 0,
+                Requisicao.status.in_(["pending", "updated", "approved"]),
+            )
+            .subquery()
+        )
+
         reservations = (
-            db.session.query(Employees.id, Employees.nome, Employees.matricula, Cargos.nome.label("cargo"))
+            db.session.query(
+                Employees.id,
+                Employees.nome,
+                Employees.matricula,
+                Cargos.nome.label("cargo"),
+                Situations.tipo.label("situacao"),
+                last_usage.c.ultimo_contrato,
+            )
             .select_from(Floaters)
             .join(Employees, Employees.id == Floaters.employee_id)
             .join(Cargos, Cargos.id == Employees.cargo)
+            .join(Situations, Situations.id == Employees.situacao)
+            .outerjoin(last_usage, and_(
+                last_usage.c.reserva_id == Employees.id,
+                last_usage.c.ordem == 1,
+            ))
             .order_by(Employees.nome)
             .all()
         )
