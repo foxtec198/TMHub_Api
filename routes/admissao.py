@@ -25,6 +25,10 @@ def vagas_horarios():
 def historico_entrevistas():
     return service.read_interview_history()
 
+@admissao_bp.route("/candidatos-historico", methods=["POST"])
+def candidatos_historico():
+    return service.create_candidate_history()
+
 @admissao_bp.route("/dashboard", methods=["GET"])
 def dashboard_admissoes():
     """Expõe os indicadores consolidados protegidos pela autenticação do serviço."""

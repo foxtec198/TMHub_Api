@@ -10,10 +10,12 @@ from zoneinfo import ZoneInfo
 from models.colaboradores import Employees
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
-from models.admissao import InterviewHistory, Vacancy, VacancyEvent, WorkSchedule, db
+from models.admissao import InterviewHistory, Vacancy, VacancyCandidateHistory, VacancyEvent, WorkSchedule, db
+from models.supervisores import Supervisors
 from models.usuarios import Users
 
 STATUS_VALIDOS = ("aberta", "entrevista", "certidao", "aso", "unico", "concluido")
+RESULTADOS_CANDIDATO = ("desistiu", "reprovado", "aprovado", "outro")
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 class VacancyService:
@@ -138,6 +140,7 @@ class VacancyService:
 
         colaborador_saida = aliased(Employees)
         candidato = aliased(Employees)
+        responsavel = aliased(Users)
         query = (
             db.session.query(
                 InterviewHistory,
@@ -146,10 +149,12 @@ class VacancyService:
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento.label("departamento"),
                 candidato.nome.label("candidato_nome_vinculado"),
+                responsavel.nome.label("responsavel"),
             )
             .join(colaborador_saida, colaborador_saida.id == InterviewHistory.colaborador_saida_id)
             .join(CostCenters, CostCenters.id == InterviewHistory.centro_custo_id)
             .outerjoin(candidato, candidato.id == InterviewHistory.candidato_colaborador_id)
+            .outerjoin(responsavel, responsavel.id == InterviewHistory.responsavel_usuario_id)
         )
         if search:
             term = f"%{search}%"
@@ -180,6 +185,7 @@ class VacancyService:
                 "departamento": result_row.departamento,
                 "candidato_nome": result_row.candidato_nome_vinculado or row.candidato_nome,
                 "candidato_vinculado": row.candidato_colaborador_id is not None,
+                "responsavel": result_row.responsavel,
             })
             item["entrevista_data"] = row.entrevista_data.isoformat() if row.entrevista_data else None
             item["inicio_data"] = row.inicio_data.isoformat() if row.inicio_data else None
@@ -208,13 +214,16 @@ class VacancyService:
 
         # O painel reúne o histórico importado e as vagas alimentadas no TMHub em uma série única.
         records = []
+        responsavel_historico = aliased(Users)
         historical_rows = (
             db.session.query(
                 InterviewHistory,
                 CostCenters.departamento,
                 CostCenters.local.label("contrato"),
+                responsavel_historico.nome.label("responsavel"),
             )
             .join(CostCenters, CostCenters.id == InterviewHistory.centro_custo_id)
+            .outerjoin(responsavel_historico, responsavel_historico.id == InterviewHistory.responsavel_usuario_id)
             .filter(InterviewHistory.aviso_em.between(start_at, end_at))
             .all()
         )
@@ -229,25 +238,40 @@ class VacancyService:
                 "concluido_em": item.concluido_em,
                 "departamento": row.departamento,
                 "contrato": row.contrato,
-                "responsavel": item.supervisor or "Legado",
+                "responsavel": row.responsavel or "Rafael Nogara",
                 "colaborador_saida": None,
                 "candidato": item.candidato_nome,
+                "tentativas": 1 if item.candidato_nome else 0,
             })
 
+        responsavel_vaga = aliased(Users)
         vacancy_rows = (
             db.session.query(
                 Vacancy,
                 Employees.nome.label("colaborador_saida"),
                 CostCenters.departamento,
                 CostCenters.local.label("contrato"),
+                responsavel_vaga.nome.label("responsavel"),
             )
             .join(Employees, Employees.id == Vacancy.colaborador_id)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .outerjoin(responsavel_vaga, responsavel_vaga.id == Vacancy.responsavel_usuario_id)
             .filter(Vacancy.aviso_em.between(start_at, end_at))
             .all()
         )
         # Eventos preservam quem realizou a primeira ação e em qual instante ela ocorreu.
         vacancy_ids = [row.Vacancy.id for row in vacancy_rows]
+        candidate_attempts = {}
+        if vacancy_ids:
+            candidate_attempts = dict(
+                db.session.query(
+                    VacancyCandidateHistory.vaga_id,
+                    db.func.count(VacancyCandidateHistory.id),
+                )
+                .filter(VacancyCandidateHistory.vaga_id.in_(vacancy_ids))
+                .group_by(VacancyCandidateHistory.vaga_id)
+                .all()
+            )
         events_by_vacancy = {vacancy_id: [] for vacancy_id in vacancy_ids}
         if vacancy_ids:
             event_rows = (
@@ -264,6 +288,11 @@ class VacancyService:
             vacancy = row.Vacancy
             actions = [event for event in events_by_vacancy.get(vacancy.id, []) if event.VacancyEvent.status != "aberta"]
             first_action = actions[0] if actions else None
+            finalized_attempts = candidate_attempts.get(vacancy.id, 0)
+            if vacancy.status == "concluido":
+                attempts = max(finalized_attempts, 1 if vacancy.colaborador_entrada else 0)
+            else:
+                attempts = finalized_attempts + (1 if vacancy.colaborador_entrada else 0)
             records.append({
                 "id": f"vaga-{vacancy.id}",
                 "status": vacancy.status,
@@ -273,9 +302,10 @@ class VacancyService:
                 "concluido_em": vacancy.concluido_em,
                 "departamento": row.departamento,
                 "contrato": row.contrato,
-                "responsavel": first_action.usuario_nome if first_action else "Aguardando ação",
+                "responsavel": row.responsavel or (first_action.usuario_nome if first_action else "Rafael Nogara"),
                 "colaborador_saida": row.colaborador_saida,
                 "candidato": vacancy.colaborador_entrada,
+                "tentativas": attempts,
             })
 
         # Tempos em aberto usam o instante atual; tempos concluídos usam datas persistidas.
@@ -405,10 +435,15 @@ class VacancyService:
 
         colaborador_entrada = aliased(Employees)
         recrutador = aliased(Users)
+        responsavel = aliased(Users)
         query = (
             db.session.query(
                 Vacancy.id,
                 Vacancy.colaborador_id,
+                Vacancy.supervisor_id,
+                Supervisors.nome.label("supervisor"),
+                Vacancy.responsavel_usuario_id,
+                responsavel.nome.label("responsavel"),
                 Employees.matricula,
                 Employees.nome.label("colaborador"),
                 CostCenters.departamento,
@@ -440,6 +475,8 @@ class VacancyService:
             .join(Employees, Employees.id == Vacancy.colaborador_id)
             .join(Cargos, Cargos.id == Employees.cargo)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .outerjoin(Supervisors, Supervisors.id == Vacancy.supervisor_id)
+            .outerjoin(responsavel, responsavel.id == Vacancy.responsavel_usuario_id)
             .outerjoin(WorkSchedule, WorkSchedule.id == Vacancy.horario_trabalho_id)
             .outerjoin(colaborador_entrada, colaborador_entrada.id == Vacancy.colaborador_entrada_id)
             .outerjoin(recrutador, recrutador.id == Vacancy.concluido_por_usuario_id)
@@ -449,13 +486,89 @@ class VacancyService:
 
         query = query.order_by(Vacancy.created_at.asc() if order == "asc" else Vacancy.created_at.desc())
         vagas = query.all()
-        return jsonify([v._asdict() for v in vagas]), 200
+        vaga_ids = [vaga.id for vaga in vagas]
+        historicos_por_vaga = {vaga_id: [] for vaga_id in vaga_ids}
+        if vaga_ids:
+            usuario_registro = aliased(Users)
+            colaborador_vinculado = aliased(Employees)
+            historicos = (
+                db.session.query(
+                    VacancyCandidateHistory,
+                    usuario_registro.nome.label("registrado_por"),
+                    colaborador_vinculado.nome.label("colaborador_vinculado"),
+                    colaborador_vinculado.matricula.label("colaborador_matricula"),
+                )
+                .outerjoin(usuario_registro, usuario_registro.id == VacancyCandidateHistory.registrado_por_usuario_id)
+                .outerjoin(colaborador_vinculado, colaborador_vinculado.id == VacancyCandidateHistory.colaborador_id)
+                .filter(VacancyCandidateHistory.vaga_id.in_(vaga_ids))
+                .order_by(VacancyCandidateHistory.ocorrido_em.desc(), VacancyCandidateHistory.id.desc())
+                .all()
+            )
+            for historico in historicos:
+                item = historico.VacancyCandidateHistory
+                historicos_por_vaga[item.vaga_id].append({
+                    "id": item.id,
+                    "candidato_nome": item.candidato_nome,
+                    "telefone": item.telefone,
+                    "resultado": item.resultado,
+                    "observacao": item.observacao,
+                    "colaborador_id": item.colaborador_id,
+                    "colaborador_vinculado": historico.colaborador_vinculado,
+                    "colaborador_matricula": historico.colaborador_matricula,
+                    "registrado_por": historico.registrado_por,
+                    "ocorrido_em": item.ocorrido_em.isoformat() if item.ocorrido_em else None,
+                })
+
+        resultado = []
+        for vaga in vagas:
+            item = vaga._asdict()
+            item["historico_candidatos"] = historicos_por_vaga.get(vaga.id, [])
+            resultado.append(item)
+        return jsonify(resultado), 200
+
+    @safe_route
+    def create_candidate_history(self, token_data):
+        """Registra um desfecho manual e libera a vaga para receber outro candidato."""
+        body = rq.get_json() or {}
+        vaga = db.session.get(Vacancy, body.get("vaga_id"))
+        if not vaga: return jsonify("Vaga não encontrada"), 404
+        if vaga.status == "concluido": return jsonify("A vaga já está concluída"), 400
+
+        resultado = (body.get("resultado") or "").strip().lower()
+        if resultado not in ("desistiu", "reprovado", "outro"):
+            return jsonify("Resultado de candidato inválido"), 400
+
+        candidato_nome = (body.get("candidato_nome") or vaga.colaborador_entrada or "").strip()
+        observacao = (body.get("observacao") or "").strip()
+        telefone = (body.get("telefone") or vaga.telefone_colaborador_entrada or "").strip() or None
+        if not candidato_nome: return jsonify("Informe o nome do candidato"), 400
+        if not observacao: return jsonify("Informe a justificativa do resultado"), 400
+
+        usuario = self._authenticated_user(token_data)
+        if not usuario: return jsonify("Usuário responsável não encontrado"), 404
+
+        db.session.add(VacancyCandidateHistory(
+            vaga_id=vaga.id,
+            candidato_nome=candidato_nome,
+            telefone=telefone,
+            resultado=resultado,
+            observacao=observacao,
+            registrado_por_usuario_id=usuario.id,
+            ocorrido_em=dt.now(TIMEZONE),
+        ))
+        # A tentativa permanece no histórico e os campos livres ficam prontos para a próxima pessoa.
+        vaga.colaborador_entrada = None
+        vaga.telefone_colaborador_entrada = None
+        vaga.updated_at = dt.now(TIMEZONE)
+        db.session.commit()
+        return jsonify("Resultado do candidato registrado com sucesso"), 201
 
     @safe_route
     def create(self, token_data):
         """Cria a vaga e seu primeiro evento de auditoria na mesma transação."""
         body = rq.get_json()
         colaborador_id = body.get("colaborador_id")
+        supervisor_id = body.get("supervisor_id")
         colaborador_entrada = (body.get("colaborador_entrada") or "").strip() or None
         telefone_colaborador_entrada = (body.get("telefone_colaborador_entrada") or "").strip() or None
         aviso_em_raw = body.get("aviso_em") or body.get("data_aviso")
@@ -464,6 +577,7 @@ class VacancyService:
 
         ok, error = check_field(
             colaborador_id=colaborador_id,
+            supervisor_id=supervisor_id,
             aviso_em=aviso_em_raw,
             horario_trabalho=horario_trabalho,
             motivo_saida=motivo_saida,
@@ -472,6 +586,9 @@ class VacancyService:
 
         emp = self._lookup_employee(colaborador_id)
         if not emp: return jsonify("Colaborador não encontrado na base"), 404
+
+        supervisor = db.session.get(Supervisors, supervisor_id)
+        if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
 
         try:
             schedule = self._resolve_schedule(horario_trabalho)
@@ -492,6 +609,8 @@ class VacancyService:
 
         nova_vaga = Vacancy(
             colaborador_id=emp.id,
+            supervisor_id=supervisor.id,
+            responsavel_usuario_id=recrutador.id,
             colaborador_entrada=colaborador_entrada,
             telefone_colaborador_entrada=telefone_colaborador_entrada,
             data_aviso=aviso_em.date(),
@@ -524,6 +643,7 @@ class VacancyService:
         vaga = Vacancy.query.filter_by(id=id).first()
         if not vaga: return jsonify("Vaga não encontrada"), 404
 
+        status_anterior = vaga.status
         novo_status = body.get("status")
         if novo_status is not None and novo_status not in STATUS_VALIDOS:
             return jsonify("Status inválido"), 400
@@ -572,6 +692,16 @@ class VacancyService:
                 vaga.observacao_conclusao = (body.get("observacao_conclusao") or "").strip() or None
                 vaga.concluido_por_usuario_id = usuario_acao.id
                 vaga.concluido_em = dt.now(TIMEZONE)
+                db.session.add(VacancyCandidateHistory(
+                    vaga_id=vaga.id,
+                    candidato_nome=vaga.colaborador_entrada,
+                    telefone=vaga.telefone_colaborador_entrada,
+                    resultado="aprovado",
+                    observacao=vaga.observacao_conclusao,
+                    colaborador_id=novo_colaborador.id,
+                    registrado_por_usuario_id=usuario_acao.id,
+                    ocorrido_em=vaga.concluido_em,
+                ))
 
             vaga.status = novo_status
             db.session.add(VacancyEvent(
@@ -608,9 +738,14 @@ class VacancyService:
             if not schedule: return jsonify("Informe o horário de trabalho"), 400
             vaga.horario_trabalho_id = schedule.id
 
+        if "supervisor_id" in body:
+            supervisor = db.session.get(Supervisors, body["supervisor_id"])
+            if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
+            vaga.supervisor_id = supervisor.id
+
         # Após a conclusão, o colaborador vinculado é a fonte oficial e o texto fica congelado.
         candidate_fields = ("colaborador_entrada", "telefone_colaborador_entrada")
-        if vaga.status == "concluido" and any(campo in body for campo in candidate_fields):
+        if status_anterior == "concluido" and any(campo in body for campo in candidate_fields):
             return jsonify("Nome e telefone do candidato não podem ser alterados após a conclusão"), 400
 
         campos = ("motivo_saida", "entrevistador", "entrevista_data", *candidate_fields)
