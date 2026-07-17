@@ -29,6 +29,11 @@ class InterviewHistory(BaseModel):
         nullable=False,
         index=True,
     )
+    responsavel_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="RESTRICT"),
+        index=True,
+    )
     candidato_colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="SET NULL"), index=True)
     # O candidato pode ainda não existir na base; nesse caso preservamos seu nome em texto.
     candidato_nome = db.Column(db.String(255))
@@ -62,6 +67,35 @@ class VacancyEvent(BaseModel):
     ocorrido_em = db.Column(db.DateTime(timezone=True), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=dt.now)
 
+
+class VacancyCandidateHistory(BaseModel):
+    """Preserva cada candidato considerado e seu resultado dentro da vaga."""
+    __tablename__ = "ad_vagas_candidatos_historico"
+
+    id = db.Column(db.Integer, primary_key=True)
+    vaga_id = db.Column(
+        db.Integer,
+        db.ForeignKey("ad_vagas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidato_nome = db.Column(db.String(255), nullable=False)
+    telefone = db.Column(db.String(50))
+    resultado = db.Column(db.String(30), nullable=False)
+    observacao = db.Column(db.Text)
+    colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        index=True,
+    )
+    registrado_por_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        index=True,
+    )
+    ocorrido_em = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
+    created_at = db.Column(db.DateTime(timezone=True), default=dt.now)
+
 class Vacancy(BaseModel):
     """Vaga operacional vinculada ao colaborador que será substituído."""
     __tablename__ = "ad_vagas"
@@ -73,6 +107,18 @@ class Vacancy(BaseModel):
         db.Integer,
         db.ForeignKey("colaboradores.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+    # Nullable preserva vagas legadas; novas vagas exigem o supervisor no serviço.
+    supervisor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("supervisores.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    # Responsável é o usuário do TMHub; supervisor é uma entidade operacional separada.
+    responsavel_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="RESTRICT"),
         index=True,
     )
 
