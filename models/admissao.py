@@ -111,6 +111,7 @@ class Vacancy(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
 
+<<<<<<< HEAD
     # Dados profissionais são derivados do colaborador, sem duplicação na vaga.
     colaborador_id = db.Column(
         db.Integer,
@@ -130,6 +131,28 @@ class Vacancy(BaseModel):
         db.ForeignKey("usuarios.id", ondelete="RESTRICT"),
         index=True,
     )
+=======
+    # Colaborador que saiu (import automático pela matrícula)
+    matricula = db.Column(
+        db.String, 
+        db.ForeignKey(
+            "colaboradores.matricula",
+            ondelete="SET NULL"
+        )
+    )
+    colaborador = db.Column(db.String, nullable=False)
+    departamento = db.Column(db.String)
+    centro_custo = db.Column(db.String)
+    centro_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "centro_de_custo.id",
+            ondelete="SET NULL"
+        )    
+    )
+    funcao = db.Column(db.String)
+    carga_horaria = db.Column(db.Integer)
+>>>>>>> dev
 
     # Preenchimento manual
     horario_trabalho_id = db.Column(
