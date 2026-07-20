@@ -8,5 +8,11 @@ class CostCenters(BaseModel):
     local = db.Column(db.String)
     departamento = db.Column(db.Integer)
     supervisor_id = db.Column(db.Integer)
-    cidade_id = db.Column(db.Integer)
+    cidade_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "cidades.id",
+            ondelete="SET NULL"
+        )
+    )
     

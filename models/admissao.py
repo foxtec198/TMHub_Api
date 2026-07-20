@@ -8,11 +8,23 @@ class Vacancy(BaseModel):
     id = db.Column(db.Integer, primary_key=True)
 
     # Colaborador que saiu (import automático pela matrícula)
-    matricula = db.Column(db.String, nullable=False)
+    matricula = db.Column(
+        db.String, 
+        db.ForeignKey(
+            "colaboradores.matricula",
+            ondelete="SET NULL"
+        )
+    )
     colaborador = db.Column(db.String, nullable=False)
     departamento = db.Column(db.String)
     centro_custo = db.Column(db.String)
-    centro_id = db.Column(db.Integer)
+    centro_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "centro_de_custo.id",
+            ondelete="SET NULL"
+        )    
+    )
     funcao = db.Column(db.String)
     carga_horaria = db.Column(db.Integer)
 
