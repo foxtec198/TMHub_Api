@@ -141,6 +141,8 @@ class VacancyService:
         colaborador_saida = aliased(Employees)
         candidato = aliased(Employees)
         responsavel = aliased(Users)
+        cargo = aliased(Cargos)
+        supervisor = aliased(Supervisors)
         query = (
             db.session.query(
                 InterviewHistory,
@@ -150,11 +152,15 @@ class VacancyService:
                 CostCenters.departamento.label("departamento"),
                 candidato.nome.label("candidato_nome_vinculado"),
                 responsavel.nome.label("responsavel"),
+                cargo.nome.label("funcao_vinculada"),
+                supervisor.nome.label("supervisor_vinculado"),
             )
             .join(colaborador_saida, colaborador_saida.id == InterviewHistory.colaborador_saida_id)
             .join(CostCenters, CostCenters.id == InterviewHistory.centro_custo_id)
             .outerjoin(candidato, candidato.id == InterviewHistory.candidato_colaborador_id)
             .outerjoin(responsavel, responsavel.id == InterviewHistory.responsavel_usuario_id)
+            .outerjoin(cargo, cargo.id == InterviewHistory.cargo_id)
+            .outerjoin(supervisor, supervisor.id == InterviewHistory.supervisor_id)
         )
         if search:
             term = f"%{search}%"
@@ -163,9 +169,11 @@ class VacancyService:
                 colaborador_saida.nome.ilike(term),
                 colaborador_saida.matricula.ilike(term),
                 InterviewHistory.funcao.ilike(term),
+                cargo.nome.ilike(term),
                 CostCenters.local.ilike(term),
                 InterviewHistory.substituicao.ilike(term),
                 InterviewHistory.supervisor.ilike(term),
+                supervisor.nome.ilike(term),
             ))
         if status: query = query.filter(InterviewHistory.status == status)
 
@@ -186,6 +194,8 @@ class VacancyService:
                 "candidato_nome": result_row.candidato_nome_vinculado or row.candidato_nome,
                 "candidato_vinculado": row.candidato_colaborador_id is not None,
                 "responsavel": result_row.responsavel,
+                "funcao": result_row.funcao_vinculada or row.funcao,
+                "supervisor": result_row.supervisor_vinculado or row.supervisor,
             })
             item["entrevista_data"] = row.entrevista_data.isoformat() if row.entrevista_data else None
             item["inicio_data"] = row.inicio_data.isoformat() if row.inicio_data else None

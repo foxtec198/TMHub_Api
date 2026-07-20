@@ -19,17 +19,20 @@ from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
 
 blueprints = {
+    rpa_bp: "/rpa",
+    auth_bp: "/login",
+    replace_bp: "/repo",
+    user_bp: "/usuarios",
+    worksheet_bp: "/update",
+    center_bp: "/centro",
     supervisores_bp: "/supervisores",
     funcionarios_bp: "/funcionarios",
-    worksheet_bp: "/update",
-    auth_bp: "/login",
-    user_bp: "/usuarios",
-    center_bp: "/centro",
-    replace_bp: "/repo",
-    dashboards_bp: "/dash",
-    rpa_bp: "/rpa",
     floaters_bp: "/reservas",
     project_bp: "/projetos",
+
+    # Dashboards
+    dashboards_bp: "/dash",
+    ponto48_bp: "/dash/ponto-48h",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
@@ -38,5 +41,4 @@ blueprints = {
 
     #Admissão
     admissao_bp: "/admissao/vagas",
-    ponto48_bp: "/dash/ponto-48h",
 }

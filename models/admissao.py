@@ -35,6 +35,8 @@ class InterviewHistory(BaseModel):
         index=True,
     )
     candidato_colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="SET NULL"), index=True)
+    cargo_id = db.Column(db.Integer, db.ForeignKey("cargos.id", ondelete="SET NULL"), index=True)
+    supervisor_id = db.Column(db.Integer, db.ForeignKey("supervisores.id", ondelete="SET NULL"), index=True)
     # O candidato pode ainda não existir na base; nesse caso preservamos seu nome em texto.
     candidato_nome = db.Column(db.String(255))
     entrevista_data = db.Column(db.Date)
@@ -49,12 +51,19 @@ class InterviewHistory(BaseModel):
     supervisor = db.Column(db.String(150))
     origem_aba = db.Column(db.String(100), nullable=False)
     origem_linha = db.Column(db.Integer, nullable=False)
-    origem_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
     aviso_em = db.Column(db.DateTime(timezone=True))
     primeira_acao_em = db.Column(db.DateTime(timezone=True))
     entrevista_em_sla = db.Column(db.DateTime(timezone=True))
     concluido_em = db.Column(db.DateTime(timezone=True))
-    created_at = db.Column(db.DateTime, default=dt.now)
+    created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
+
+    __table_args__ = (
+        db.UniqueConstraint("origem_aba", "origem_linha", name="uq_ad_entrevistas_origem"),
+        db.CheckConstraint(
+            "candidato_colaborador_id IS NULL OR status IN ('APROVADO', 'CONTRATADO')",
+            name="ck_ad_entrevistas_candidato_vinculavel",
+        ),
+    )
 
 class VacancyEvent(BaseModel):
     """Linha do tempo auditável de cada mudança de status da vaga."""
