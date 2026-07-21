@@ -129,7 +129,6 @@ class RequestService:
 
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
-        centro_id = bd.get("centro_id")
         ausente_id = bd.get("ausente_id")
         advertencia = str(bd.get("advertencia"))
         motivo = bd.get("motivo")
@@ -138,9 +137,7 @@ class RequestService:
         status = "pending"
         quantidade_dias = self._duration(motivo, bd.get("quantidade_dias"))
 
-        ok, error = check_field(
-            Supervisor=supervisor_id, Local=centro_id, Ausente=ausente_id, Motivo=motivo
-        )
+        ok, error = check_field(Supervisor=supervisor_id, Ausente=ausente_id, Motivo=motivo)
 
         if not ok:
             return jsonify(error), 400
@@ -148,6 +145,26 @@ class RequestService:
             return jsonify("Informe uma quantidade de dias válida."), 400
         adv = True if advertencia and advertencia.lower() == "aplicado" else False
         created_at = self._parse_datetime(data)
+        absent_employee = db.session.get(Employees, ausente_id)
+        if not absent_employee:
+            return jsonify("Colaborador ausente não encontrado."), 404
+        if not absent_employee.centro_id:
+            return jsonify("O colaborador ausente não possui um local cadastrado."), 400
+        centro_id = absent_employee.centro_id
+
+        if reserva_id not in (None, 0):
+            reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
+            if not reservation:
+                return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
+            requested_end = self._end_at(created_at, quantidade_dias)
+            conflicting_request = Requisicao.query.filter(
+                Requisicao.reserva_id == reserva_id,
+                Requisicao.created_at <= requested_end,
+                func.coalesce(Requisicao.end_at, Requisicao.created_at) >= created_at,
+                Requisicao.status.in_(["pending", "updated", "approved"]),
+            ).first()
+            if conflicting_request:
+                return jsonify("Esta reserva está indisponível durante o período informado."), 409
 
         new_rq = Requisicao(
             reserva_id=reserva_id,
@@ -409,16 +426,16 @@ class RequestService:
         socketio.emit("new_request")
         return jsonify({"message": f"{len(created)} requisições importadas com sucesso.", "total": len(created)}), 201
 
-    @safe_route
     def daily_reservations(self):
-        """Split technical reserves by availability for any day inside a request range."""
+        """Split technical reserves by availability for a requested day or period."""
         value = request.args.get("data")
         try:
             day = dt.strptime(value, "%Y-%m-%d") if value else dt.now()
+            duration_days = max(int(request.args.get("quantidade_dias", 1)), 1)
         except ValueError:
-            return jsonify("Data inválida. Use o formato yyyy-mm-dd."), 400
+            return jsonify("Data ou quantidade de dias inválida."), 400
         init = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+        end = (init + timedelta(days=duration_days)).replace(microsecond=0) - timedelta(microseconds=1)
 
         # Range overlap matters for multi-day medical leave, not only the request start date.
         used_ids = {
@@ -473,6 +490,7 @@ class RequestService:
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
             "data": init.strftime("%Y-%m-%d"),
+            "data_fim": end.strftime("%Y-%m-%d"),
             "usadas": [row for row in response if row["usada"]],
             "disponiveis": [row for row in response if not row["usada"]],
         }), 200
