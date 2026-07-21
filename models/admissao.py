@@ -111,26 +111,25 @@ class Vacancy(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # Colaborador que saiu (import automático pela matrícula)
-    matricula = db.Column(
-        db.String, 
-        db.ForeignKey(
-            "colaboradores.matricula",
-            ondelete="SET NULL"
-        )
-    )
-    colaborador = db.Column(db.String, nullable=False)
-    departamento = db.Column(db.String)
-    centro_custo = db.Column(db.String)
-    centro_id = db.Column(
+    # Dados profissionais são derivados do colaborador, sem duplicação na vaga.
+    colaborador_id = db.Column(
         db.Integer,
-        db.ForeignKey(
-            "centro_de_custo.id",
-            ondelete="SET NULL"
-        )    
+        db.ForeignKey("colaboradores.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
-    funcao = db.Column(db.String)
-    carga_horaria = db.Column(db.Integer)
+    # Nullable preserva vagas legadas; novas vagas exigem o supervisor no serviço.
+    supervisor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("supervisores.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    # Responsável é o usuário do TMHub; supervisor é uma entidade operacional separada.
+    responsavel_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="RESTRICT"),
+        index=True,
+    )
 
     # Preenchimento manual
     horario_trabalho_id = db.Column(
