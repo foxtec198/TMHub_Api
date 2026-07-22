@@ -1,9 +1,15 @@
 import csv
+import json
 import re
+import shutil
+import tempfile
+import time
 import unicodedata
 from datetime import datetime
+from pathlib import Path
+from uuid import UUID
 
-from flask import jsonify, request as rq
+from flask import current_app, jsonify, request as rq
 
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
@@ -29,6 +35,10 @@ PUNCH_FIELDS = [
     "3ª Entrada",
     "3ª Saída",
 ]
+
+PONTO48_UPLOAD_FIELDS = {"absenteismo", "horas_extras", "ajustes", "espelho"}
+PONTO48_CHUNK_SIZE_LIMIT = 700 * 1024
+PONTO48_FILE_SIZE_LIMIT = 30 * 1024 * 1024
 
 
 class Ponto48Service:
@@ -376,6 +386,125 @@ class Ponto48Service:
             ))
         db.session.add_all(models)
         return imported, models
+
+    @staticmethod
+    def _chunk_upload_dir(upload_id):
+        try:
+            normalized_id = str(UUID(str(upload_id)))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("Identificador de upload inválido.")
+        return Path(tempfile.gettempdir()) / "tmhub-ponto48-uploads" / normalized_id
+
+    @staticmethod
+    def _cleanup_stale_uploads(upload_root):
+        if not upload_root.is_dir():
+            return
+        expiration = time.time() - (24 * 60 * 60)
+        for candidate in upload_root.iterdir():
+            try:
+                if candidate.is_dir() and candidate.stat().st_mtime < expiration:
+                    shutil.rmtree(candidate, ignore_errors=True)
+            except OSError:
+                continue
+
+    @safe_route
+    def upload_import_chunk(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem importar relatórios de ponto."), 403
+
+        try:
+            upload_id = rq.args.get("upload_id")
+            field = str(rq.args.get("arquivo") or "")
+            chunk_index = int(rq.args.get("indice", "-1"))
+            total_chunks = int(rq.args.get("total", "0"))
+            if field not in PONTO48_UPLOAD_FIELDS:
+                raise ValueError("Tipo de arquivo inválido.")
+            if chunk_index < 0 or total_chunks < 1 or chunk_index >= total_chunks:
+                raise ValueError("Sequência de upload inválida.")
+
+            chunk = rq.get_data(cache=False)
+            if not chunk or len(chunk) > PONTO48_CHUNK_SIZE_LIMIT:
+                raise ValueError("Cada bloco deve possuir entre 1 byte e 700 KB.")
+
+            upload_dir = self._chunk_upload_dir(upload_id)
+            self._cleanup_stale_uploads(upload_dir.parent)
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            owner_file = upload_dir / "owner.json"
+            owner = str(token_data.get("id"))
+            if owner_file.exists():
+                stored_owner = json.loads(owner_file.read_text(encoding="utf-8")).get("user_id")
+                if stored_owner != owner:
+                    return jsonify("Este upload pertence a outro usuário."), 403
+            else:
+                owner_file.write_text(json.dumps({"user_id": owner}), encoding="utf-8")
+
+            chunk_path = upload_dir / f"{field}.{chunk_index:05d}.part"
+            chunk_path.write_bytes(chunk)
+            return jsonify({"recebido": chunk_index + 1, "total": total_chunks}), 201
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            return jsonify(str(error)), 400
+
+    @safe_route
+    def finalize_chunked_import(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem importar relatórios de ponto."), 403
+
+        upload_dir = None
+        opened_files = []
+        try:
+            payload = rq.get_json(silent=True) or {}
+            upload_dir = self._chunk_upload_dir(payload.get("upload_id"))
+            files = payload.get("arquivos") or {}
+            if set(files) != PONTO48_UPLOAD_FIELDS:
+                raise ValueError("Informe os quatro relatórios para concluir a importação.")
+            if not upload_dir.is_dir():
+                raise ValueError("Upload não encontrado ou expirado.")
+
+            owner = json.loads((upload_dir / "owner.json").read_text(encoding="utf-8")).get("user_id")
+            if owner != str(token_data.get("id")):
+                return jsonify("Este upload pertence a outro usuário."), 403
+
+            multipart_data = {}
+            for field in PONTO48_UPLOAD_FIELDS:
+                metadata = files[field] or {}
+                total_chunks = int(metadata.get("total", 0))
+                filename = Path(str(metadata.get("nome") or f"{field}.csv")).name
+                if total_chunks < 1:
+                    raise ValueError(f"Quantidade de blocos inválida para {field}.")
+
+                assembled_path = upload_dir / f"{field}.csv"
+                total_size = 0
+                with assembled_path.open("wb") as assembled:
+                    for index in range(total_chunks):
+                        chunk_path = upload_dir / f"{field}.{index:05d}.part"
+                        if not chunk_path.is_file():
+                            raise ValueError(f"Falta o bloco {index + 1} do arquivo {filename}.")
+                        total_size += chunk_path.stat().st_size
+                        if total_size > PONTO48_FILE_SIZE_LIMIT:
+                            raise ValueError(f"O arquivo {filename} excede o limite de 30 MB.")
+                        with chunk_path.open("rb") as chunk_file:
+                            shutil.copyfileobj(chunk_file, assembled)
+
+                file_handle = assembled_path.open("rb")
+                opened_files.append(file_handle)
+                multipart_data[field] = (file_handle, filename)
+
+            with current_app.test_request_context(
+                "/dash/ponto-48h/importar",
+                method="POST",
+                data=multipart_data,
+                content_type="multipart/form-data",
+            ):
+                return self.import_files.__wrapped__(self, token_data)
+        except (ValueError, TypeError, OSError, json.JSONDecodeError) as error:
+            db.session.rollback()
+            return jsonify(str(error)), 400
+        finally:
+            for file_handle in opened_files:
+                if not file_handle.closed:
+                    file_handle.close()
+            if upload_dir and upload_dir.is_dir():
+                shutil.rmtree(upload_dir, ignore_errors=True)
 
     @safe_route
     def import_files(self, token_data):
