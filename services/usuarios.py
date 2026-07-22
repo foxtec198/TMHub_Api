@@ -11,6 +11,7 @@ import secrets
 import smtplib
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
+from models.filiais import Branch
 
 PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -47,6 +48,7 @@ class UserServices:
             "role": user.role,
             "created_at": user.created_at,
             "last_login": user.last_login,
+            "filial_ids": sorted(branch.id for branch in user.filiais),
             **({"foto_perfil": user.foto_perfil} if include_photo else {}),
         } for user in users]), 200
 
@@ -59,6 +61,9 @@ class UserServices:
         if error:
             return jsonify(error), 400
 
+        branch_error = self._apply_branches(user, rq.get_json(silent=True) or {})
+        if branch_error:
+            return jsonify(branch_error), 400
         db.session.add(user)
         db.session.commit()
         return jsonify(self._serialize_admin(user)), 201
@@ -76,6 +81,10 @@ class UserServices:
         error = self._apply_user_changes(user, body)
         if error:
             return jsonify(error), 400
+
+        branch_error = self._apply_branches(user, body)
+        if branch_error:
+            return jsonify(branch_error), 400
 
         db.session.commit()
         return jsonify(self._serialize_admin(user)), 200
@@ -190,7 +199,7 @@ class UserServices:
         return Users(nome=nome, cpf=cpf, email=email, role=role, hash=sha256(password.encode()).hexdigest()), None
 
     def _apply_user_changes(self, user, body):
-        if not any(key in body for key in ("nome", "cpf", "email", "role", "password")):
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids")):
             return "Nenhuma alteração informada."
 
         if "nome" in body:
@@ -230,6 +239,20 @@ class UserServices:
         return None
 
     @staticmethod
+    def _apply_branches(user, body):
+        if "filial_ids" not in body:
+            return None
+        try:
+            ids = {int(value) for value in (body.get("filial_ids") or [])}
+        except (TypeError, ValueError):
+            return "Informe filiais válidas."
+        branches = Branch.query.filter(Branch.id.in_(ids), Branch.ativa.is_(True)).all() if ids else []
+        if len(branches) != len(ids):
+            return "Uma ou mais filiais não foram encontradas ou estão inativas."
+        user.filiais = branches
+        return None
+
+    @staticmethod
     def _serialize_admin(user):
         return {
             "id": user.id,
@@ -239,6 +262,7 @@ class UserServices:
             "role": user.role,
             "created_at": user.created_at,
             "last_login": user.last_login,
+            "filial_ids": sorted(branch.id for branch in user.filiais),
         }
 
     @safe_route
@@ -343,6 +367,7 @@ class UserServices:
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "light",
             "role": user.role,
+            "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
         }
 
     @staticmethod

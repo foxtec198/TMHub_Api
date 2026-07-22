@@ -30,3 +30,27 @@ with app.app_context():
         print("Coluna ad_vagas.colaborador_entrada_matricula criada e preenchida.")
     else:
         print("Coluna ad_vagas.colaborador_entrada_matricula ja existe.")
+
+    # A regra antiga exigia que o colaborador já existisse no cadastro. A
+    # matrícula digitada passa a ser uma alternativa válida ao vínculo por ID.
+    with db.engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE ad_vagas DROP CONSTRAINT IF EXISTS ck_ad_vagas_conclusao_obrigatoria"
+        ))
+        connection.execute(text("""
+            ALTER TABLE ad_vagas
+            ADD CONSTRAINT ck_ad_vagas_conclusao_obrigatoria CHECK (
+                status <> 'concluido'
+                OR (
+                    (
+                        colaborador_entrada_id IS NOT NULL
+                        OR NULLIF(TRIM(colaborador_entrada_matricula), '') IS NOT NULL
+                    )
+                    AND data_inicio IS NOT NULL
+                    AND concluido_por_usuario_id IS NOT NULL
+                    AND concluido_em IS NOT NULL
+                    AND horario_trabalho_id IS NOT NULL
+                )
+            )
+        """))
+    print("Constraint de conclusão atualizada para aceitar matrícula sem colaborador cadastrado.")

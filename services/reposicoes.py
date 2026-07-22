@@ -23,6 +23,8 @@ from sqlalchemy.orm import aliased
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from zoneinfo import ZoneInfo
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from utils.token import decode_token
 
 
 def _emit_kds_update(action, request_id=None, status=None):
@@ -72,7 +74,7 @@ class RequestService:
         return parsed.replace(hour=now.hour, minute=now.minute, second=now.second, microsecond=now.microsecond)
 
     @safe_route
-    def read(self):
+    def read(self, token_data):
         bd = request.args
         
         limit = bd.get("limit", None)
@@ -123,6 +125,7 @@ class RequestService:
             .order_by(Requisicao.created_at.desc())
         )
         
+        reqs = apply_cost_center_scope(reqs, Requisicao.cc, token_data)
         if id: reqs = reqs.filter(Requisicao.id == id)
         if status:
             statuses = [s.strip() for s in status.split(",") if s.strip()]
@@ -134,7 +137,7 @@ class RequestService:
         return jsonify([r._asdict() for r in reqs]), 200
 
     @safe_route
-    def kds(self):
+    def kds(self, token_data):
         """Return every open requisition and only decisions finalized today."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
@@ -151,7 +154,7 @@ class RequestService:
         day_start = dt.combine(today, dt.min.time())
         day_end = dt.combine(today, dt.max.time())
 
-        rows = (
+        kds_query = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.created_at.label("abertura"),
@@ -186,8 +189,8 @@ class RequestService:
                     History.ended_at.between(day_start, day_end),
                 ),
             ))
-            .all()
         )
+        rows = apply_cost_center_scope(kds_query, Requisicao.cc, token_data).all()
 
         def local_iso(value):
             if not value:
@@ -230,6 +233,9 @@ class RequestService:
         if not absent_employee.centro_id:
             return jsonify("O colaborador ausente não possui um local cadastrado."), 400
         centro_id = absent_employee.centro_id
+        access_token = request.headers.get("Access-Token")
+        if access_token and not can_access_cost_center(decode_token(access_token), centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador."), 403
 
         if reserva_id not in (None, 0):
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
@@ -281,6 +287,10 @@ class RequestService:
         req = Requisicao.query.filter(Requisicao.id == id).first()
         if not req: return jsonify("Requisição não encontrada"), 404
 
+        target_center = bd.get("centro_id", req.cc)
+        if not can_access_cost_center(token_data, req.cc) or not can_access_cost_center(token_data, target_center):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
+
         if "reserva_id" in bd: req.reserva_id = bd.get("reserva_id")
         if "centro_id" in bd: req.cc = bd.get("centro_id")
         if "ausente_id" in bd: req.ausente_id = bd.get("ausente_id")
@@ -302,7 +312,7 @@ class RequestService:
         return jsonify("Requisição alterada"), 200
 
     @safe_route
-    def export(self):
+    def export(self, token_data):
         """Export only the operational queue, keeping approved/reproved items in history."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
@@ -317,7 +327,7 @@ class RequestService:
             .group_by(Requisicao.ausente_id, Requisicao.cc, Requisicao.motivo)
             .subquery()
         )
-        rows = (
+        export_query = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.created_at.label("data"),
@@ -342,8 +352,8 @@ class RequestService:
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .filter(Requisicao.status.in_(["pending", "updated"]))
             .order_by(Requisicao.created_at.desc())
-            .all()
         )
+        rows = apply_cost_center_scope(export_query, Requisicao.cc, token_data).all()
 
         workbook = Workbook()
         worksheet = workbook.active
@@ -364,7 +374,7 @@ class RequestService:
         return send_file(output, as_attachment=True, download_name="requisicoes_abertas.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     @safe_route
-    def download_import_template(self):
+    def download_import_template(self, token_data):
         """Generate the canonical import sheet plus read-only ID reference tabs."""
         workbook = Workbook()
         worksheet = workbook.active
@@ -387,11 +397,13 @@ class RequestService:
         instructions.append(["advertencia", "Opcional; use APLICADO ou NÃO APLICADO"])
         instructions.append(["obs", "Opcional"])
 
+        allowed_centers = apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data).all()
+        allowed_center_ids = {center.id for center in allowed_centers}
         reference_sheets = [
             ("Supervisores", ["id", "nome"], db.session.query(Supervisors.id, Supervisors.nome).order_by(Supervisors.nome).all()),
             ("Reservas", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).select_from(Floaters).join(Employees, Employees.id == Floaters.employee_id).order_by(Employees.nome).all()),
-            ("Colaboradores", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).order_by(Employees.nome).all()),
-            ("Centros", ["id", "local", "departamento"], db.session.query(CostCenters.id, CostCenters.local, CostCenters.departamento).order_by(CostCenters.id).all()),
+            ("Colaboradores", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).filter(Employees.centro_id.in_(allowed_center_ids)).order_by(Employees.nome).all()),
+            ("Centros", ["id", "local", "departamento"], [(center.id, center.local, center.departamento) for center in allowed_centers]),
         ]
         for title, sheet_headers, rows in reference_sheets:
             sheet = workbook.create_sheet(title)
@@ -407,7 +419,7 @@ class RequestService:
         return send_file(output, as_attachment=True, download_name="modelo_importacao_requisicoes.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     @safe_route
-    def import_requests(self):
+    def import_requests(self, token_data):
         """Validate every spreadsheet row before committing requests and timelines atomically."""
         uploaded = request.files.get("file")
         if not uploaded or not uploaded.filename.lower().endswith(".xlsx"):
@@ -430,7 +442,7 @@ class RequestService:
         supervisor_ids = {row[0] for row in db.session.query(Supervisors.id).all()}
         employee_ids = {row[0] for row in db.session.query(Employees.id).all()}
         reservation_ids = {row[0] for row in db.session.query(Floaters.employee_id).all()}
-        center_ids = {row[0] for row in db.session.query(CostCenters.id).all()}
+        center_ids = {row[0] for row in apply_cost_center_scope(db.session.query(CostCenters.id), CostCenters.id, token_data).all()}
         today = dt.now().date()
         allowed_dates = {today, today + timedelta(days=1)}
         created = []
@@ -580,13 +592,15 @@ class RequestService:
         }), 200
         
     @safe_route
-    def delete(self):
+    def delete(self, token_data):
         bd = request.get_json(silent=True) or request.args
         id = bd.get("id")
 
         req = Requisicao.query.filter(Requisicao.id == id).first()
         if not req: return jsonify("RequisiÃ§Ã£o nÃ£o encontrada"), 404
 
+        if not can_access_cost_center(token_data, req.cc):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
         requisicao_id = req.id
         History.query.filter(History.requisicao_id == requisicao_id).delete(synchronize_session=False)
         Timeline.query.filter(Timeline.requisicao_id == requisicao_id).delete(synchronize_session=False)
@@ -603,7 +617,7 @@ class RequestService:
 
 class HistoryService:
     @safe_route
-    def read(self):
+    def read(self, token_data):
         bd = request.get_json()
 
         init = bd.get("init", None)
@@ -643,7 +657,7 @@ class HistoryService:
             .subquery()
         )
 
-        hists = (
+        history_query = (
             db.session.query(
                 History.id,
                 History.requisicao_id,
@@ -677,8 +691,8 @@ class HistoryService:
             .join(Supervisors, Supervisors.id == History.supervisor_id)
             .filter(History.created_at.between(init, end))
             .order_by(History.created_at.desc())
-            .all()
         )
+        hists = apply_cost_center_scope(history_query, History.cc, token_data).all()
         return jsonify([h._asdict() for h in hists]), 200
         
     @safe_route
@@ -688,6 +702,10 @@ class HistoryService:
         status = bd.get("status", "reproved")
         req = Requisicao.query.filter(Requisicao.id == id).first()
 
+        if not req:
+            return jsonify("Requisição não encontrada."), 404
+        if not can_access_cost_center(token_data, req.cc):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
         requisicao_id = req.id
         reserva_id = req.reserva_id if status == "approved" else 0
         ausente_id = req.ausente_id
@@ -738,6 +756,10 @@ class HistoryService:
 
         hist = History.query.filter(History.id == id).first()
         if not hist: return jsonify("Histórico não encontrado"), 404
+
+        target_center = bd.get("centro_id", hist.cc)
+        if not can_access_cost_center(token_data, hist.cc) or not can_access_cost_center(token_data, target_center):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
 
         req = Requisicao.query.filter(Requisicao.id == hist.requisicao_id).first()
         if not req:
@@ -794,13 +816,15 @@ class HistoryService:
         return jsonify("Histórico alterado"), 200
 
     @safe_route
-    def delete(self):
+    def delete(self, token_data):
         bd = request.get_json(silent=True) or request.args
         id = bd.get("id")
 
         hist = History.query.filter(History.id == id).first()
         if not hist: return jsonify("HistÃ³rico nÃ£o encontrado"), 404
 
+        if not can_access_cost_center(token_data, hist.cc):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
         requisicao_id = hist.requisicao_id
         req = Requisicao.query.filter(Requisicao.id == requisicao_id).first()
 
@@ -845,7 +869,8 @@ class TimelineService:
         )
         db.session.commit()
 
-    def read(self):
+    @safe_route
+    def read(self, token_data):
         requisicao_id = request.args.get("requisicao_id")
 
         Ausente = aliased(Employees)
@@ -882,6 +907,7 @@ class TimelineService:
             .order_by(Timeline.created_at.desc())
         )
 
+        query = apply_cost_center_scope(query, Timeline.cc, token_data)
         if requisicao_id: query = query.filter(Timeline.requisicao_id == requisicao_id)
         timelines = query.all()
         return jsonify([t._asdict() for t in timelines]), 200

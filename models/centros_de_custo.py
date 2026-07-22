@@ -15,4 +15,4 @@ class CostCenters(BaseModel):
             ondelete="SET NULL"
         )
     )
-    
+    filiais = db.relationship("Branch", secondary="filial_centros_custo", back_populates="centros_custo")

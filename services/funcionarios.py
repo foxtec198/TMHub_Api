@@ -4,6 +4,8 @@ from models.situacoes import Situations
 from utils.safe_route import safe_route
 from sqlalchemy import or_, cast
 from models.colaboradores import Employees, db
+from utils.filial_scope import apply_cost_center_scope
+from utils.token import decode_token
 
 class EmployeesService:
     def read(self):
@@ -33,6 +35,10 @@ class EmployeesService:
             .join(Situations, Situations.id == Employees.situacao)
             .order_by(Employees.data_admissao.desc())
         )
+
+        access_token = rq.headers.get("Access-Token")
+        if access_token:
+            emp = apply_cost_center_scope(emp, Employees.centro_id, decode_token(access_token))
 
         if situation_id:emp = emp.filter(Situations.id == int(situation_id))  # Se passado o filtro de situacao
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))

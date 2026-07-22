@@ -18,3 +18,4 @@ class Users(BaseModel):
     email_pendente = db.Column(db.String)
     email_codigo_hash = db.Column(db.String)
     email_codigo_expira_em = db.Column(db.DateTime)
+    filiais = db.relationship("Branch", secondary="filial_usuarios", back_populates="usuarios")

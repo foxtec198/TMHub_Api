@@ -17,6 +17,7 @@ from routes.movimentos import movimentos_bp
 
 from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
+from routes.filiais import branch_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -33,6 +34,7 @@ blueprints = {
     # Dashboards
     dashboards_bp: "/dash",
     ponto48_bp: "/dash/ponto-48h",
+    branch_bp: "/filiais",
 
     #Estoque
     categorias_bp: "/estoque/categorias",

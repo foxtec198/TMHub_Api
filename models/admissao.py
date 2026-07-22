@@ -171,3 +171,15 @@ class Vacancy(BaseModel):
 
     created_at = db.Column(db.DateTime, default=dt.now)
     updated_at = db.Column(db.DateTime, default=dt.now, onupdate=dt.now)
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "status <> 'concluido' OR ("
+            "(colaborador_entrada_id IS NOT NULL OR NULLIF(TRIM(colaborador_entrada_matricula), '') IS NOT NULL) "
+            "AND data_inicio IS NOT NULL "
+            "AND concluido_por_usuario_id IS NOT NULL "
+            "AND concluido_em IS NOT NULL "
+            "AND horario_trabalho_id IS NOT NULL)",
+            name="ck_ad_vagas_conclusao_obrigatoria",
+        ),
+    )
