@@ -46,6 +46,7 @@ class UserServices:
             "email": user.email,
             "cpf": user.cpf if is_admin else None,
             "role": user.role,
+            "gerencia_faltas": bool(user.gerencia_faltas),
             "created_at": user.created_at,
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
@@ -196,10 +197,10 @@ class UserServices:
         if email and Users.query.filter_by(email=email).first():
             return None, "E-mail já cadastrado."
 
-        return Users(nome=nome, cpf=cpf, email=email, role=role, hash=sha256(password.encode()).hexdigest()), None
+        return Users(nome=nome, cpf=cpf, email=email, role=role, gerencia_faltas=bool(body.get("gerencia_faltas", False)), hash=sha256(password.encode()).hexdigest()), None
 
     def _apply_user_changes(self, user, body):
-        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids")):
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas")):
             return "Nenhuma alteração informada."
 
         if "nome" in body:
@@ -236,6 +237,9 @@ class UserServices:
                 return "A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."
             user.hash = sha256(password.encode()).hexdigest()
 
+        if "gerencia_faltas" in body:
+            user.gerencia_faltas = bool(body.get("gerencia_faltas"))
+
         return None
 
     @staticmethod
@@ -260,6 +264,7 @@ class UserServices:
             "email": user.email,
             "cpf": user.cpf,
             "role": user.role,
+            "gerencia_faltas": bool(user.gerencia_faltas),
             "created_at": user.created_at,
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
@@ -367,6 +372,7 @@ class UserServices:
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "light",
             "role": user.role,
+            "gerencia_faltas": bool(user.gerencia_faltas),
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
         }
 
