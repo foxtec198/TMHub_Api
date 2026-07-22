@@ -1,6 +1,5 @@
 from flask import jsonify, request as rq
 from models.cargos import Cargos
-from models.centros_de_custo import CostCenters
 from models.situacoes import Situations
 from utils.safe_route import safe_route
 from sqlalchemy import or_, cast
@@ -28,14 +27,10 @@ class EmployeesService:
                 Employees.data_admissao,
                 Cargos.nome.label("cargo"),
                 Situations.tipo.label("situacao"),
-                CostCenters.id.label("centro_id"),
-                CostCenters.local.label("centro_local"),
-                CostCenters.departamento,
             )
             .select_from(Employees)
             .join(Cargos, Cargos.id == Employees.cargo)
             .join(Situations, Situations.id == Employees.situacao)
-            .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
             .order_by(Employees.data_admissao.desc())
         )
 
