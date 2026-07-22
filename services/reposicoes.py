@@ -190,7 +190,11 @@ class RequestService:
         )
 
         def local_iso(value):
-            return value.replace(tzinfo=sao_paulo).isoformat() if value else None
+            if not value:
+                return None
+            if value.tzinfo:
+                return value.astimezone(sao_paulo).isoformat()
+            return value.replace(tzinfo=sao_paulo).isoformat()
 
         return jsonify({
             "servidor_em": dt.now(sao_paulo).isoformat(),
@@ -249,7 +253,7 @@ class RequestService:
             warning=adv,
             motivo=motivo,
             created_at=created_at,
-            opened_at=dt.now(),
+            opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
             status=status
         )
 
@@ -476,7 +480,7 @@ class RequestService:
                 motivo=motivo,
                 obs=obs,
                 created_at=created_at,
-                opened_at=dt.now(),
+                opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
                 status="pending",
             )
             db.session.add(requisition)
@@ -747,6 +751,7 @@ class HistoryService:
                 motivo=hist.motivo,
                 obs=hist.obs,
                 created_at=hist.created_at,
+                opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
                 status="updated"
             )
             db.session.add(req)

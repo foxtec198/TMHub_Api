@@ -14,5 +14,5 @@ class Requisicao(BaseModel):
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)
-    opened_at = db.Column(db.DateTime, nullable=False, default=dt.now)
+    opened_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
     status = db.Column(db.String, default="pending")
