@@ -11,7 +11,7 @@ class History(BaseModel):
     ausente_id = db.Column(db.Integer, nullable=False)
     cc = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)
     supervisor_id = db.Column(db.Integer)
     ended_at = db.Column(db.DateTime)
     motivo = db.Column(db.String)
