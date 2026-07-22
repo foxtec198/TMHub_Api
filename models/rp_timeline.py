@@ -17,4 +17,4 @@ class Timeline(BaseModel):
     tipo = db.Column(db.String, nullable=False)
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
-    created_at = db.Column(db.DateTime, default=dt.now())
+    created_at = db.Column(db.DateTime, default=dt.now)

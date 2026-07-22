@@ -30,4 +30,5 @@ jobs: # Jobs will run
             cd /home/guibs/api_tmhub
             sudo git pull origin main
             venv/bin/python migrations/add_user_theme.py
+            venv/bin/python migrations/add_requisition_opened_at.py
             sudo systemctl restart api_tmhub
