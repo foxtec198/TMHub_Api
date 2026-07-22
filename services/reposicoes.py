@@ -26,7 +26,6 @@ from zoneinfo import ZoneInfo
 
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
-    DURATION_REASONS = {"ATESTADO", "AFASTAMENTO"}
     REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA", "OUTROS"}
 
     @staticmethod
@@ -40,22 +39,6 @@ class RequestService:
         if parsed.tzinfo:
             parsed = parsed.astimezone(ZoneInfo("America/Sao_Paulo")).replace(tzinfo=None)
         return parsed
-
-    @classmethod
-    def _duration(cls, reason, value):
-        """Only absence reasons that span days may persist a duration above one."""
-        if str(reason or "").upper() not in cls.DURATION_REASONS:
-            return 1
-        try:
-            days = int(value)
-        except (TypeError, ValueError):
-            days = 0
-        return days
-
-    @staticmethod
-    def _end_at(start, days):
-        """Close the absence range at the end of its last calendar day."""
-        return (start + timedelta(days=max(days, 1) - 1)).replace(hour=23, minute=59, second=59, microsecond=0)
 
     @staticmethod
     def _spreadsheet_datetime(value):
@@ -88,14 +71,25 @@ class RequestService:
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        active_statuses = ["pending", "updated"]
+        request_days = (
+            db.session.query(
+                Requisicao.ausente_id.label("ausente_id"),
+                Requisicao.cc.label("cc"),
+                Requisicao.motivo.label("motivo"),
+                func.count(func.distinct(func.date(Requisicao.created_at))).label("dias"),
+            )
+            .filter(Requisicao.status.in_(active_statuses))
+            .group_by(Requisicao.ausente_id, Requisicao.cc, Requisicao.motivo)
+            .subquery()
+        )
 
         reqs = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.reserva_id,
                 Requisicao.created_at.label("data"),
-                Requisicao.end_at,
-                Requisicao.quantidade_dias,
+                request_days.c.dias,
                 Ausente.nome.label("ausencia"),
                 case(
                     (Requisicao.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
@@ -107,6 +101,11 @@ class RequestService:
                 Requisicao.status,
             )
             .select_from(Requisicao)
+            .join(request_days, and_(
+                request_days.c.ausente_id == Requisicao.ausente_id,
+                request_days.c.cc == Requisicao.cc,
+                request_days.c.motivo == Requisicao.motivo,
+            ))
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
@@ -135,14 +134,11 @@ class RequestService:
         data = bd.get("data")
         obs = bd.get("obs")
         status = "pending"
-        quantidade_dias = self._duration(motivo, bd.get("quantidade_dias"))
 
         ok, error = check_field(Supervisor=supervisor_id, Ausente=ausente_id, Motivo=motivo)
 
         if not ok:
             return jsonify(error), 400
-        if quantidade_dias < 1:
-            return jsonify("Informe uma quantidade de dias válida."), 400
         adv = True if advertencia and advertencia.lower() == "aplicado" else False
         created_at = self._parse_datetime(data)
         absent_employee = db.session.get(Employees, ausente_id)
@@ -156,15 +152,15 @@ class RequestService:
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
             if not reservation:
                 return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
-            requested_end = self._end_at(created_at, quantidade_dias)
+            day_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = created_at.replace(hour=23, minute=59, second=59, microsecond=999999)
             conflicting_request = Requisicao.query.filter(
                 Requisicao.reserva_id == reserva_id,
-                Requisicao.created_at <= requested_end,
-                func.coalesce(Requisicao.end_at, Requisicao.created_at) >= created_at,
+                Requisicao.created_at.between(day_start, day_end),
                 Requisicao.status.in_(["pending", "updated", "approved"]),
             ).first()
             if conflicting_request:
-                return jsonify("Esta reserva está indisponível durante o período informado."), 409
+                return jsonify("Esta reserva está indisponível na data informada."), 409
 
         new_rq = Requisicao(
             reserva_id=reserva_id,
@@ -174,8 +170,6 @@ class RequestService:
             warning=adv,
             motivo=motivo,
             created_at=created_at,
-            end_at=self._end_at(created_at, quantidade_dias),
-            quantidade_dias=quantidade_dias,
             status=status
         )
 
@@ -207,12 +201,6 @@ class RequestService:
         if "ausente_id" in bd: req.ausente_id = bd.get("ausente_id")
         if "motivo" in bd: req.motivo = bd.get("motivo")
         if "data" in bd: req.created_at = self._parse_datetime(bd.get("data"))
-        if "quantidade_dias" in bd or "motivo" in bd:
-            req.quantidade_dias = self._duration(req.motivo, bd.get("quantidade_dias", req.quantidade_dias))
-            if req.quantidade_dias < 1:
-                return jsonify("Informe uma quantidade de dias válida."), 400
-        if "data" in bd or "quantidade_dias" in bd or "motivo" in bd:
-            req.end_at = self._end_at(req.created_at, req.quantidade_dias or 1)
         db.session.commit()
 
         TimelineService().create_event(
@@ -231,12 +219,22 @@ class RequestService:
         """Export only the operational queue, keeping approved/reproved items in history."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        request_days = (
+            db.session.query(
+                Requisicao.ausente_id.label("ausente_id"),
+                Requisicao.cc.label("cc"),
+                Requisicao.motivo.label("motivo"),
+                func.count(func.distinct(func.date(Requisicao.created_at))).label("dias"),
+            )
+            .filter(Requisicao.status.in_(["pending", "updated"]))
+            .group_by(Requisicao.ausente_id, Requisicao.cc, Requisicao.motivo)
+            .subquery()
+        )
         rows = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.created_at.label("data"),
-                Requisicao.end_at.label("fim"),
-                Requisicao.quantidade_dias.label("dias"),
+                request_days.c.dias,
                 Requisicao.status,
                 Requisicao.motivo,
                 Ausente.nome.label("ausente"),
@@ -246,6 +244,11 @@ class RequestService:
                 Supervisors.nome.label("supervisor"),
             )
             .select_from(Requisicao)
+            .join(request_days, and_(
+                request_days.c.ausente_id == Requisicao.ausente_id,
+                request_days.c.cc == Requisicao.cc,
+                request_days.c.motivo == Requisicao.motivo,
+            ))
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
@@ -258,14 +261,14 @@ class RequestService:
         workbook = Workbook()
         worksheet = workbook.active
         worksheet.title = "Requisicoes"
-        headers = ["id", "data", "fim", "dias", "status", "motivo", "ausente", "reserva", "local", "departamento", "supervisor"]
+        headers = ["id", "data", "dias", "status", "motivo", "ausente", "reserva", "local", "departamento", "supervisor"]
         worksheet.append(headers)
         for row in rows:
             values = row._asdict()
             worksheet.append([values.get(header) for header in headers])
         worksheet.freeze_panes = "A2"
-        worksheet.auto_filter.ref = f"A1:K{max(len(rows) + 1, 1)}"
-        for column, width in {"A": 8, "B": 20, "C": 20, "D": 8, "E": 14, "F": 22, "G": 32, "H": 32, "I": 40, "J": 16, "K": 28}.items():
+        worksheet.auto_filter.ref = f"A1:J{max(len(rows) + 1, 1)}"
+        for column, width in {"A": 8, "B": 20, "C": 8, "D": 14, "E": 22, "F": 32, "G": 32, "H": 40, "I": 16, "J": 28}.items():
             worksheet.column_dimensions[column].width = width
 
         output = BytesIO()
@@ -279,11 +282,11 @@ class RequestService:
         workbook = Workbook()
         worksheet = workbook.active
         worksheet.title = "Requisicoes"
-        headers = ["supervisor_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data", "quantidade_dias", "advertencia", "obs"]
+        headers = ["supervisor_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data", "advertencia", "obs"]
         worksheet.append(headers)
         worksheet.freeze_panes = "A2"
-        worksheet.auto_filter.ref = "A1:I1"
-        for column, width in {"A": 16, "B": 14, "C": 14, "D": 14, "E": 22, "F": 16, "G": 18, "H": 18, "I": 36}.items():
+        worksheet.auto_filter.ref = "A1:H1"
+        for column, width in {"A": 16, "B": 14, "C": 14, "D": 14, "E": 22, "F": 16, "G": 18, "H": 36}.items():
             worksheet.column_dimensions[column].width = width
 
         instructions = workbook.create_sheet("Instrucoes")
@@ -294,7 +297,6 @@ class RequestService:
         instructions.append(["ausente_id", "Obrigatório; consulte a aba Colaboradores"])
         instructions.append(["motivo", "AFASTAMENTO, ATESTADO, DECLARAÇÃO, POSTO VAGO, REMANEJAMENTO, INJUSTIFICADA ou OUTROS"])
         instructions.append(["data", "Obrigatório; somente hoje ou amanhã, no formato dd/mm/aaaa"])
-        instructions.append(["quantidade_dias", "Obrigatório para ATESTADO e AFASTAMENTO; nos demais motivos será 1"])
         instructions.append(["advertencia", "Opcional; use APLICADO ou NÃO APLICADO"])
         instructions.append(["obs", "Opcional"])
 
@@ -365,7 +367,6 @@ class RequestService:
                 ausente_id = int(value("ausente_id"))
                 motivo = str(value("motivo") or "").strip().upper()
                 created_at = self._spreadsheet_datetime(value("data"))
-                quantidade_dias = self._duration(motivo, value("quantidade_dias", 1) or 1)
             except (TypeError, ValueError) as error:
                 errors.append(f"Linha {row_number}: {error}.")
                 continue
@@ -377,7 +378,6 @@ class RequestService:
             if ausente_id not in employee_ids: row_errors.append("ausente_id não encontrado")
             if motivo not in self.REASONS: row_errors.append("motivo inválido")
             if created_at.date() not in allowed_dates: row_errors.append("a data deve ser hoje ou amanhã")
-            if quantidade_dias < 1: row_errors.append("quantidade_dias deve ser maior que zero")
             if row_errors:
                 errors.append(f"Linha {row_number}: {', '.join(row_errors)}.")
                 continue
@@ -393,8 +393,6 @@ class RequestService:
                 motivo=motivo,
                 obs=obs,
                 created_at=created_at,
-                end_at=self._end_at(created_at, quantidade_dias),
-                quantidade_dias=quantidade_dias,
                 status="pending",
             )
             db.session.add(requisition)
@@ -427,22 +425,20 @@ class RequestService:
         return jsonify({"message": f"{len(created)} requisições importadas com sucesso.", "total": len(created)}), 201
 
     def daily_reservations(self):
-        """Split technical reserves by availability for a requested day or period."""
+        """Split technical reserves by availability for one requested calendar day."""
         value = request.args.get("data")
         try:
             day = dt.strptime(value, "%Y-%m-%d") if value else dt.now()
-            duration_days = max(int(request.args.get("quantidade_dias", 1)), 1)
         except ValueError:
-            return jsonify("Data ou quantidade de dias inválida."), 400
+            return jsonify("Data inválida."), 400
         init = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = (init + timedelta(days=duration_days)).replace(microsecond=0) - timedelta(microseconds=1)
+        end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-        # Range overlap matters for multi-day medical leave, not only the request start date.
+        # Durações antigas não bloqueiam datas posteriores; somente o dia de abertura conta.
         used_ids = {
             row[0] for row in db.session.query(Requisicao.reserva_id)
             .filter(
-                Requisicao.created_at <= end,
-                func.coalesce(Requisicao.end_at, Requisicao.created_at) >= init,
+                Requisicao.created_at.between(init, end),
                 Requisicao.reserva_id > 0,
                 Requisicao.status.in_(["pending", "updated", "approved"]),
             ).distinct().all()
@@ -490,7 +486,6 @@ class RequestService:
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
             "data": init.strftime("%Y-%m-%d"),
-            "data_fim": end.strftime("%Y-%m-%d"),
             "usadas": [row for row in response if row["usada"]],
             "disponiveis": [row for row in response if not row["usada"]],
         }), 200
@@ -545,6 +540,18 @@ class HistoryService:
             .group_by(History.requisicao_id)
             .subquery()
         )
+        absence_days = (
+            db.session.query(
+                History.ausente_id.label("ausente_id"),
+                History.cc.label("cc"),
+                History.motivo.label("motivo"),
+                func.count(func.distinct(func.date(History.created_at))).label("dias"),
+            )
+            .join(latest_history, History.id == latest_history.c.id)
+            .filter(History.created_at.between(init, end))
+            .group_by(History.ausente_id, History.cc, History.motivo)
+            .subquery()
+        )
 
         hists = (
             db.session.query(
@@ -558,7 +565,7 @@ class HistoryService:
                 ).label("reserva"),
                 History.motivo,
                 History.obs,
-                Requisicao.quantidade_dias.label("dias"),
+                absence_days.c.dias,
                 Supervisors.nome.label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
@@ -568,7 +575,11 @@ class HistoryService:
             )
             .select_from(History)
             .join(latest_history, History.id == latest_history.c.id)
-            .outerjoin(Requisicao, Requisicao.id == History.requisicao_id)
+            .join(absence_days, and_(
+                absence_days.c.ausente_id == History.ausente_id,
+                absence_days.c.cc == History.cc,
+                absence_days.c.motivo == History.motivo,
+            ))
             .join(Ausente, Ausente.id == History.ausente_id)
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
