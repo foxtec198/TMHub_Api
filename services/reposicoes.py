@@ -25,6 +25,7 @@ from openpyxl import Workbook, load_workbook
 from zoneinfo import ZoneInfo
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
 from utils.token import decode_token
+from services.controle_faltas import AbsenceControlService
 
 
 def _emit_kds_update(action, request_id=None, status=None):
@@ -265,6 +266,8 @@ class RequestService:
 
         if obs: new_rq.obs = str(obs).strip().upper()
         db.session.add(new_rq)
+        db.session.flush()
+        AbsenceControlService.ensure_for_request(new_rq)
         db.session.commit()
 
         TimelineService().create_event(
@@ -297,6 +300,7 @@ class RequestService:
         if "motivo" in bd: req.motivo = bd.get("motivo")
         if "data" in bd: req.created_at = self._parse_datetime(bd.get("data"))
         req.status = "updated"
+        AbsenceControlService.ensure_for_request(req)
         db.session.commit()
 
         TimelineService().create_event(
@@ -508,6 +512,7 @@ class RequestService:
         # Flush IDs first so each request and its initial timeline event share one transaction.
         db.session.flush()
         for requisition in created:
+            AbsenceControlService.ensure_for_request(requisition)
             db.session.add(Timeline(
                 requisicao_id=requisition.id,
                 reserva_id=requisition.reserva_id,
@@ -799,6 +804,8 @@ class HistoryService:
 
         hist.status = "pending"
         req.status = "updated"
+
+        AbsenceControlService.ensure_for_request(req)
 
         db.session.commit()
 

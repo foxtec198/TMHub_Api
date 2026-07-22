@@ -33,4 +33,5 @@ jobs: # Jobs will run
             venv/bin/python migrations/add_requisition_opened_at.py
             venv/bin/python migrations/add_vacancy_hired_registration.py
             venv/bin/python migrations/add_branches.py
+            venv/bin/python migrations/add_absence_control.py
             sudo systemctl restart api_tmhub

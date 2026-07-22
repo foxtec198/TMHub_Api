@@ -32,5 +32,6 @@ class AuthService:
             "email": user.email,
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "light",
+            "gerencia_faltas": bool(user.gerencia_faltas),
             "last_login": last_login
         }), 200
