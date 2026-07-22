@@ -31,6 +31,9 @@ def request():
 @replace_bp.get("/request/export")
 def export_requests(): return rq_service.export()
 
+@replace_bp.get("/kds")
+def kds_requests(): return rq_service.kds()
+
 # Spreadsheet template and transactional bulk import endpoints.
 @replace_bp.get("/request/modelo-importacao")
 def download_request_import_template(): return rq_service.download_import_template()
