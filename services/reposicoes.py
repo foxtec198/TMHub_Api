@@ -16,7 +16,7 @@ from dateutils import relativedelta
 from flask import jsonify, request, send_file
 from utils.socket import socketio
 from calendar import monthrange
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from utils.check_field import check_field
 from utils.safe_route import safe_route
 from sqlalchemy.orm import aliased
@@ -135,7 +135,7 @@ class RequestService:
 
     @safe_route
     def kds(self):
-        """Return the complete operational queue, including finalized requisitions."""
+        """Return every open requisition and only decisions finalized today."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
         latest_history = (
@@ -146,6 +146,11 @@ class RequestService:
             .group_by(History.requisicao_id)
             .subquery()
         )
+        sao_paulo = ZoneInfo("America/Sao_Paulo")
+        today = dt.now(sao_paulo).date()
+        day_start = dt.combine(today, dt.min.time())
+        day_end = dt.combine(today, dt.max.time())
+
         rows = (
             db.session.query(
                 Requisicao.id,
@@ -173,10 +178,15 @@ class RequestService:
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .outerjoin(latest_history, latest_history.c.requisicao_id == Requisicao.id)
             .outerjoin(History, History.id == latest_history.c.history_id)
+            .filter(or_(
+                Requisicao.status.in_(["pending", "updated"]),
+                and_(
+                    Requisicao.status.in_(["approved", "reproved"]),
+                    History.ended_at.between(day_start, day_end),
+                ),
+            ))
             .all()
         )
-
-        sao_paulo = ZoneInfo("America/Sao_Paulo")
 
         def local_iso(value):
             return value.replace(tzinfo=sao_paulo).isoformat() if value else None
