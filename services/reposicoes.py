@@ -16,13 +16,23 @@ from dateutils import relativedelta
 from flask import jsonify, request, send_file
 from utils.socket import socketio
 from calendar import monthrange
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from utils.check_field import check_field
 from utils.safe_route import safe_route
 from sqlalchemy.orm import aliased
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from zoneinfo import ZoneInfo
+
+
+def _emit_kds_update(action, request_id=None, status=None):
+    """Notify TV dashboards without exposing requisition data over the socket."""
+    socketio.emit("kds_update", {
+        "action": action,
+        "request_id": request_id,
+        "status": status,
+        "emitted_at": dt.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
+    })
 
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
@@ -123,6 +133,74 @@ class RequestService:
         reqs = reqs.all()
         return jsonify([r._asdict() for r in reqs]), 200
 
+    @safe_route
+    def kds(self):
+        """Return the live operational queue plus decisions made in the last 30 minutes."""
+        Ausente = aliased(Employees)
+        Reserva = aliased(Employees)
+        latest_history = (
+            db.session.query(
+                History.requisicao_id,
+                func.max(History.id).label("history_id"),
+            )
+            .group_by(History.requisicao_id)
+            .subquery()
+        )
+        now = dt.now()
+        closed_cutoff = now - timedelta(minutes=30)
+
+        rows = (
+            db.session.query(
+                Requisicao.id,
+                Requisicao.created_at.label("abertura"),
+                Requisicao.status,
+                Requisicao.motivo,
+                Requisicao.obs,
+                Requisicao.warning,
+                Ausente.nome.label("ausente"),
+                Ausente.matricula.label("ausente_matricula"),
+                case(
+                    (Requisicao.reserva_id == 0, "SEM COBERTURA"),
+                    else_=Reserva.nome,
+                ).label("reserva"),
+                Reserva.matricula.label("reserva_matricula"),
+                CostCenters.local.label("contrato"),
+                CostCenters.departamento.label("departamento"),
+                Supervisors.nome.label("supervisor"),
+                History.ended_at.label("decidida_em"),
+            )
+            .select_from(Requisicao)
+            .join(Ausente, Ausente.id == Requisicao.ausente_id)
+            .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
+            .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(latest_history, latest_history.c.requisicao_id == Requisicao.id)
+            .outerjoin(History, History.id == latest_history.c.history_id)
+            .filter(or_(
+                Requisicao.status.in_(["pending", "updated"]),
+                and_(
+                    Requisicao.status.in_(["approved", "reproved"]),
+                    History.ended_at >= closed_cutoff,
+                ),
+            ))
+            .all()
+        )
+
+        sao_paulo = ZoneInfo("America/Sao_Paulo")
+
+        def local_iso(value):
+            return value.replace(tzinfo=sao_paulo).isoformat() if value else None
+
+        return jsonify({
+            "servidor_em": dt.now(sao_paulo).isoformat(),
+            "retencao_fechadas_minutos": 30,
+            "requisicoes": [{
+                **row._asdict(),
+                "abertura": local_iso(row.abertura),
+                "decidida_em": local_iso(row.decidida_em),
+            } for row in rows],
+        }), 200
+
     def create(self):
         bd = request.get_json()
 
@@ -186,6 +264,7 @@ class RequestService:
         )
         
         socketio.emit("new_request")
+        _emit_kds_update("created", new_rq.id, new_rq.status)
         return jsonify("Requisição criada"), 201
 
     @safe_route
@@ -201,6 +280,7 @@ class RequestService:
         if "ausente_id" in bd: req.ausente_id = bd.get("ausente_id")
         if "motivo" in bd: req.motivo = bd.get("motivo")
         if "data" in bd: req.created_at = self._parse_datetime(bd.get("data"))
+        req.status = "updated"
         db.session.commit()
 
         TimelineService().create_event(
@@ -212,6 +292,7 @@ class RequestService:
         )
 
         socketio.emit("new_request")
+        _emit_kds_update("updated", req.id, req.status)
         return jsonify("Requisição alterada"), 200
 
     @safe_route
@@ -422,6 +503,7 @@ class RequestService:
             ))
         db.session.commit()
         socketio.emit("new_request")
+        _emit_kds_update("imported")
         return jsonify({"message": f"{len(created)} requisições importadas com sucesso.", "total": len(created)}), 201
 
     def daily_reservations(self):
@@ -506,6 +588,7 @@ class RequestService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        _emit_kds_update("deleted", requisicao_id)
         return jsonify({
             "message": "RequisiÃ§Ã£o excluÃ­da",
             "requisicao_id": requisicao_id
@@ -638,6 +721,7 @@ class HistoryService:
         )
 
         socketio.emit("new_history")
+        _emit_kds_update("decided", requisicao_id, status)
         return jsonify("Sucesso"), 201
 
     @safe_route
@@ -698,6 +782,7 @@ class HistoryService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        _emit_kds_update("reopened", req.id, req.status)
         return jsonify("Histórico alterado"), 200
 
     @safe_route
@@ -718,6 +803,7 @@ class HistoryService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        _emit_kds_update("deleted", requisicao_id)
         return jsonify({
             "message": "HistÃ³rico e requisiÃ§Ã£o excluÃ­dos",
             "history_id": id,
