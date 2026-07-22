@@ -15,7 +15,7 @@ with app.app_context():
     if "opened_at" not in columns:
         with db.engine.begin() as connection:
             connection.execute(text(
-                "ALTER TABLE rp_requisicoes ADD COLUMN opened_at DATETIME NULL"
+                "ALTER TABLE rp_requisicoes ADD COLUMN opened_at TIMESTAMP WITHOUT TIME ZONE NULL"
             ))
 
             now = dt.now()
