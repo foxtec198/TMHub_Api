@@ -148,6 +148,8 @@ class Vacancy(BaseModel):
         db.ForeignKey("colaboradores.id", ondelete="RESTRICT"),
         index=True,
     )
+    # Matrícula digitada na conclusão permite finalizar antes da importação do colaborador.
+    colaborador_entrada_matricula = db.Column(db.String(50), index=True)
     data_inicio = db.Column(db.DateTime(timezone=True))
     observacao_conclusao = db.Column(db.Text)
     concluido_por_usuario_id = db.Column(

@@ -255,16 +255,23 @@ class VacancyService:
             })
 
         responsavel_vaga = aliased(Users)
+        colaborador_contratado = aliased(Employees)
         vacancy_rows = (
             db.session.query(
                 Vacancy,
                 Employees.nome.label("colaborador_saida"),
+                colaborador_contratado.nome.label("colaborador_contratado"),
                 CostCenters.departamento,
                 CostCenters.local.label("contrato"),
                 responsavel_vaga.nome.label("responsavel"),
             )
             .join(Employees, Employees.id == Vacancy.colaborador_id)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .outerjoin(
+                colaborador_contratado,
+                db.func.lower(colaborador_contratado.matricula)
+                == db.func.lower(Vacancy.colaborador_entrada_matricula),
+            )
             .outerjoin(responsavel_vaga, responsavel_vaga.id == Vacancy.responsavel_usuario_id)
             .filter(Vacancy.aviso_em.between(start_at, end_at))
             .all()
@@ -314,7 +321,14 @@ class VacancyService:
                 "contrato": row.contrato,
                 "responsavel": row.responsavel or (first_action.usuario_nome if first_action else "Rafael Nogara"),
                 "colaborador_saida": row.colaborador_saida,
-                "candidato": vacancy.colaborador_entrada,
+                "candidato": (
+                    row.colaborador_contratado
+                    if vacancy.status == "concluido" and row.colaborador_contratado
+                    else "Colaborador contratado ainda não encontrado"
+                    if vacancy.status == "concluido"
+                    else vacancy.colaborador_entrada
+                ),
+                "candidato_matricula": vacancy.colaborador_entrada_matricula,
                 "tentativas": attempts,
             })
 
@@ -466,8 +480,9 @@ class VacancyService:
                 Vacancy.colaborador_entrada,
                 Vacancy.telefone_colaborador_entrada,
                 Vacancy.colaborador_entrada_id,
+                Vacancy.colaborador_entrada_matricula,
                 colaborador_entrada.nome.label("colaborador_entrada_cadastrado"),
-                colaborador_entrada.matricula.label("colaborador_entrada_matricula"),
+                colaborador_entrada.matricula.label("colaborador_entrada_matricula_cadastrada"),
                 Vacancy.data_inicio,
                 Vacancy.observacao_conclusao,
                 Vacancy.concluido_por_usuario_id,
@@ -488,7 +503,14 @@ class VacancyService:
             .outerjoin(Supervisors, Supervisors.id == Vacancy.supervisor_id)
             .outerjoin(responsavel, responsavel.id == Vacancy.responsavel_usuario_id)
             .outerjoin(WorkSchedule, WorkSchedule.id == Vacancy.horario_trabalho_id)
-            .outerjoin(colaborador_entrada, colaborador_entrada.id == Vacancy.colaborador_entrada_id)
+            .outerjoin(
+                colaborador_entrada,
+                db.or_(
+                    colaborador_entrada.id == Vacancy.colaborador_entrada_id,
+                    db.func.lower(colaborador_entrada.matricula)
+                    == db.func.lower(Vacancy.colaborador_entrada_matricula),
+                ),
+            )
             .outerjoin(recrutador, recrutador.id == Vacancy.concluido_por_usuario_id)
         )
         if status: query = query.filter(Vacancy.status == status)
@@ -674,18 +696,18 @@ class VacancyService:
                 vaga.entrevista_data = entrevista_data
 
             if novo_status == "concluido":
-                colaborador_entrada_id = body.get("colaborador_entrada_id")
+                colaborador_entrada_matricula = str(body.get("colaborador_entrada_matricula") or "").strip()
                 data_inicio = body.get("data_inicio")
                 ok, error = check_field(
-                    colaborador_entrada_id=colaborador_entrada_id,
+                    colaborador_entrada_matricula=colaborador_entrada_matricula,
                     data_inicio=data_inicio,
                 )
                 if not ok:
-                    return jsonify("Informe o colaborador que entrou e a data de início"), 400
+                    return jsonify("Informe a matrícula do colaborador que entrou e a data de início"), 400
 
-                novo_colaborador = db.session.get(Employees, colaborador_entrada_id)
-                if not novo_colaborador:
-                    return jsonify("Colaborador que entrou não encontrado na base"), 404
+                novo_colaborador = Employees.query.filter(
+                    db.func.lower(Employees.matricula) == colaborador_entrada_matricula.lower()
+                ).first()
 
                 horario = db.session.get(WorkSchedule, vaga.horario_trabalho_id)
                 if not horario:
@@ -697,8 +719,13 @@ class VacancyService:
                     return jsonify("Data de início ou horário de trabalho inválido"), 400
 
                 texto_entrada = (body.get("colaborador_entrada") or "").strip()
-                vaga.colaborador_entrada_id = novo_colaborador.id
-                vaga.colaborador_entrada = texto_entrada or novo_colaborador.nome
+                vaga.colaborador_entrada_matricula = colaborador_entrada_matricula
+                vaga.colaborador_entrada_id = novo_colaborador.id if novo_colaborador else None
+                vaga.colaborador_entrada = (
+                    texto_entrada
+                    or (novo_colaborador.nome if novo_colaborador else vaga.colaborador_entrada)
+                    or f"Matrícula {colaborador_entrada_matricula}"
+                )
                 vaga.observacao_conclusao = (body.get("observacao_conclusao") or "").strip() or None
                 vaga.concluido_por_usuario_id = usuario_acao.id
                 vaga.concluido_em = dt.now(TIMEZONE)
@@ -708,7 +735,7 @@ class VacancyService:
                     telefone=vaga.telefone_colaborador_entrada,
                     resultado="aprovado",
                     observacao=vaga.observacao_conclusao,
-                    colaborador_id=novo_colaborador.id,
+                    colaborador_id=novo_colaborador.id if novo_colaborador else None,
                     registrado_por_usuario_id=usuario_acao.id,
                     ocorrido_em=vaga.concluido_em,
                 ))
