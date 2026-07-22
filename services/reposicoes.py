@@ -146,6 +146,14 @@ class RequestService:
             .group_by(History.requisicao_id)
             .subquery()
         )
+        first_timeline = (
+            db.session.query(
+                Timeline.requisicao_id,
+                func.min(Timeline.created_at).label("opened_at"),
+            )
+            .group_by(Timeline.requisicao_id)
+            .subquery()
+        )
         sao_paulo = ZoneInfo("America/Sao_Paulo")
         today = dt.now(sao_paulo).date()
         day_start = dt.combine(today, dt.min.time())
@@ -155,6 +163,7 @@ class RequestService:
             db.session.query(
                 Requisicao.id,
                 Requisicao.created_at.label("abertura"),
+                first_timeline.c.opened_at.label("aberta_em"),
                 Requisicao.status,
                 Requisicao.motivo,
                 Requisicao.obs,
@@ -176,6 +185,7 @@ class RequestService:
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(first_timeline, first_timeline.c.requisicao_id == Requisicao.id)
             .outerjoin(latest_history, latest_history.c.requisicao_id == Requisicao.id)
             .outerjoin(History, History.id == latest_history.c.history_id)
             .filter(or_(
@@ -196,6 +206,7 @@ class RequestService:
             "requisicoes": [{
                 **row._asdict(),
                 "abertura": local_iso(row.abertura),
+                "aberta_em": local_iso(row.aberta_em or row.abertura),
                 "decidida_em": local_iso(row.decidida_em),
             } for row in rows],
         }), 200
