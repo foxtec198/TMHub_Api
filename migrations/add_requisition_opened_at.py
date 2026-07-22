@@ -15,7 +15,7 @@ with app.app_context():
     if "opened_at" not in columns:
         with db.engine.begin() as connection:
             connection.execute(text(
-                "ALTER TABLE rp_requisicoes ADD COLUMN opened_at TIMESTAMP WITHOUT TIME ZONE NULL"
+                "ALTER TABLE rp_requisicoes ADD COLUMN opened_at TIMESTAMP WITH TIME ZONE NULL"
             ))
 
             now = dt.now()
@@ -25,14 +25,15 @@ with app.app_context():
 
             for row in rows:
                 scheduled_at = row["created_at"] or now
+                row_now = dt.now(scheduled_at.tzinfo) if scheduled_at.tzinfo else now
                 opened_at = scheduled_at
-                if scheduled_at.date() > now.date():
+                if scheduled_at.date() > row_now.date():
                     opened_at = scheduled_at.replace(
-                        year=now.year,
-                        month=now.month,
-                        day=now.day,
+                        year=row_now.year,
+                        month=row_now.month,
+                        day=row_now.day,
                     )
-                    if opened_at > now:
+                    if opened_at > row_now:
                         opened_at -= timedelta(days=1)
 
                 connection.execute(text(
