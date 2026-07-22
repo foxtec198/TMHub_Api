@@ -2,7 +2,7 @@ from datetime import datetime as dt, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
-from sqlalchemy import case
+from sqlalchemy import case, or_
 from sqlalchemy.orm import aliased
 
 from models.centros_de_custo import CostCenters
@@ -22,6 +22,11 @@ JUSTIFIED_REASON_TERMS = ("ATESTADO", "AFASTAMENTO", "DECLARAÇÃO", "DECLARAÃ�
 
 
 class AbsenceControlService:
+    @staticmethod
+    def _requires_document_deadline(reason):
+        normalized = str(reason or "").strip().upper()
+        return "ATESTADO" in normalized or "DECLARA" in normalized
+
     @staticmethod
     def _is_historical(value):
         if not value:
@@ -56,7 +61,7 @@ class AbsenceControlService:
 
     @staticmethod
     def _deadline(req):
-        if "ATESTADO" not in str(req.motivo or "").strip().upper():
+        if not AbsenceControlService._requires_document_deadline(req.motivo):
             return None
         opened = req.opened_at or dt.now(SAO_PAULO)
         if opened.tzinfo is None:
@@ -72,6 +77,7 @@ class AbsenceControlService:
         with db.session.no_autoflush:
             absence = AbsenceControl.query.filter_by(requisicao_id=req.id).first()
             employee = db.session.get(Employees, req.ausente_id)
+        is_new = absence is None
         if not absence:
             absence = AbsenceControl(requisicao_id=req.id)
             db.session.add(absence)
@@ -82,9 +88,11 @@ class AbsenceControlService:
         absence.supervisor_id = req.supervisor_id
         absence.motivo = req.motivo
         absence.data_falta = req.created_at
+        if is_new and req.obs:
+            absence.observacao = req.obs
         if absence.status != "tratada":
             absence.classificacao = cls._initial_classification(req.motivo)
-            if cls._is_historical(req.created_at):
+            if is_new and cls._is_historical(req.created_at):
                 cls._mark_historical_as_treated(absence)
             else:
                 absence.prazo_atestado = cls._deadline(req)
@@ -95,7 +103,10 @@ class AbsenceControlService:
         now = dt.now(SAO_PAULO)
         expired = AbsenceControl.query.filter(
             AbsenceControl.status == "pendente",
-            db.func.upper(AbsenceControl.motivo).like("%ATESTADO%"),
+            or_(
+                db.func.upper(AbsenceControl.motivo).like("%ATESTADO%"),
+                db.func.upper(AbsenceControl.motivo).like("%DECLARA%"),
+            ),
             AbsenceControl.prazo_atestado.isnot(None),
             AbsenceControl.prazo_atestado <= now,
             AbsenceControl.classificacao != "injustificada",
