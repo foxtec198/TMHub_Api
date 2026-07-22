@@ -16,7 +16,7 @@ from dateutils import relativedelta
 from flask import jsonify, request, send_file
 from utils.socket import socketio
 from calendar import monthrange
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func
 from utils.check_field import check_field
 from utils.safe_route import safe_route
 from sqlalchemy.orm import aliased
@@ -135,7 +135,7 @@ class RequestService:
 
     @safe_route
     def kds(self):
-        """Return the live operational queue plus decisions made in the last 30 minutes."""
+        """Return the complete operational queue, including finalized requisitions."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
         latest_history = (
@@ -146,9 +146,6 @@ class RequestService:
             .group_by(History.requisicao_id)
             .subquery()
         )
-        now = dt.now()
-        closed_cutoff = now - timedelta(minutes=30)
-
         rows = (
             db.session.query(
                 Requisicao.id,
@@ -176,13 +173,6 @@ class RequestService:
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .outerjoin(latest_history, latest_history.c.requisicao_id == Requisicao.id)
             .outerjoin(History, History.id == latest_history.c.history_id)
-            .filter(or_(
-                Requisicao.status.in_(["pending", "updated"]),
-                and_(
-                    Requisicao.status.in_(["approved", "reproved"]),
-                    History.ended_at >= closed_cutoff,
-                ),
-            ))
             .all()
         )
 
@@ -193,7 +183,6 @@ class RequestService:
 
         return jsonify({
             "servidor_em": dt.now(sao_paulo).isoformat(),
-            "retencao_fechadas_minutos": 30,
             "requisicoes": [{
                 **row._asdict(),
                 "abertura": local_iso(row.abertura),
