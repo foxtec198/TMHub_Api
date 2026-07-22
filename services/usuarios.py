@@ -28,10 +28,15 @@ class UserServices:
     @safe_route
     def read(self, token_data):
         detailed = rq.args.get("detail") == "1"
+        include_photo = rq.args.get("include_photo") == "1"
         users = Users.query.order_by(Users.nome).all()
 
         if not detailed:
-            return jsonify([{"id": user.id, "nome": user.nome} for user in users]), 200
+            return jsonify([{
+                "id": user.id,
+                "nome": user.nome,
+                **({"foto_perfil": user.foto_perfil} if include_photo else {}),
+            } for user in users]), 200
 
         is_admin = self._is_admin(token_data)
         return jsonify([{
@@ -42,6 +47,7 @@ class UserServices:
             "role": user.role,
             "created_at": user.created_at,
             "last_login": user.last_login,
+            **({"foto_perfil": user.foto_perfil} if include_photo else {}),
         } for user in users]), 200
 
     @safe_route
@@ -251,6 +257,7 @@ class UserServices:
         body = rq.get_json(silent=True) or {}
         nome = body.get("nome")
         foto = body.get("foto_perfil")
+        tema = body.get("tema")
         senha_atual = body.get("senha_atual")
         nova_senha = body.get("nova_senha")
 
@@ -265,6 +272,12 @@ class UserServices:
                 return jsonify("A foto deve ser PNG, JPG ou WEBP e ter até 1,5 MB."), 400
             user.foto_perfil = foto or None
 
+        if tema is not None:
+            tema = str(tema).lower()
+            if tema not in {"light", "dark"}:
+                return jsonify("O tema deve ser light ou dark."), 400
+            user.tema = tema
+
         if nova_senha is not None:
             if sha256(str(senha_atual or "").encode()).hexdigest() != user.hash:
                 return jsonify("Senha atual incorreta."), 400
@@ -272,7 +285,7 @@ class UserServices:
                 return jsonify("A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."), 400
             user.hash = sha256(nova_senha.encode()).hexdigest()
 
-        if not any(value is not None for value in (nome, foto, nova_senha)):
+        if not any(value is not None for value in (nome, foto, tema, nova_senha)):
             return jsonify("Nenhuma alteração informada."), 400
 
         db.session.commit()
@@ -323,7 +336,14 @@ class UserServices:
 
     @staticmethod
     def _serialize(user):
-        return {"id": user.id, "nome": user.nome, "email": user.email, "foto_perfil": user.foto_perfil, "role": user.role}
+        return {
+            "id": user.id,
+            "nome": user.nome,
+            "email": user.email,
+            "foto_perfil": user.foto_perfil,
+            "tema": user.tema or "light",
+            "role": user.role,
+        }
 
     @staticmethod
     def _send_email_code(recipient, code):

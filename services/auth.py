@@ -31,5 +31,6 @@ class AuthService:
             "role": user.role, 
             "email": user.email,
             "foto_perfil": user.foto_perfil,
+            "tema": user.tema or "light",
             "last_login": last_login
         }), 200

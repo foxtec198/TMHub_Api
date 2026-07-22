@@ -26,7 +26,9 @@ jobs: # Jobs will run
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd /home/guibs/api_tmhub
             sudo git pull origin main
             sudo venv/bin/pip install -r requirements.txt
+            venv/bin/python migrations/add_user_theme.py
             sudo systemctl restart api_tmhub

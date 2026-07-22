@@ -14,6 +14,7 @@ class Users(BaseModel):
     last_login = db.Column(db.DateTime)
     role = db.Column(db.String, default="USER")
     foto_perfil = db.Column(db.Text)
+    tema = db.Column(db.String(10), default="light")
     email_pendente = db.Column(db.String)
     email_codigo_hash = db.Column(db.String)
     email_codigo_expira_em = db.Column(db.DateTime)
