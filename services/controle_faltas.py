@@ -8,11 +8,14 @@ from sqlalchemy.orm import aliased
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
+from models.rp_historico import History
 from models.rp_requisicao import Requisicao
+from models.rp_timeline import Timeline
 from models.supervisores import Supervisors
 from models.usuarios import Users
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
+from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
@@ -119,7 +122,7 @@ class AbsenceControlService:
 
     @safe_route
     def read(self, token_data):
-        if not self._can_manage(token_data):
+        if not has_permission(token_data, "controle_faltas", "view"):
             return jsonify("Você não possui acesso ao Controle de Faltas."), 403
         self._expire_certificates()
         Tratador = aliased(Users)
@@ -156,12 +159,40 @@ class AbsenceControlService:
             )
         )
         rows = apply_cost_center_scope(query, AbsenceControl.centro_custo_id, token_data).all()
+
+        filter_options = {
+            "departamentos": sorted(
+                {str(row.departamento) for row in rows if row.departamento is not None},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "supervisores": sorted({row.supervisor for row in rows if row.supervisor}),
+            "motivos": sorted({row.motivo for row in rows if row.motivo}),
+            "contratos": sorted({row.contrato for row in rows if row.contrato}),
+            "colaboradores": sorted({row.colaborador for row in rows if row.colaborador}),
+        }
+        department = request.args.get("departamento")
+        supervisor = request.args.get("supervisor")
+        reason = request.args.get("motivo")
+        contract = request.args.get("contrato")
+        collaborator = request.args.get("colaborador")
+        status = request.args.get("status")
+        classification = request.args.get("classificacao")
+        rows = [
+            row for row in rows
+            if (not department or str(row.departamento) == department)
+            and (not supervisor or row.supervisor == supervisor)
+            and (not reason or row.motivo == reason)
+            and (not contract or row.contrato == contract)
+            and (not collaborator or row.colaborador == collaborator)
+            and (not status or row.status == status)
+            and (not classification or row.classificacao == classification)
+        ]
         return jsonify([row._asdict() for row in rows]), 200
 
     @safe_route
     def update(self, token_data):
-        if not self._can_manage(token_data):
-            return jsonify("Você não possui acesso ao Controle de Faltas."), 403
+        if not has_permission(token_data, "controle_faltas", "edit"):
+            return jsonify("Você não possui permissão para alterar o Controle de Faltas."), 403
         body = request.get_json(silent=True) or {}
         absence = db.session.get(AbsenceControl, body.get("id"))
         if not absence:
@@ -173,10 +204,28 @@ class AbsenceControlService:
             reason = str(body.get("motivo") or "").strip().upper()
             if not reason:
                 return jsonify("Informe o motivo."), 400
+            previous_reason = absence.motivo
             absence.motivo = reason
             req = db.session.get(Requisicao, absence.requisicao_id)
             if req:
                 req.motivo = reason
+                History.query.filter_by(requisicao_id=req.id).update(
+                    {History.motivo: reason},
+                    synchronize_session=False,
+                )
+                if previous_reason != reason:
+                    db.session.add(Timeline(
+                        requisicao_id=req.id,
+                        reserva_id=req.reserva_id,
+                        ausente_id=req.ausente_id,
+                        cc=req.cc,
+                        supervisor_id=req.supervisor_id,
+                        alterado_por_usuario_id=token_data.get("id"),
+                        status=req.status,
+                        tipo="Motivo alterado no Controle de Faltas",
+                        motivo=reason,
+                        obs=f"Motivo alterado de {previous_reason or 'NÃO INFORMADO'} para {reason}.",
+                    ))
             if absence.status != "tratada":
                 absence.classificacao = self._initial_classification(reason)
                 if req:
@@ -213,4 +262,104 @@ class AbsenceControlService:
 
         db.session.commit()
         socketio.emit("absence_control_update", {"id": absence.id})
+        socketio.emit("new_request")
+        socketio.emit("new_history")
+        socketio.emit("kds_update", {
+            "action": "absence_updated",
+            "request_id": absence.requisicao_id,
+            "emitted_at": dt.now(SAO_PAULO).isoformat(),
+        })
         return jsonify("Registro de falta atualizado."), 200
+
+    @safe_route
+    def dashboard(self, token_data):
+        if not has_permission(token_data, "dashboard_faltas", "view"):
+            return jsonify("Você não possui acesso ao Dashboard de Faltas."), 403
+
+        try:
+            start = (
+                dt.fromisoformat(request.args.get("inicio"))
+                if request.args.get("inicio")
+                else dt.now(SAO_PAULO).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            )
+            end = (
+                dt.fromisoformat(request.args.get("fim"))
+                if request.args.get("fim")
+                else dt.now(SAO_PAULO)
+            )
+        except ValueError:
+            return jsonify("Período inválido."), 400
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=SAO_PAULO)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=SAO_PAULO)
+        end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        query = (
+            db.session.query(
+                AbsenceControl.id,
+                AbsenceControl.data_falta,
+                AbsenceControl.motivo,
+                AbsenceControl.classificacao,
+                AbsenceControl.status,
+                AbsenceControl.created_at,
+                AbsenceControl.tratado_em,
+                db.func.coalesce(Employees.nome, AbsenceControl.colaborador_nome).label("colaborador"),
+                CostCenters.local.label("contrato"),
+                CostCenters.departamento,
+                Supervisors.nome.label("supervisor"),
+            )
+            .select_from(AbsenceControl)
+            .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
+            .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
+            .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .filter(AbsenceControl.data_falta.between(start, end))
+        )
+        rows = apply_cost_center_scope(query, AbsenceControl.centro_custo_id, token_data).all()
+
+        def rank(field):
+            counts = {}
+            for row in rows:
+                value = getattr(row, field) or "Não informado"
+                counts[str(value)] = counts.get(str(value), 0) + 1
+            ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            return [{"label": key, "total": total} for key, total in ordered]
+
+        treatment_hours = []
+        for row in rows:
+            if row.tratado_em and row.created_at:
+                treated = row.tratado_em if row.tratado_em.tzinfo else row.tratado_em.replace(tzinfo=SAO_PAULO)
+                created = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=SAO_PAULO)
+                treatment_hours.append(max(0, (treated - created).total_seconds() / 3600))
+
+        indicators = {
+            "total": len(rows),
+            "pendentes": sum(row.status == "pendente" for row in rows),
+            "tratadas": sum(row.status == "tratada" for row in rows),
+            "justificadas": sum(row.classificacao == "justificada" for row in rows),
+            "injustificadas": sum(row.classificacao == "injustificada" for row in rows),
+            "em_analise": sum(row.classificacao == "em_analise" for row in rows),
+            "tempo_medio_tratativa_horas": round(sum(treatment_hours) / len(treatment_hours), 1) if treatment_hours else None,
+        }
+        recent = sorted(rows, key=lambda row: row.data_falta, reverse=True)[:20]
+        return jsonify({
+            "periodo": {"inicio": start.date().isoformat(), "fim": end.date().isoformat()},
+            "indicadores": indicators,
+            "motivos": rank("motivo"),
+            "contratos": rank("contrato")[:15],
+            "departamentos": rank("departamento"),
+            "supervisores": rank("supervisor"),
+            "filtros": {
+                **filter_options,
+                "colaboradores": [{"label": name, "value": name} for name in filter_options["colaboradores"]],
+            },
+            "recentes": [{
+                "id": row.id,
+                "data_falta": row.data_falta,
+                "colaborador": row.colaborador,
+                "contrato": row.contrato,
+                "motivo": row.motivo,
+                "classificacao": row.classificacao,
+                "status": row.status,
+            } for row in recent],
+        }), 200

@@ -332,6 +332,41 @@ class VacancyService:
                 "tentativas": attempts,
             })
 
+        # As opções são montadas antes do recorte para o painel não perder escolhas
+        # quando um filtro estiver ativo.
+        filter_options = {
+            "departamentos": sorted(
+                {str(record["departamento"]) for record in records if record["departamento"] is not None},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "status": sorted({record["status"] for record in records if record["status"]}),
+            "contratos": sorted({record["contrato"] for record in records if record["contrato"]}),
+            "responsaveis": sorted({record["responsavel"] for record in records if record["responsavel"]}),
+            "colaboradores": sorted({
+                value
+                for record in records
+                for value in (record.get("colaborador_saida"), record.get("candidato"))
+                if value
+            }),
+        }
+        department_filter = rq.args.get("departamento")
+        status_filter = rq.args.get("status")
+        contract_filter = rq.args.get("contrato")
+        responsible_filter = rq.args.get("responsavel")
+        collaborator_filter = rq.args.get("colaborador")
+        records = [
+            record for record in records
+            if (not department_filter or str(record["departamento"]) == department_filter)
+            and (not status_filter or record["status"] == status_filter)
+            and (not contract_filter or record["contrato"] == contract_filter)
+            and (not responsible_filter or record["responsavel"] == responsible_filter)
+            and (
+                not collaborator_filter
+                or record.get("colaborador_saida") == collaborator_filter
+                or record.get("candidato") == collaborator_filter
+            )
+        ]
+
         # Tempos em aberto usam o instante atual; tempos concluídos usam datas persistidas.
         now = dt.now(TIMEZONE)
         for record in records:
@@ -447,6 +482,7 @@ class VacancyService:
             "mensal": monthly_result,
             "status": [{"status": key, "total": value} for key, value in status_counts.items()],
             "departamentos": department_result,
+            "filtros": filter_options,
             "atencao": [serialize_record(record) for record in attention],
             "recentes": [serialize_record(record) for record in recent],
         }), 200

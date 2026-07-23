@@ -10,3 +10,8 @@ service = AbsenceControlService()
 @absence_control_bp.route("", methods=["GET", "PATCH"])
 def root():
     return service.read() if request.method == "GET" else service.update()
+
+
+@absence_control_bp.get("/dashboard")
+def dashboard():
+    return service.dashboard()

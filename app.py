@@ -6,6 +6,7 @@ from os import getenv
 from utils.blueprints import blueprints
 from utils.socket import socketio
 from utils.db import db
+from utils.permissions import enforce_request_permission
 load_dotenv()  # Carrega o dotenv
 
 # Variaveis de Instancia - SandBox()
@@ -22,6 +23,8 @@ CORS(app, allow_headers="*")  # Carrega os CORS security
 # Configs do APP
 app.config["SECRET_KEY"] = getenv("SECRET")
 app.config["SQLALCHEMY_DATABASE_URI"] = getenv("DB_URI")
+
+app.before_request(enforce_request_permission)
 
 for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp]) # Carrega os BPS das Rotas
 db.init_app(app)  # Inicia o banco de dados
