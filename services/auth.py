@@ -4,6 +4,7 @@ from utils.token import create_token
 from models.usuarios import Users, db
 from utils.check_field import check_field, check_password_hash
 from datetime import datetime as dt
+from utils.permissions import serialize_permissions
 
 class AuthService:
     def login(self):
@@ -33,5 +34,6 @@ class AuthService:
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "light",
             "gerencia_faltas": bool(user.gerencia_faltas),
+            "permissions": serialize_permissions(user),
             "last_login": last_login
         }), 200

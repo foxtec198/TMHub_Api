@@ -57,7 +57,12 @@ def create_cobs():
             dt_admissao = item.get("admissao")
             cargo = item.get("cargo")
             situacao = item.get("situacao")
-            salario = item.get("salario")
+            salario = item.get("salario", 0)
+            salario = float(
+                str(salario)
+                .replace(".", "")
+                .replace(",", ".")
+            )
             cpf = item.get("cpf")
 
             admissao = dt.now().strptime(dt_admissao, "%d/%m/%Y")
@@ -91,7 +96,7 @@ def create_cobs():
                         SALARIO, CPF
                     ) 
                     VALUES( 
-                        '{mat}', '{nome}', 
+                        {mat}, '{nome}',  
                         {center_id}, '{admissao}', 
                         {situacao}, {cargo_id}, 
                         {carga_horaria}, {salario}, '{cpf}'

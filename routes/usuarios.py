@@ -25,6 +25,9 @@ def profile(): return service.profile()
 @user_bp.patch("/perfil")
 def update_profile(): return service.update_profile()
 
+@user_bp.get("/permissoes/catalogo")
+def permission_catalog(): return service.permission_catalog()
+
 @user_bp.post("/email/codigo")
 def request_email_code(): return service.request_email_code()
 

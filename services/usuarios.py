@@ -12,6 +12,7 @@ import smtplib
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from models.filiais import Branch
+from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
 
 PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -50,6 +51,7 @@ class UserServices:
             "created_at": user.created_at,
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
+            "permissions": serialize_permissions(user),
             **({"foto_perfil": user.foto_perfil} if include_photo else {}),
         } for user in users]), 200
 
@@ -66,6 +68,11 @@ class UserServices:
         if branch_error:
             return jsonify(branch_error), 400
         db.session.add(user)
+        db.session.flush()
+        permission_error = replace_permissions(user, (rq.get_json(silent=True) or {}).get("permissions"))
+        if permission_error:
+            db.session.rollback()
+            return jsonify(permission_error), 400
         db.session.commit()
         return jsonify(self._serialize_admin(user)), 201
 
@@ -86,6 +93,10 @@ class UserServices:
         branch_error = self._apply_branches(user, body)
         if branch_error:
             return jsonify(branch_error), 400
+        permission_error = replace_permissions(user, body.get("permissions") if "permissions" in body else None)
+        if permission_error:
+            db.session.rollback()
+            return jsonify(permission_error), 400
 
         db.session.commit()
         return jsonify(self._serialize_admin(user)), 200
@@ -200,7 +211,7 @@ class UserServices:
         return Users(nome=nome, cpf=cpf, email=email, role=role, gerencia_faltas=bool(body.get("gerencia_faltas", False)), hash=sha256(password.encode()).hexdigest()), None
 
     def _apply_user_changes(self, user, body):
-        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas")):
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions")):
             return "Nenhuma alteração informada."
 
         if "nome" in body:
@@ -268,6 +279,7 @@ class UserServices:
             "created_at": user.created_at,
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
+            "permissions": serialize_permissions(user),
         }
 
     @safe_route
@@ -374,7 +386,14 @@ class UserServices:
             "role": user.role,
             "gerencia_faltas": bool(user.gerencia_faltas),
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
+            "permissions": serialize_permissions(user),
         }
+
+    @safe_route
+    def permission_catalog(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem consultar o catálogo de permissões."), 403
+        return jsonify(PERMISSION_CATALOG), 200
 
     @staticmethod
     def _send_email_code(recipient, code):
