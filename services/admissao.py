@@ -268,9 +268,8 @@ class VacancyService:
             .join(Employees, Employees.id == Vacancy.colaborador_id)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
             .outerjoin(
-                colaborador_contratado,
-                db.func.lower(colaborador_contratado.matricula)
-                == db.func.lower(Vacancy.colaborador_entrada_matricula),
+                colaborador_contratado, colaborador_contratado.matricula
+                == Vacancy.colaborador_entrada_matricula,
             )
             .outerjoin(responsavel_vaga, responsavel_vaga.id == Vacancy.responsavel_usuario_id)
             .filter(Vacancy.aviso_em.between(start_at, end_at))
@@ -542,9 +541,8 @@ class VacancyService:
             .outerjoin(
                 colaborador_entrada,
                 db.or_(
-                    colaborador_entrada.id == Vacancy.colaborador_entrada_id,
-                    db.func.lower(colaborador_entrada.matricula)
-                    == db.func.lower(Vacancy.colaborador_entrada_matricula),
+                    colaborador_entrada.id == Vacancy.colaborador_entrada_id, colaborador_entrada.matricula
+                    == Vacancy.colaborador_entrada_matricula,
                 ),
             )
             .outerjoin(recrutador, recrutador.id == Vacancy.concluido_por_usuario_id)
@@ -742,7 +740,7 @@ class VacancyService:
                     return jsonify("Informe a matrícula do colaborador que entrou e a data de início"), 400
 
                 novo_colaborador = Employees.query.filter(
-                    db.func.lower(Employees.matricula) == colaborador_entrada_matricula.lower()
+                    Employees.matricula == colaborador_entrada_matricula.lower()
                 ).first()
 
                 horario = db.session.get(WorkSchedule, vaga.horario_trabalho_id)
