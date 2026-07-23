@@ -20,6 +20,7 @@ class EmployeesService:
 
         bd = rq.args
         situation_id = bd.get("situacao", None)
+        require_center = str(bd.get("com_local", "")).strip().lower() in {"1", "true", "sim"}
         limit = bd.get("limit")
         search = bd.get("search")
 
@@ -47,6 +48,7 @@ class EmployeesService:
             emp = apply_cost_center_scope(emp, Employees.centro_id, decode_token(access_token))
 
         if situation_id:emp = emp.filter(Situations.id == int(situation_id))  # Se passado o filtro de situacao
+        if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))
         if limit: emp = emp.limit(limit)
             

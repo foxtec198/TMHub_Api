@@ -231,9 +231,18 @@ class RequestService:
         absent_employee = db.session.get(Employees, ausente_id)
         if not absent_employee:
             return jsonify("Colaborador ausente não encontrado."), 404
-        if not absent_employee.centro_id:
+        requested_center_id = bd.get("centro_id")
+        if requested_center_id is not None:
+            try:
+                centro_id = int(requested_center_id)
+            except (TypeError, ValueError):
+                return jsonify("Local selecionado inválido."), 400
+            if not db.session.get(CostCenters, centro_id):
+                return jsonify("Local selecionado não encontrado."), 404
+        else:
+            centro_id = absent_employee.centro_id
+        if not centro_id:
             return jsonify("O colaborador ausente não possui um local cadastrado."), 400
-        centro_id = absent_employee.centro_id
         access_token = request.headers.get("Access-Token")
         if access_token and not can_access_cost_center(decode_token(access_token), centro_id):
             return jsonify("Você não possui acesso à filial deste colaborador."), 403
