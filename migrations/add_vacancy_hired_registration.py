@@ -44,7 +44,7 @@ with app.app_context():
                 OR (
                     (
                         colaborador_entrada_id IS NOT NULL
-                        OR NULLIF(colaborador_entrada_matricula, '') IS NOT NULL
+                        OR NULLIF(TRIM(colaborador_entrada_matricula::TEXT), '') IS NOT NULL
                     )
                     AND data_inicio IS NOT NULL
                     AND concluido_por_usuario_id IS NOT NULL
