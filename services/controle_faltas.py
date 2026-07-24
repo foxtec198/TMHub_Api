@@ -317,6 +317,36 @@ class AbsenceControlService:
         )
         rows = apply_cost_center_scope(query, AbsenceControl.centro_custo_id, token_data).all()
 
+        filter_options = {
+            "departamentos": sorted(
+                {str(row.departamento) for row in rows if row.departamento is not None},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "supervisores": sorted({row.supervisor for row in rows if row.supervisor}),
+            "motivos": sorted({row.motivo for row in rows if row.motivo}),
+            "contratos": sorted({row.contrato for row in rows if row.contrato}),
+            "colaboradores": sorted({row.colaborador for row in rows if row.colaborador}),
+        }
+
+        # Aplica filtros adicionais (os filter_options são calculados antes para manter os dropdowns completos)
+        department = request.args.get("departamento")
+        supervisor = request.args.get("supervisor")
+        reason = request.args.get("motivo")
+        contract = request.args.get("contrato")
+        collaborator = request.args.get("colaborador")
+        status = request.args.get("status")
+        classification = request.args.get("classificacao")
+        rows = [
+            row for row in rows
+            if (not department or str(row.departamento) == department)
+            and (not supervisor or row.supervisor == supervisor)
+            and (not reason or row.motivo == reason)
+            and (not contract or row.contrato == contract)
+            and (not collaborator or row.colaborador == collaborator)
+            and (not status or row.status == status)
+            and (not classification or row.classificacao == classification)
+        ]
+
         def rank(field):
             counts = {}
             for row in rows:
@@ -355,7 +385,7 @@ class AbsenceControlService:
             },
             "recentes": [{
                 "id": row.id,
-                "data_falta": row.data_falta,
+                "data_falta": row.data_falta.isoformat() if row.data_falta else None,
                 "colaborador": row.colaborador,
                 "contrato": row.contrato,
                 "motivo": row.motivo,

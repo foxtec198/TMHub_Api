@@ -20,6 +20,7 @@ class EmployeesService:
 
         bd = rq.args
         situation_id = bd.get("situacao", None)
+        center_id = bd.get("centro_id", None) or bd.get("centro_custo_id", None)
         require_center = str(bd.get("com_local", "")).strip().lower() in {"1", "true", "sim"}
         limit = bd.get("limit")
         search = bd.get("search")
@@ -33,24 +34,26 @@ class EmployeesService:
                 Employees.centro_id,
                 CostCenters.local.label("centro_local"),
                 CostCenters.departamento,
+                CostCenters.valor_diaria_glosa.label("valor_diaria_glosa"),
                 Cargos.nome.label("cargo"),
                 Situations.tipo.label("situacao"),
             )
             .select_from(Employees)
-            .join(Cargos, Cargos.id == Employees.cargo)
-            .join(Situations, Situations.id == Employees.situacao)
+            .outerjoin(Cargos, Cargos.id == Employees.cargo)
+            .outerjoin(Situations, Situations.id == Employees.situacao)
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
-            .order_by(Employees.data_admissao.desc())
+            .order_by(Employees.nome.asc())
         )
 
         access_token = rq.headers.get("Access-Token")
         if access_token:
             emp = apply_cost_center_scope(emp, Employees.centro_id, decode_token(access_token))
 
-        if situation_id:emp = emp.filter(Situations.id == int(situation_id))  # Se passado o filtro de situacao
+        if center_id: emp = emp.filter(Employees.centro_id == int(center_id))
+        if situation_id: emp = emp.filter(Situations.id == int(situation_id))
         if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))
-        if limit: emp = emp.limit(limit)
+        if limit: emp = emp.limit(int(limit))
             
         emp = emp.all()  # Obtem tudo
         return jsonify([e._asdict() for e in emp]), 200
