@@ -15,7 +15,7 @@ class AbsenceControl(BaseModel):
     centro_custo_id = db.Column(db.Integer, db.ForeignKey("centro_de_custo.id", ondelete="RESTRICT"), nullable=False, index=True)
     supervisor_id = db.Column(db.Integer, db.ForeignKey("supervisores.id", ondelete="RESTRICT"), nullable=False, index=True)
     motivo = db.Column(db.String(100), nullable=False)
-    data_falta = db.Column(db.DateTime, nullable=False)
+    data_falta = db.Column(db.DateTime(timezone=True), nullable=False)
     prazo_atestado = db.Column(db.DateTime(timezone=True), index=True)
     classificacao = db.Column(db.String(30), nullable=False, default="em_analise", index=True)
     status = db.Column(db.String(20), nullable=False, default="pendente", index=True)

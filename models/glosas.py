@@ -35,9 +35,9 @@ class Disallowance(BaseModel):
         index=True,
     )
     cobertura = db.Column(db.String(20), nullable=False, default="em_analise", index=True)
-    quantidade_dias = db.Column(db.Numeric(8, 2), nullable=False, default=Decimal("1.00"))
-    valor_diaria = db.Column(db.Numeric(12, 2), nullable=False, default=Decimal("140.00"))
-    valor_total = db.Column(db.Numeric(14, 2), nullable=False, default=Decimal("140.00"))
+    quantidade_dias = db.Column(db.Numeric(8, 4), nullable=False, default=Decimal("1.0000"))
+    valor_diaria = db.Column(db.Numeric(12, 2), nullable=False, default=Decimal("180.00"))
+    valor_total = db.Column(db.Numeric(14, 2), nullable=False, default=Decimal("180.00"))
     justificativa = db.Column(db.Text)
     observacao = db.Column(db.Text)
     criado_por_usuario_id = db.Column(

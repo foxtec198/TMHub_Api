@@ -15,4 +15,5 @@ class CostCenters(BaseModel):
             ondelete="SET NULL"
         )
     )
+    valor_diaria_glosa = db.Column(db.Numeric(12, 2), nullable=True)
     filiais = db.relationship("Branch", secondary="filial_centros_custo", back_populates="centros_custo")

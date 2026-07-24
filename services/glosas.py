@@ -17,7 +17,7 @@ from utils.socket import socketio
 
 
 VALID_COVERAGE = {"em_analise", "coberta", "descoberta"}
-DEFAULT_DAILY_VALUE = Decimal("140.00")
+DEFAULT_DAILY_VALUE = Decimal("180.00")
 
 
 def _parse_date(value, field):
@@ -27,7 +27,7 @@ def _parse_date(value, field):
         raise ValueError(f"{field} inválida.")
 
 
-def _parse_decimal(value, field, default=None):
+def _parse_decimal(value, field, default=None, places="0.01"):
     if value in (None, "") and default is not None:
         return default
     try:
@@ -36,13 +36,14 @@ def _parse_decimal(value, field, default=None):
         raise ValueError(f"{field} inválido.")
     if parsed <= 0:
         raise ValueError(f"{field} deve ser maior que zero.")
-    return parsed.quantize(Decimal("0.01"))
+    return parsed.quantize(Decimal(places))
 
 
 class DisallowanceService:
     @staticmethod
     def _serialize(row):
         item = row.Disallowance
+        dias = float(item.quantidade_dias)
         return {
             "id": item.id,
             "competencia": item.competencia.isoformat(),
@@ -56,7 +57,8 @@ class DisallowanceService:
             "falta_id": item.falta_id,
             "requisicao_id": item.requisicao_id,
             "cobertura": item.cobertura,
-            "quantidade_dias": float(item.quantidade_dias),
+            "quantidade_dias": round(dias, 4),
+            "quantidade_horas": round(dias * 8, 2),
             "valor_diaria": float(item.valor_diaria),
             "valor_total": float(item.valor_total),
             "justificativa": item.justificativa,
@@ -116,6 +118,19 @@ class DisallowanceService:
         }
         return jsonify({"registros": records, "resumo": summary, "valor_diaria_padrao": float(DEFAULT_DAILY_VALUE)}), 200
 
+    @staticmethod
+    def get_default_daily_value(cost_center_id):
+        if not cost_center_id:
+            return DEFAULT_DAILY_VALUE
+        center = db.session.get(CostCenters, cost_center_id)
+        if not center:
+            return DEFAULT_DAILY_VALUE
+        if center.valor_diaria_glosa:
+            return Decimal(str(center.valor_diaria_glosa))
+        if str(center.departamento) == "269" or str(center.id) == "269":
+            return Decimal("182.02")
+        return DEFAULT_DAILY_VALUE
+
     def _apply(self, item, body, token_data, creating=False):
         try:
             if creating or "competencia" in body:
@@ -123,17 +138,19 @@ class DisallowanceService:
                 item.competencia = competence.replace(day=1)
             if creating or "data_falta" in body:
                 item.data_falta = _parse_date(body.get("data_falta"), "Data da falta")
-            if creating or "centro_custo_id" in body:
+            if "centro_custo_id" in body:
                 center_id = int(body.get("centro_custo_id"))
                 if not db.session.get(CostCenters, center_id):
                     return "Contrato não encontrado."
                 if not can_access_cost_center(token_data, center_id):
                     return "Você não possui acesso à filial deste contrato."
                 item.centro_custo_id = center_id
-            if creating or "quantidade_dias" in body:
-                item.quantidade_dias = _parse_decimal(body.get("quantidade_dias"), "Quantidade de dias", Decimal("1"))
-            if creating or "valor_diaria" in body:
-                item.valor_diaria = _parse_decimal(body.get("valor_diaria"), "Valor da diária", DEFAULT_DAILY_VALUE)
+            if creating or "quantidade_dias" in body or "quantidade_horas" in body:
+                if "quantidade_dias" in body:
+                    item.quantidade_dias = _parse_decimal(body.get("quantidade_dias"), "Quantidade de dias", Decimal("1"), places="0.0001")
+                elif "quantidade_horas" in body:
+                    horas = _parse_decimal(body.get("quantidade_horas"), "Quantidade de horas", Decimal("8"), places="0.01")
+                    item.quantidade_dias = (horas / Decimal("8")).quantize(Decimal("0.0001"))
         except (TypeError, ValueError) as error:
             return str(error)
 
@@ -167,9 +184,23 @@ class DisallowanceService:
             item.colaborador_id = employee.id if employee else None
             item.colaborador_nome = employee.nome if employee else str(body.get("colaborador_nome") or "").strip() or None
             item.colaborador_matricula = employee.matricula if employee else str(body.get("colaborador_matricula") or "").strip() or None
+            if employee and employee.centro_id:
+                item.centro_custo_id = employee.centro_id
         elif "colaborador_nome" in body and not item.colaborador_id:
             item.colaborador_nome = str(body.get("colaborador_nome") or "").strip() or None
             item.colaborador_matricula = str(body.get("colaborador_matricula") or "").strip() or None
+
+        if creating and not item.centro_custo_id:
+            return "O colaborador selecionado não possui contrato/centro de custo vinculado."
+
+        default_rate = self.get_default_daily_value(item.centro_custo_id)
+        if "valor_diaria" in body:
+            try:
+                item.valor_diaria = _parse_decimal(body.get("valor_diaria"), "Valor da diária", default_rate)
+            except ValueError as error:
+                return str(error)
+        elif creating or not item.valor_diaria:
+            item.valor_diaria = default_rate
 
         if "justificativa" in body or creating:
             item.justificativa = str(body.get("justificativa") or "").strip() or None
