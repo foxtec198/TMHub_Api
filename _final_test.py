@@ -12,4 +12,8 @@ r = parse_planilha_glosas(f)
 print(f"Total registros: {r['total_lidos']}")
 print("5 primeiros:")
 for x in r["registros"][:5]:
-    print(f"  {x['colaborador_nome'][:30]} | {x['data_falta']} | dias:{x['quantidade_dias']} | R${x['valor_total']}")
+    total = x["quantidade_dias"] * x["valor_diaria"]
+    print(
+        f"  {x['colaborador_nome'][:30]} | {x['data_falta']} | "
+        f"dias:{x['quantidade_dias']} | R${total:.2f}"
+    )

@@ -102,6 +102,10 @@ class AbsenceControlService:
                 cls._mark_historical_as_treated(absence)
             else:
                 absence.prazo_atestado = cls._deadline(req)
+        if absence.status == "tratada":
+            from services.glosas import DisallowanceService
+
+            DisallowanceService.ensure_for_absence(absence)
         return absence
 
     @staticmethod
@@ -366,6 +370,7 @@ class AbsenceControlService:
         if "observacao" in body:
             absence.observacao = str(body.get("observacao") or "").strip() or None
 
+        glosa_created = False
         if body.get("status") == "tratada":
             classification = str(body.get("classificacao") or "").lower()
             if classification not in {"justificada", "injustificada"}:
@@ -379,8 +384,20 @@ class AbsenceControlService:
             absence.tratado_por_usuario_id = None
             absence.tratado_em = None
 
+        if absence.status == "tratada":
+            from services.glosas import DisallowanceService
+
+            _, glosa_created = DisallowanceService.ensure_for_absence(
+                absence,
+                user_id=token_data.get("id"),
+            )
         db.session.commit()
         socketio.emit("absence_control_update", {"id": absence.id})
+        if glosa_created:
+            socketio.emit(
+                "disallowance_update",
+                {"falta_id": absence.id, "action": "created_preventively"},
+            )
         socketio.emit("new_request")
         socketio.emit("new_history")
         socketio.emit("kds_update", {
