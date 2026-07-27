@@ -1,218 +1,460 @@
-"""
-Parser especializado para planilha de GLOSAS da prefeitura (centro de custo 87).
+"""Importação conciliada das glosas do departamento 87."""
 
-Estrutura da planilha:
-  - Linha 0: cabeçalho principal
-  - Linha 1: dias da semana / subtotais
-  - Linha 2: datas (15=01/06 a 45=01/07)
-  - Linha 3+: centros e funcionários
-
-  Colunas:
-    [0]  = ID do centro de custo | vazio
-    [1]  = Tipo de posto (1- INS. 44H / 2- INS. 30H / 3- SIMPLES 44H)
-    [2]  = Nome do colaborador
-    [3]  = Data admissão
-    [14] = Supervisor
-    [15-45] = Dias do mês (faltas)
-    [46] = TOTAL DE FALTAS
-    [47] = Valor insalubre 44h
-    [48] = Valor insalubre 30h
-    [49] = Valor posto simples 44h48
-    [51] = Vale transporte
-"""
-
+import argparse
 import re
+import unicodedata
+from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
+from difflib import SequenceMatcher
 from os import path
 
 import pandas as pd
 
+from models.centros_de_custo import CostCenters
+from models.colaboradores import Employees
+from models.controle_faltas import AbsenceControl
 from models.glosas import Disallowance
+from models.rp_historico import History
 from utils.db import db
 
-CENTRO_CUSTO_ID = 87
-COMPETENCIA_ANO = 2026
-COMPETENCIA_MES = 6
+
+DEPARTAMENTO = 87
+COMPETENCIA = date(2026, 6, 1)
+DATE_COLUMNS = range(15, 46)
 
 
-def _parse_nome_colaborador(raw: str) -> str:
-    """Extrai apenas o nome do colaborador."""
-    if not raw:
-        return ""
-    nome = raw.strip()
-    nome = re.sub(r"^OK\s+", "", nome)
-    nome = re.sub(r"\s+OK$", "", nome)
-    nome = re.sub(r"\d{2}/\d{2}/\d{2,4}", "", nome)
-    nome = re.sub(r"\d{4}-\d{2}-\d{2}", "", nome)
-    return nome.strip()
+def _normalize(value):
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^A-Z0-9]+", " ", text.upper()).strip()
 
 
-def _parse_valor(raw) -> Decimal:
-    """Converte para Decimal."""
+def _parse_employee_name(raw):
+    name = str(raw or "").strip()
+    name = re.sub(r"^OK\s+", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s+OK$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\d{2}/\d{2}/\d{2,4}", "", name)
+    name = re.sub(r"\d{4}-\d{2}-\d{2}", "", name)
+    name = re.sub(r"\s*/\s*.*$", "", name)
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", name)
+    return re.sub(r"\s+", " ", name).strip(" -.")
+
+
+def _decimal(raw):
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return Decimal("0")
-    s = str(raw).strip().replace("R$", "").replace(" ", "")
-    if not s or s == "nan":
-        return Decimal("0")
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
     try:
-        return Decimal(str(float(s))).quantize(Decimal("0.01"))
+        return Decimal(str(raw).replace(",", "."))
     except Exception:
         return Decimal("0")
 
 
-def _parse_qty(raw) -> Decimal:
-    """Converte quantidade de faltas."""
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return Decimal("0")
-    s = str(raw).strip()
-    if not s or s == "nan":
-        return Decimal("0")
-    try:
-        return Decimal(str(float(s)))
-    except Exception:
-        return Decimal("0")
+def _is_employee(post_type):
+    return bool(re.search(r"\d-\s*(INS|SIMPLES)", str(post_type or ""), re.IGNORECASE))
 
 
-def _is_employee(col1: str) -> bool:
-    """Verifica se a linha é de funcionário."""
-    return bool(re.search(r"\d-\s*(INS|SIMPLES)", str(col1)))
+def parse_planilha_glosas(filepath):
+    """Lê uma linha por colaborador e gera um registro para cada dia numérico."""
+    frame = pd.read_excel(filepath, header=None, dtype=object)
+    dates = {}
+    for column in DATE_COLUMNS:
+        value = frame.iloc[2, column]
+        if pd.notna(value):
+            parsed = pd.to_datetime(value).date()
+            if parsed.year == COMPETENCIA.year and parsed.month == COMPETENCIA.month:
+                dates[column] = parsed
 
+    current_center_id = None
+    current_center_name = None
+    records = []
+    errors = []
 
+    for index in range(3, len(frame)):
+        first = frame.iloc[index, 0] if pd.notna(frame.iloc[index, 0]) else None
+        post_type = frame.iloc[index, 1] if pd.notna(frame.iloc[index, 1]) else ""
+        raw_name = frame.iloc[index, 2] if pd.notna(frame.iloc[index, 2]) else ""
 
-def _is_center(col0: str, col1: str) -> bool:
-    """Verifica se a linha é de centro de custo."""
-    return bool(col0.strip().isdigit()) and not _is_employee(col1) and bool(col1.strip())
-
-
-
-def parse_planilha_glosas(filepath: str):
-    """
-    Lê a planilha de glosas e retorna lista de registros prontos para inserir.
-
-    Returns:
-        dict: {registros: [...], erros: [...], total_lidos: int}
-    """
-    df = pd.read_excel(filepath, header=None, dtype=str)
-
-    # Datas dos dias (linha 2, colunas 15-45)
-    dates_row = {}
-    for col_idx in range(15, 46):
-        raw = str(df.iloc[2, col_idx]) if pd.notna(df.iloc[2, col_idx]) else ""
-        if raw and raw != "nan":
+        if not _is_employee(post_type):
             try:
-                dates_row[col_idx] = pd.to_datetime(raw).date()
-            except Exception:
-                pass
-
-    current_centro_id = None
-    registros = []
-    erros = []
-
-    for idx in range(3, len(df)):
-        col0 = str(df.iloc[idx, 0]) if pd.notna(df.iloc[idx, 0]) else ""
-        col1 = str(df.iloc[idx, 1]) if pd.notna(df.iloc[idx, 1]) else ""
-        col2 = str(df.iloc[idx, 2]) if pd.notna(df.iloc[idx, 2]) else ""
-
-        if not col0.strip() and not col1.strip() and not col2.strip():
+                center_id = int(first)
+            except (TypeError, ValueError):
+                center_id = None
+            if center_id and str(post_type).strip():
+                current_center_id = center_id
+                current_center_name = str(post_type).strip()
             continue
 
-        if _is_center(col0, col1):
-            current_centro_id = int(col0.strip())
+        name = _parse_employee_name(raw_name)
+        if not name:
             continue
 
-        if _is_employee(col1) and col2.strip():
-            nome = _parse_nome_colaborador(col2)
-            if not nome:
+        total_days = _decimal(frame.iloc[index, 46])
+        if total_days <= 0:
+            continue
+        if "30" in str(post_type).upper() and "INS" in str(post_type).upper():
+            total_value = _decimal(frame.iloc[index, 48])
+        elif "INS" in str(post_type).upper():
+            total_value = _decimal(frame.iloc[index, 47])
+        else:
+            total_value = _decimal(frame.iloc[index, 49])
+        daily_value = (
+            (total_value / total_days).quantize(Decimal("0.01"))
+            if total_value > 0
+            else Decimal("180.00")
+        )
+
+        for column, absence_date in dates.items():
+            quantity = _decimal(frame.iloc[index, column])
+            if quantity <= 0:
                 continue
-
-            total_faltas_raw = str(df.iloc[idx, 46]) if pd.notna(df.iloc[idx, 46]) else "0"
-            total_faltas = _parse_qty(total_faltas_raw)
-            if total_faltas <= 0:
-                continue
-
-            # Valor conforme tipo de posto
-            if "30" in col1 and "INS" in col1:
-                val_raw = str(df.iloc[idx, 48]) if pd.notna(df.iloc[idx, 48]) else "0"
-            elif "INS" in col1:
-                val_raw = str(df.iloc[idx, 47]) if pd.notna(df.iloc[idx, 47]) else "0"
-            else:
-                val_raw = str(df.iloc[idx, 49]) if pd.notna(df.iloc[idx, 49]) else "0"
-
-            valor_glosa = _parse_valor(val_raw)
-            if valor_glosa <= 0:
-                continue
-
-            try:
-                valor_diaria = (valor_glosa / total_faltas).quantize(Decimal("0.01"))
-            except Exception:
-                valor_diaria = Decimal("180.00")
-
-            for day_col in range(15, 46):
-                falta_raw = str(df.iloc[idx, day_col]) if pd.notna(df.iloc[idx, day_col]) else ""
-                falta_qty = _parse_qty(falta_raw)
-                if falta_qty <= 0:
-                    continue
-                if not re.match(r"^\d*\.?\d+$", falta_raw.strip()):
-                    continue
-
-                dia_data = dates_row.get(day_col)
-                if not dia_data:
-                    continue
-
-                proporcao = falta_qty / total_faltas if total_faltas > 0 else Decimal("0")
-                valor_proporcional = (valor_glosa * proporcao).quantize(Decimal("0.01"))
-
-                registros.append({
-                    "competencia": date(COMPETENCIA_ANO, COMPETENCIA_MES, 1),
-                    "data_falta": dia_data,
-                    "centro_custo_id": current_centro_id or CENTRO_CUSTO_ID,
-                    "colaborador_nome": nome,
-                    "quantidade_dias": falta_qty,
-                    "valor_diaria": valor_diaria,
-                    "valor_total": valor_proporcional,
-                    "cobertura": "em_analise",
-                    "justificativa": f"Importado de {path.basename(filepath)}",
-                })
-
-    return {"registros": registros, "erros": erros, "total_lidos": len(registros)}
-
-
-def importar_glosas(filepath: str):
-    """Faz o parse e insere no banco."""
-    resultado = parse_planilha_glosas(filepath)
-    inseridos = 0
-    erros_insercao = []
-
-    for reg in resultado["registros"]:
-        try:
-            item = Disallowance(
-                competencia=reg["competencia"],
-                data_falta=reg["data_falta"],
-                centro_custo_id=reg["centro_custo_id"],
-                colaborador_nome=reg["colaborador_nome"],
-                quantidade_dias=reg["quantidade_dias"],
-                valor_diaria=reg["valor_diaria"],
-                valor_total=reg["valor_total"],
-                cobertura=reg["cobertura"],
-                justificativa=reg["justificativa"],
+            records.append(
+                {
+                    "competencia": COMPETENCIA,
+                    "data_falta": absence_date,
+                    "centro_custo_id": current_center_id,
+                    "centro_custo_nome": current_center_name,
+                    "colaborador_nome": name,
+                    "quantidade_dias": quantity.quantize(Decimal("0.0001")),
+                    "valor_diaria": daily_value,
+                    "linha_planilha": index + 1,
+                    "tipo_posto": str(post_type).strip(),
+                }
             )
-            db.session.add(item)
-            inseridos += 1
-        except Exception as e:
-            erros_insercao.append(f"'{reg['colaborador_nome']}' dia {reg['data_falta']}: {str(e)}")
-
-    db.session.commit()
 
     return {
-        "inseridos": inseridos,
-        "atualizados": 0,
-        "erros": (resultado["erros"] + erros_insercao)[:50],
-        "total_erros": len(resultado["erros"]) + len(erros_insercao),
-        "total_lidos": resultado["total_lidos"],
+        "registros": records,
+        "erros": errors,
+        "total_lidos": len(records),
+        "total_dias": sum((item["quantidade_dias"] for item in records), Decimal("0")),
     }
 
+
+def _best_fuzzy(target, candidates, threshold=0.90):
+    ranked = sorted(
+        (
+            (SequenceMatcher(None, target, candidate).ratio(), candidate)
+            for candidate in candidates
+        ),
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < threshold:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.04:
+        return None
+    return ranked[0][1]
+
+
+def _center_tokens(value):
+    ignored = {
+        "ED",
+        "LONDRINA",
+        "E",
+        "M",
+        "EM",
+        "CMEI",
+        "ESCOLA",
+        "MUNICIPAL",
+        "PROF",
+        "PROFESSOR",
+        "PROFESSORA",
+    }
+    return {
+        token
+        for token in _normalize(value).split()
+        if not token.isdigit() and token not in ignored
+    }
+
+
+def _resolve_center(sheet_name, centers, employee_name=None, employees=None):
+    target_tokens = _center_tokens(sheet_name)
+    if not target_tokens:
+        return None
+    target_text = " ".join(sorted(target_tokens))
+    ranked = []
+    for center in centers.values():
+        candidate_tokens = _center_tokens(center.local)
+        overlap = len(target_tokens & candidate_tokens)
+        union = len(target_tokens | candidate_tokens)
+        token_score = overlap / union if union else 0
+        if target_tokens <= candidate_tokens or candidate_tokens <= target_tokens:
+            token_score += 0.2
+        text_score = SequenceMatcher(
+            None, target_text, " ".join(sorted(candidate_tokens))
+        ).ratio()
+        score = max(token_score, text_score)
+        ranked.append((score, center))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if not ranked or ranked[0][0] < 0.52:
+        return None
+    close = [center for score, center in ranked if ranked[0][0] - score < 0.08]
+    if len(close) == 1:
+        return close[0]
+
+    if employee_name and employees:
+        target_employee = _normalize(employee_name)
+        employee_matches = []
+        close_ids = {center.id for center in close}
+        for employee in employees:
+            if employee.centro_id not in close_ids:
+                continue
+            score = SequenceMatcher(
+                None, target_employee, _normalize(employee.nome)
+            ).ratio()
+            employee_matches.append((score, employee.centro_id))
+        employee_matches.sort(reverse=True)
+        if employee_matches and employee_matches[0][0] >= 0.88:
+            if (
+                len(employee_matches) == 1
+                or employee_matches[0][0] - employee_matches[1][0] >= 0.04
+            ):
+                return centers[employee_matches[0][1]]
+    if len(close) > 1:
+        return None
+    return close[0]
+
+
+def _coverage_for_history(history):
+    if not history:
+        return "em_analise"
+    if history.status == "approved" and history.reserva_id:
+        return "coberta"
+    if history.status == "reproved":
+        return "descoberta"
+    return "em_analise"
+
+
+def _values(quantity, daily_value, coverage):
+    total = (quantity * daily_value).quantize(Decimal("0.01"))
+    covered_days = quantity if coverage == "coberta" else Decimal("0")
+    covered = (covered_days * daily_value).quantize(Decimal("0.01"))
+    return covered_days, total, covered, (total - covered).quantize(Decimal("0.01"))
+
+
+def importar_glosas(filepath, commit=True):
+    """Concilia por colaborador + dia no histórico e importa sem duplicar."""
+    parsed = parse_planilha_glosas(filepath)
+    centers = {
+        center.id: center
+        for center in CostCenters.query.filter(CostCenters.departamento == DEPARTAMENTO).all()
+    }
+    employees = (
+        Employees.query.join(CostCenters, CostCenters.id == Employees.centro_id)
+        .filter(CostCenters.departamento == DEPARTAMENTO)
+        .all()
+    )
+    employees_by_center_name = defaultdict(list)
+    employees_by_name = defaultdict(list)
+    for employee in employees:
+        key = _normalize(employee.nome)
+        employees_by_center_name[(employee.centro_id, key)].append(employee)
+        employees_by_name[key].append(employee)
+
+    histories = (
+        db.session.query(History, Employees)
+        .join(Employees, Employees.id == History.ausente_id)
+        .join(CostCenters, CostCenters.id == History.cc)
+        .filter(
+            CostCenters.departamento == DEPARTAMENTO,
+            History.created_at >= COMPETENCIA,
+            History.created_at < date(COMPETENCIA.year, COMPETENCIA.month + 1, 1),
+        )
+        .order_by(History.id.desc())
+        .all()
+    )
+    history_by_date_name = defaultdict(list)
+    history_names_by_date = defaultdict(set)
+    for history, employee in histories:
+        history_date = history.created_at.date()
+        name_key = _normalize(employee.nome)
+        history_by_date_name[(history_date, name_key)].append((history, employee))
+        history_names_by_date[history_date].add(name_key)
+
+    absences = {
+        absence.requisicao_id: absence
+        for absence in AbsenceControl.query.filter(
+            AbsenceControl.data_falta >= COMPETENCIA,
+            AbsenceControl.data_falta < date(COMPETENCIA.year, COMPETENCIA.month + 1, 1),
+        ).all()
+    }
+    existing_rows = Disallowance.query.filter(
+        Disallowance.competencia == COMPETENCIA
+    ).all()
+
+    inserted = 0
+    updated = 0
+    skipped = 0
+    matched_history = 0
+    matched_employee = 0
+    fuzzy_matches = 0
+    pending_internal = 0
+    issues = list(parsed["erros"])
+    resolved_centers = {}
+
+    for record in parsed["registros"]:
+        target_name = _normalize(record["colaborador_nome"])
+        sheet_center_key = (
+            record["centro_custo_id"],
+            _normalize(record["centro_custo_nome"]),
+            target_name,
+        )
+        if sheet_center_key not in resolved_centers:
+            resolved_centers[sheet_center_key] = _resolve_center(
+                record["centro_custo_nome"],
+                centers,
+                employee_name=record["colaborador_nome"],
+                employees=employees,
+            )
+        center = resolved_centers[sheet_center_key]
+        if not center:
+            issues.append(
+                f"Linha {record['linha_planilha']}: contrato da planilha "
+                f"{record['centro_custo_id']} ({record['centro_custo_nome']}) "
+                "não foi localizado no departamento 87."
+            )
+            continue
+        center_id = center.id
+
+        candidates = history_by_date_name.get((record["data_falta"], target_name), [])
+        if not candidates:
+            fuzzy_name = _best_fuzzy(
+                target_name, history_names_by_date.get(record["data_falta"], set())
+            )
+            if fuzzy_name:
+                candidates = history_by_date_name[(record["data_falta"], fuzzy_name)]
+                fuzzy_matches += 1
+        if candidates:
+            same_center = [item for item in candidates if item[0].cc == center_id]
+            history, employee = (same_center or candidates)[0]
+            matched_history += 1
+        else:
+            history = None
+            employee_candidates = employees_by_center_name.get((center_id, target_name), [])
+            if not employee_candidates:
+                employee_candidates = employees_by_name.get(target_name, [])
+            if not employee_candidates:
+                center_names = {
+                    name
+                    for employee_center, name in employees_by_center_name
+                    if employee_center == center_id
+                }
+                fuzzy_name = _best_fuzzy(target_name, center_names)
+                if fuzzy_name:
+                    employee_candidates = employees_by_center_name[(center_id, fuzzy_name)]
+                    fuzzy_matches += 1
+            employee = employee_candidates[0] if len(employee_candidates) == 1 else None
+            if employee:
+                matched_employee += 1
+            pending_internal += 1
+
+        absence = absences.get(history.requisicao_id) if history else None
+        coverage = _coverage_for_history(history)
+        covered_days, total, covered, uncovered = _values(
+            record["quantidade_dias"], record["valor_diaria"], coverage
+        )
+        existing = None
+        if absence:
+            existing = next(
+                (item for item in existing_rows if item.falta_id == absence.id), None
+            )
+        if not existing:
+            existing = next(
+                (
+                    item
+                    for item in existing_rows
+                    if item.data_falta == record["data_falta"]
+                    and item.centro_custo_id == center_id
+                    and (
+                        (employee and item.colaborador_id == employee.id)
+                        or (
+                            not item.colaborador_id
+                            and _normalize(item.colaborador_nome) == target_name
+                        )
+                    )
+                ),
+                None,
+            )
+
+        item = existing or Disallowance()
+        if existing and existing.evidencia_arquivo:
+            skipped += 1
+            continue
+        item.competencia = COMPETENCIA
+        item.data_falta = record["data_falta"]
+        item.centro_custo_id = center_id
+        item.colaborador_id = employee.id if employee else None
+        item.colaborador_nome = employee.nome if employee else record["colaborador_nome"]
+        item.colaborador_matricula = str(employee.matricula) if employee else None
+        item.falta_id = absence.id if absence else None
+        item.requisicao_id = history.requisicao_id if history else None
+        item.cobertura = coverage
+        item.quantidade_dias = record["quantidade_dias"]
+        item.quantidade_coberta_dias = covered_days
+        item.valor_diaria = record["valor_diaria"]
+        item.valor_total = total
+        item.valor_coberto = covered
+        item.valor_descoberto = uncovered
+        item.justificativa = (
+            f"Importada de {path.basename(filepath)}. "
+            + (
+                f"Conciliada com a requisição #{history.requisicao_id}."
+                if history
+                else "Não localizada no histórico; pendente de tratativa interna."
+            )
+        )
+        item.observacao = (
+            f"Planilha do departamento 87, linha {record['linha_planilha']}; "
+            f"contrato informado: {record['centro_custo_nome']} "
+            f"(referência {record['centro_custo_id']})."
+        )
+        if existing:
+            updated += 1
+        else:
+            db.session.add(item)
+            existing_rows.append(item)
+            inserted += 1
+
+    if commit:
+        db.session.commit()
+    else:
+        db.session.rollback()
+
+    return {
+        "inseridos": inserted,
+        "atualizados": updated,
+        "ignorados_com_evidencia": skipped,
+        "conciliados_historico": matched_history,
+        "somente_colaborador": matched_employee,
+        "pendentes_tratativa_interna": pending_internal,
+        "correspondencias_aproximadas": fuzzy_matches,
+        "erros": issues,
+        "total_erros": len(issues),
+        "total_lidos": parsed["total_lidos"],
+        "total_dias": str(parsed["total_dias"]),
+        "gravado": commit,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("arquivo")
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Grava no banco. Sem esta opção, apenas simula e reverte.",
+    )
+    args = parser.parse_args()
+
+    from app import app
+
+    with app.app_context():
+        result = importar_glosas(args.arquivo, commit=args.commit)
+    for key, value in result.items():
+        if key != "erros":
+            print(f"{key}: {value}")
+    for error in result["erros"][:50]:
+        print(f"erro: {error}")
+
+
+if __name__ == "__main__":
+    main()

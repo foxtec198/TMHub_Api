@@ -15,6 +15,8 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.glosas import Disallowance
+from models.rp_historico import History
+from models.rp_requisicao import Requisicao
 from models.usuarios import Users
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
@@ -58,6 +60,78 @@ def _money(value):
 
 
 class DisallowanceService:
+    @classmethod
+    def ensure_for_absence(cls, absence, user_id=None):
+        """Cria a glosa preventiva de uma falta tratada, sem duplicar o vínculo."""
+        if not absence or absence.status != "tratada":
+            return None, False
+
+        if not absence.id:
+            db.session.flush()
+
+        existing = Disallowance.query.filter_by(falta_id=absence.id).first()
+        if existing:
+            return existing, False
+
+        requisition = (
+            db.session.get(Requisicao, absence.requisicao_id)
+            if absence.requisicao_id
+            else None
+        )
+        history = (
+            History.query.filter_by(requisicao_id=absence.requisicao_id)
+            .order_by(History.id.desc())
+            .first()
+            if absence.requisicao_id
+            else None
+        )
+        request_status = (history.status if history else getattr(requisition, "status", None)) or ""
+        reserve_id = (
+            history.reserva_id if history else getattr(requisition, "reserva_id", 0)
+        ) or 0
+        if request_status == "approved" and reserve_id:
+            coverage = "coberta"
+        elif request_status == "reproved":
+            coverage = "descoberta"
+        else:
+            coverage = "em_analise"
+
+        total_days = Decimal("1")
+        if absence.tipo_ausencia == "parcial" and absence.quantidade_horas:
+            total_days = (
+                Decimal(str(absence.quantidade_horas)) / Decimal("8")
+            ).quantize(Decimal("0.0001"))
+        daily_value = cls.get_default_daily_value(absence.centro_custo_id).quantize(
+            Decimal("0.01")
+        )
+        covered_days = total_days if coverage == "coberta" else Decimal("0")
+        total_value = (total_days * daily_value).quantize(Decimal("0.01"))
+        covered_value = (covered_days * daily_value).quantize(Decimal("0.01"))
+
+        item = Disallowance(
+            competencia=absence.data_falta.date().replace(day=1),
+            data_falta=absence.data_falta.date(),
+            centro_custo_id=absence.centro_custo_id,
+            colaborador_id=absence.colaborador_id,
+            colaborador_nome=absence.colaborador_nome,
+            colaborador_matricula=absence.colaborador_matricula,
+            falta_id=absence.id,
+            requisicao_id=absence.requisicao_id,
+            cobertura=coverage,
+            quantidade_dias=total_days,
+            quantidade_coberta_dias=covered_days,
+            valor_diaria=daily_value,
+            valor_total=total_value,
+            valor_coberto=covered_value,
+            valor_descoberto=(total_value - covered_value).quantize(Decimal("0.01")),
+            justificativa="Glosa preventiva gerada ao tratar a falta.",
+            observacao="Registro criado automaticamente pelo Controle de Faltas.",
+            criado_por_usuario_id=user_id,
+        )
+        db.session.add(item)
+        db.session.flush()
+        return item, True
+
     @staticmethod
     def _evidence_url(item):
         if not item.evidencia_arquivo:
