@@ -4,6 +4,7 @@ from services.glosas import DisallowanceService
 
 
 disallowance_bp = Blueprint("Controle de Glosas", __name__)
+disallowance_files_bp = Blueprint("Evidências de Glosas", __name__)
 service = DisallowanceService()
 
 
@@ -18,3 +19,20 @@ def root():
             return service.update()
         case "DELETE":
             return service.delete()
+
+
+@disallowance_bp.get("/export")
+def export():
+    return service.export()
+
+
+@disallowance_bp.route("/<int:glosa_id>/evidencia", methods=["POST", "DELETE"])
+def evidence(glosa_id):
+    if request.method == "POST":
+        return service.upload_evidence(glosa_id)
+    return service.remove_evidence(glosa_id)
+
+
+@disallowance_files_bp.get("/<path:filename>")
+def public_evidence(filename):
+    return service.serve_evidence(filename)

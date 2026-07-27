@@ -7,9 +7,13 @@ absence_control_bp = Blueprint("Controle de Faltas", __name__)
 service = AbsenceControlService()
 
 
-@absence_control_bp.route("", methods=["GET", "PATCH"])
+@absence_control_bp.route("", methods=["GET", "POST", "PATCH"])
 def root():
-    return service.read() if request.method == "GET" else service.update()
+    if request.method == "GET":
+        return service.read()
+    if request.method == "POST":
+        return service.create_manual()
+    return service.update()
 
 
 @absence_control_bp.get("/dashboard")

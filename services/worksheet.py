@@ -8,15 +8,19 @@ from pandas import read_excel
 from models.colaboradores import Employees, db
 from models.supervisores import Supervisors
 from models.centros_de_custo import CostCenters
+from utils.filial_scope import is_admin
 
 class WorkSheet:
     @safe_route
-    def __updateEmployees__(self):
+    def __updateEmployees__(self, token_data):
         """
         Só altere o end caso precise ler mais linhas!
 
         :return: Response: any, StatusCode: int
         """
+
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar colaboradores."), 403
 
         # Body JSON and Vars
         body = request.get_json()
@@ -61,7 +65,7 @@ class WorkSheet:
         # Itera sobre os Objetos e cadastra caso nao exista no banco!
         for employee in employees:
             # Dados do funcionario
-            codigo = employee["codigo"]
+            codigo = int(employee["codigo"])
             nome = employee["nome"]
             centro_id = employee["centro"]
             data_admissao = employee["admissao"]
@@ -69,8 +73,26 @@ class WorkSheet:
             situacao = employee["situacao"]
             
             # Funcionario do banco
-            query_employee = Employees().query.filter_by(matricula=str(employee.get("codigo"))).first()
+            query_employee = Employees.query.filter_by(id=codigo).first()
             if query_employee:
+                # Nunca deixa uma carga antiga sobrescrever o vinculo mais
+                # recente quando a mesma matricula aparece mais de uma vez.
+                incoming_admission = (
+                    data_admissao.date()
+                    if hasattr(data_admissao, "date")
+                    else data_admissao
+                )
+                current_admission = (
+                    query_employee.data_admissao.date()
+                    if hasattr(query_employee.data_admissao, "date")
+                    else query_employee.data_admissao
+                )
+                if (
+                    current_admission
+                    and incoming_admission
+                    and incoming_admission < current_admission
+                ):
+                    continue
 
                 # Updates caso seja diferenciado
                 if nome != query_employee.nome: query_employee.nome = nome
@@ -81,6 +103,7 @@ class WorkSheet:
                 continue
             
             new_employee = Employees(
+                id=codigo,
                 matricula=codigo,
                 nome=nome,
                 centro_id=centro_id,
@@ -102,7 +125,9 @@ class WorkSheet:
         )
 
     @safe_route
-    def __updateCosts__(self):
+    def __updateCosts__(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar centros de custo."), 403
         # Dados vindos do JSON
         body = request.get_json()
         filename = body.get("file")
@@ -160,7 +185,9 @@ class WorkSheet:
         return jsonify(f"Total de {cad} importados com sucesso"), 201
 
     @safe_route
-    def __updateSupervisors__(self):
+    def __updateSupervisors__(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar supervisores."), 403
         # Dados originados do JSON
         body = request.get_json()
         filename = body.get("file")

@@ -67,11 +67,11 @@ def serialize_permissions(user):
 def has_permission(token_data, screen, action="view"):
     if action not in ACTION_COLUMNS or screen not in CATALOG_BY_KEY:
         return False
-    if str((token_data or {}).get("perm", "")).upper() == "ADMIN":
-        return True
     user = db.session.get(Users, (token_data or {}).get("id"))
     if not user:
         return False
+    if str(user.role or "").upper() == "ADMIN":
+        return True
     permissions = {item["screen"]: item for item in serialize_permissions(user)}
     return bool(permissions.get(screen, {}).get(action))
 
@@ -113,9 +113,19 @@ def replace_permissions(user, payload):
 def request_permission(path, method):
     """Map protected API resources to the same screen/action matrix used by the UI."""
     method = method.upper()
+    path_parts = path.strip("/").split("/")
+    if (
+        len(path_parts) == 3
+        and path_parts[0] == "glosas"
+        and path_parts[1].isdigit()
+        and path_parts[2] == "evidencia"
+    ):
+        action = {"POST": "edit", "DELETE": "edit"}.get(method)
+        return ("controle_glosas", action) if action else None
+
     rules = [
         ("/controle-faltas/dashboard", "dashboard_faltas", {"GET": "view"}),
-        ("/controle-faltas", "controle_faltas", {"GET": "view", "PATCH": "edit"}),
+        ("/controle-faltas", "controle_faltas", {"GET": "view", "POST": "edit", "PATCH": "edit"}),
         ("/glosas", "controle_glosas", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/repo/history", "historico_reposicoes", {"POST": "view", "PATCH": "edit", "DELETE": "edit"}),
         ("/repo/timeline", "historico_reposicoes", {"GET": "view"}),

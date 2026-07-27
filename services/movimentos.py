@@ -3,6 +3,7 @@ from models.movimentos import Movement, db
 from models.produtos import Product, db
 from utils.safe_route import safe_route
 from utils.check_field import check_field
+from utils.filial_scope import is_admin
 
 class MovementService:
     def read(self):
@@ -48,7 +49,7 @@ class MovementService:
 
     @safe_route
     def delete(self, id, token_data=None):
-        if not token_data or token_data.get("perm") != "ADMIN":
+        if not is_admin(token_data):
             return jsonify("Apenas administradores podem excluir movimentações"), 403
 
         mov = Movement.query.filter_by(id=id).first()

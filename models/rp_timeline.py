@@ -12,6 +12,7 @@ class Timeline(BaseModel):
     cc = db.Column(db.Integer, nullable=False)
     supervisor_id = db.Column(db.Integer, nullable=False)
     criado_por_supervisor_id = db.Column(db.Integer, nullable=True)
+    criado_por_usuario_id = db.Column(db.Integer, nullable=True)
     alterado_por_usuario_id = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String, nullable=False)
     tipo = db.Column(db.String, nullable=False)

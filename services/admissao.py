@@ -3,6 +3,7 @@ from utils.safe_route import safe_route
 from utils.check_field import check_field
 from datetime import date, datetime as dt, time
 import re
+from sqlalchemy import String, cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from models.centros_de_custo import CostCenters
 from models.admissao import InterviewHistory, Vacancy, VacancyCandidateHistory, VacancyEvent, WorkSchedule, db
 from models.supervisores import Supervisors
 from models.usuarios import Users
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor
 
 STATUS_VALIDOS = ("aberta", "entrevista", "certidao", "aso", "unico", "concluido")
 RESULTADOS_CANDIDATO = ("desistiu", "reprovado", "aprovado", "outro")
@@ -70,6 +72,16 @@ class VacancyService:
             .first()
         )
 
+    @staticmethod
+    def _vacancy_center_id(vacancy):
+        return db.session.query(Employees.centro_id).filter(
+            Employees.id == vacancy.colaborador_id
+        ).scalar()
+
+    def _can_access_vacancy(self, token_data, vacancy):
+        center_id = self._vacancy_center_id(vacancy)
+        return center_id is not None and can_access_cost_center(token_data, center_id)
+
     def _normalize_schedule(self, value):
         """Cria uma representação estável para pesquisar e deduplicar jornadas."""
         description = re.sub(r"\s+", " ", str(value or "").strip())
@@ -95,13 +107,14 @@ class VacancyService:
             schedule = WorkSchedule.query.filter_by(descricao_normalizada=normalized).first()
         return schedule
 
-    def search(self):
+    @safe_route
+    def search(self, token_data):
         """Busca curta usada pelos seletores legados da área de admissões."""
         query = (rq.args.get("q") or "").strip()
         if len(query) < 2: return jsonify([]), 200
 
         termo = f"%{query}%"
-        matches = (
+        matches_query = (
             db.session.query(
                 Employees.id,
                 Employees.matricula,
@@ -115,11 +128,15 @@ class VacancyService:
             .select_from(Employees)
             .join(Cargos, Cargos.id == Employees.cargo)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
-            .filter(db.or_(Employees.matricula.ilike(termo), Employees.nome.ilike(termo)))
+            .filter(db.or_(
+                cast(Employees.matricula, String).ilike(termo),
+                Employees.nome.ilike(termo),
+            ))
             .order_by(Employees.nome)
-            .limit(6)
-            .all()
         )
+        matches = apply_cost_center_scope(
+            matches_query, Employees.centro_id, token_data
+        ).limit(6).all()
         return jsonify([m._asdict() for m in matches]), 200
 
     def search_schedules(self):
@@ -132,7 +149,8 @@ class VacancyService:
         schedules = schedules.order_by(WorkSchedule.descricao).limit(20).all()
         return jsonify([{"id": item.id, "descricao": item.descricao} for item in schedules]), 200
 
-    def read_interview_history(self):
+    @safe_route
+    def read_interview_history(self, token_data):
         """Entrega o histórico enriquecido com colaborador, contrato e vínculo do candidato."""
         search = (rq.args.get("search") or "").strip()
         status = (rq.args.get("status") or "").strip()
@@ -162,12 +180,15 @@ class VacancyService:
             .outerjoin(cargo, cargo.id == InterviewHistory.cargo_id)
             .outerjoin(supervisor, supervisor.id == InterviewHistory.supervisor_id)
         )
+        query = apply_cost_center_scope(
+            query, InterviewHistory.centro_custo_id, token_data
+        )
         if search:
             term = f"%{search}%"
             query = query.filter(db.or_(
                 InterviewHistory.candidato_nome.ilike(term),
                 colaborador_saida.nome.ilike(term),
-                colaborador_saida.matricula.ilike(term),
+                cast(colaborador_saida.matricula, String).ilike(term),
                 InterviewHistory.funcao.ilike(term),
                 cargo.nome.ilike(term),
                 CostCenters.local.ilike(term),
@@ -205,7 +226,6 @@ class VacancyService:
     @safe_route
     def admission_dashboard(self, token_data):
         """Calcula SLA, séries mensais e recortes executivos no período solicitado."""
-        del token_data  # A autenticação é exigida pelo decorator; o painel é somente leitura.
         today = dt.now(TIMEZONE).date()
         end_date = self._parse_date(rq.args.get("fim") or today.isoformat())
         start_raw = rq.args.get("inicio")
@@ -225,7 +245,7 @@ class VacancyService:
         # O painel reúne o histórico importado e as vagas alimentadas no TMHub em uma série única.
         records = []
         responsavel_historico = aliased(Users)
-        historical_rows = (
+        historical_query = (
             db.session.query(
                 InterviewHistory,
                 CostCenters.departamento,
@@ -235,8 +255,10 @@ class VacancyService:
             .join(CostCenters, CostCenters.id == InterviewHistory.centro_custo_id)
             .outerjoin(responsavel_historico, responsavel_historico.id == InterviewHistory.responsavel_usuario_id)
             .filter(InterviewHistory.aviso_em.between(start_at, end_at))
-            .all()
         )
+        historical_rows = apply_cost_center_scope(
+            historical_query, InterviewHistory.centro_custo_id, token_data
+        ).all()
         for row in historical_rows:
             item = row.InterviewHistory
             records.append({
@@ -256,7 +278,7 @@ class VacancyService:
 
         responsavel_vaga = aliased(Users)
         colaborador_contratado = aliased(Employees)
-        vacancy_rows = (
+        vacancy_query = (
             db.session.query(
                 Vacancy,
                 Employees.nome.label("colaborador_saida"),
@@ -268,13 +290,15 @@ class VacancyService:
             .join(Employees, Employees.id == Vacancy.colaborador_id)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
             .outerjoin(
-                colaborador_contratado, colaborador_contratado.matricula
+                colaborador_contratado, cast(colaborador_contratado.matricula, String)
                 == Vacancy.colaborador_entrada_matricula,
             )
             .outerjoin(responsavel_vaga, responsavel_vaga.id == Vacancy.responsavel_usuario_id)
             .filter(Vacancy.aviso_em.between(start_at, end_at))
-            .all()
         )
+        vacancy_rows = apply_cost_center_scope(
+            vacancy_query, Employees.centro_id, token_data
+        ).all()
         # Eventos preservam quem realizou a primeira ação e em qual instante ela ocorreu.
         vacancy_ids = [row.Vacancy.id for row in vacancy_rows]
         candidate_attempts = {}
@@ -486,7 +510,8 @@ class VacancyService:
             "recentes": [serialize_record(record) for record in recent],
         }), 200
 
-    def read(self):
+    @safe_route
+    def read(self, token_data):
         """Lista vagas com todos os dados derivados necessários para a interface."""
         status = rq.args.get("status")
         departamento = rq.args.get("departamento")
@@ -541,12 +566,14 @@ class VacancyService:
             .outerjoin(
                 colaborador_entrada,
                 db.or_(
-                    colaborador_entrada.id == Vacancy.colaborador_entrada_id, colaborador_entrada.matricula
+                    colaborador_entrada.id == Vacancy.colaborador_entrada_id,
+                    cast(colaborador_entrada.matricula, String)
                     == Vacancy.colaborador_entrada_matricula,
                 ),
             )
             .outerjoin(recrutador, recrutador.id == Vacancy.concluido_por_usuario_id)
         )
+        query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         if status: query = query.filter(Vacancy.status == status)
         if departamento: query = query.filter(CostCenters.departamento == int(departamento))
 
@@ -598,6 +625,8 @@ class VacancyService:
         body = rq.get_json() or {}
         vaga = db.session.get(Vacancy, body.get("vaga_id"))
         if not vaga: return jsonify("Vaga não encontrada"), 404
+        if not self._can_access_vacancy(token_data, vaga):
+            return jsonify("Você não possui acesso à filial desta vaga"), 403
         if vaga.status == "concluido": return jsonify("A vaga já está concluída"), 400
 
         resultado = (body.get("resultado") or "").strip().lower()
@@ -652,9 +681,13 @@ class VacancyService:
 
         emp = self._lookup_employee(colaborador_id)
         if not emp: return jsonify("Colaborador não encontrado na base"), 404
+        if not can_access_cost_center(token_data, emp.centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador"), 403
 
         supervisor = db.session.get(Supervisors, supervisor_id)
         if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
+        if not can_access_supervisor(token_data, supervisor_id):
+            return jsonify("Você não possui acesso à filial deste supervisor"), 403
 
         try:
             schedule = self._resolve_schedule(horario_trabalho)
@@ -708,6 +741,8 @@ class VacancyService:
 
         vaga = Vacancy.query.filter_by(id=id).first()
         if not vaga: return jsonify("Vaga não encontrada"), 404
+        if not self._can_access_vacancy(token_data, vaga):
+            return jsonify("Você não possui acesso à filial desta vaga"), 403
 
         status_anterior = vaga.status
         novo_status = body.get("status")
@@ -739,9 +774,17 @@ class VacancyService:
                 if not ok:
                     return jsonify("Informe a matrícula do colaborador que entrou e a data de início"), 400
 
-                novo_colaborador = Employees.query.filter(
-                    Employees.matricula == colaborador_entrada_matricula.lower()
-                ).first()
+                novo_colaborador = (
+                    db.session.get(Employees, int(colaborador_entrada_matricula))
+                    if colaborador_entrada_matricula.isdigit()
+                    else None
+                )
+                if (
+                    novo_colaborador
+                    and novo_colaborador.centro_id
+                    and not can_access_cost_center(token_data, novo_colaborador.centro_id)
+                ):
+                    return jsonify("Você não possui acesso à filial do colaborador informado"), 403
 
                 horario = db.session.get(WorkSchedule, vaga.horario_trabalho_id)
                 if not horario:
@@ -812,6 +855,8 @@ class VacancyService:
         if "supervisor_id" in body:
             supervisor = db.session.get(Supervisors, body["supervisor_id"])
             if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
+            if not can_access_supervisor(token_data, supervisor.id):
+                return jsonify("Você não possui acesso à filial deste supervisor"), 403
             vaga.supervisor_id = supervisor.id
 
         # Após a conclusão, o colaborador vinculado é a fonte oficial e o texto fica congelado.
@@ -832,7 +877,7 @@ class VacancyService:
         return jsonify("Vaga atualizada com sucesso"), 200
 
     @safe_route
-    def delete(self):
+    def delete(self, token_data):
         """Remove uma vaga; os eventos são excluídos pelo cascade do banco."""
         id = rq.args.get("id")
 
@@ -841,6 +886,8 @@ class VacancyService:
 
         vaga = Vacancy.query.filter_by(id=id).first()
         if not vaga: return jsonify("Vaga não encontrada"), 404
+        if not self._can_access_vacancy(token_data, vaga):
+            return jsonify("Você não possui acesso à filial desta vaga"), 403
 
         db.session.delete(vaga)
         db.session.commit()

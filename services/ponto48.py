@@ -24,6 +24,7 @@ from models.pt48 import (
 )
 from models.supervisores import Supervisors
 from utils.db import db
+from utils.filial_scope import allowed_cost_center_ids, apply_cost_center_scope, is_admin
 from utils.safe_route import safe_route
 
 
@@ -44,7 +45,7 @@ PONTO48_FILE_SIZE_LIMIT = 30 * 1024 * 1024
 class Ponto48Service:
     @staticmethod
     def _is_admin(token_data):
-        return str(token_data.get("perm", "")).upper() == "ADMIN"
+        return is_admin(token_data)
 
     @staticmethod
     def _normalize_name(value):
@@ -815,7 +816,7 @@ class Ponto48Service:
 
     @safe_route
     def dashboard(self, token_data):
-        del token_data
+        unrestricted = allowed_cost_center_ids(token_data) is None
         batches = Ponto48Import.query.order_by(Ponto48Import.periodo_inicio.desc(), Ponto48Import.created_at.desc()).all()
         requested_batch_id = rq.args.get("importacao_id", type=int)
         batch = db.session.get(Ponto48Import, requested_batch_id) if requested_batch_id else (batches[0] if batches else None)
@@ -828,7 +829,7 @@ class Ponto48Service:
 
         employee_info = {}
         if employee_ids:
-            employees = (
+            employee_query = (
                 db.session.query(
                     Employees.id,
                     Employees.nome,
@@ -842,9 +843,21 @@ class Ponto48Service:
                 .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
                 .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
                 .filter(Employees.id.in_(employee_ids))
-                .all()
             )
+            employees = apply_cost_center_scope(
+                employee_query, Employees.centro_id, token_data
+            ).all()
             employee_info = {employee.id: employee._asdict() for employee in employees}
+        if not unrestricted:
+            allowed_employee_ids = set(employee_info)
+            absenteeism_rows = [
+                item for item in absenteeism_rows
+                if item.colaborador_id in allowed_employee_ids
+            ]
+            overtime_rows = [
+                item for item in overtime_rows
+                if item.colaborador_id in allowed_employee_ids
+            ]
 
         combined = {}
 
@@ -940,7 +953,7 @@ class Ponto48Service:
 
     @safe_route
     def adjustments_dashboard(self, token_data):
-        del token_data
+        unrestricted = allowed_cost_center_ids(token_data) is None
         batches = Ponto48AjusteImport.query.order_by(
             Ponto48AjusteImport.periodo_inicio.desc(),
             Ponto48AjusteImport.created_at.desc(),
@@ -957,7 +970,7 @@ class Ponto48Service:
         employee_ids = {item.colaborador_id for item in adjustments if item.colaborador_id}
         employee_info = {}
         if employee_ids:
-            employees = (
+            employee_query = (
                 db.session.query(
                     Employees.id,
                     Employees.nome,
@@ -971,9 +984,17 @@ class Ponto48Service:
                 .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
                 .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
                 .filter(Employees.id.in_(employee_ids))
-                .all()
             )
+            employees = apply_cost_center_scope(
+                employee_query, Employees.centro_id, token_data
+            ).all()
             employee_info = {employee.id: employee._asdict() for employee in employees}
+        if not unrestricted:
+            allowed_employee_ids = set(employee_info)
+            adjustments = [
+                item for item in adjustments
+                if item.colaborador_id in allowed_employee_ids
+            ]
 
         records = []
         for adjustment in adjustments:
@@ -1046,7 +1067,7 @@ class Ponto48Service:
 
     @safe_route
     def mirror_dashboard(self, token_data):
-        del token_data
+        unrestricted = allowed_cost_center_ids(token_data) is None
         batches = Ponto48EspelhoImport.query.order_by(
             Ponto48EspelhoImport.periodo_inicio.desc(),
             Ponto48EspelhoImport.created_at.desc(),
@@ -1063,7 +1084,7 @@ class Ponto48Service:
         employee_ids = {item.colaborador_id for item in mirror_rows if item.colaborador_id}
         employee_info = {}
         if employee_ids:
-            employees = (
+            employee_query = (
                 db.session.query(
                     Employees.id,
                     Employees.nome,
@@ -1077,9 +1098,17 @@ class Ponto48Service:
                 .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
                 .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
                 .filter(Employees.id.in_(employee_ids))
-                .all()
             )
+            employees = apply_cost_center_scope(
+                employee_query, Employees.centro_id, token_data
+            ).all()
             employee_info = {employee.id: employee._asdict() for employee in employees}
+        if not unrestricted:
+            allowed_employee_ids = set(employee_info)
+            mirror_rows = [
+                item for item in mirror_rows
+                if item.colaborador_id in allowed_employee_ids
+            ]
 
         combined = {}
         for mirror in mirror_rows:

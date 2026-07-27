@@ -3,7 +3,7 @@ from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.situacoes import Situations
 from utils.safe_route import safe_route
-from sqlalchemy import or_, cast
+from sqlalchemy import String, or_, cast
 from models.colaboradores import Employees, db
 from utils.filial_scope import apply_cost_center_scope
 from utils.token import decode_token
@@ -12,7 +12,7 @@ class EmployeesService:
     def read(self):
         search_fields = [
             Employees.nome,
-            Employees.matricula,
+            cast(Employees.matricula, String),
             Cargos.nome,
             Situations.tipo,
             CostCenters.local,
@@ -21,6 +21,7 @@ class EmployeesService:
         bd = rq.args
         situation_id = bd.get("situacao", None)
         center_id = bd.get("centro_id", None) or bd.get("centro_custo_id", None)
+        supervisor_id = bd.get("supervisor_id", None)
         require_center = str(bd.get("com_local", "")).strip().lower() in {"1", "true", "sim"}
         limit = bd.get("limit")
         search = bd.get("search")
@@ -48,6 +49,15 @@ class EmployeesService:
         access_token = rq.headers.get("Access-Token")
         if access_token:
             emp = apply_cost_center_scope(emp, Employees.centro_id, decode_token(access_token))
+        elif supervisor_id:
+            try:
+                emp = emp.filter(CostCenters.supervisor_id == int(supervisor_id))
+            except (TypeError, ValueError):
+                return jsonify("Supervisor inválido."), 400
+        else:
+            # A tela pública não possui filial autenticada; o supervisor escolhido
+            # é o contexto mínimo necessário para impedir uma consulta global.
+            return jsonify([]), 200
 
         if center_id: emp = emp.filter(Employees.centro_id == int(center_id))
         if situation_id: emp = emp.filter(Situations.id == int(situation_id))
