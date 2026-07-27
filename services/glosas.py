@@ -1,8 +1,15 @@
 from datetime import date, datetime as dt
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from os import getenv
+from pathlib import Path
+from uuid import uuid4
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file, send_from_directory
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy.orm import aliased
+from werkzeug.utils import secure_filename
 
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
@@ -16,8 +23,14 @@ from utils.safe_route import safe_route
 from utils.socket import socketio
 
 
-VALID_COVERAGE = {"em_analise", "coberta", "descoberta"}
+VALID_COVERAGE = {"em_analise", "coberta", "parcial", "descoberta"}
 DEFAULT_DAILY_VALUE = Decimal("180.00")
+MAX_EVIDENCE_SIZE = 15 * 1024 * 1024
+ALLOWED_EVIDENCE_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+EVIDENCE_DIR = Path(
+    getenv("GLOSA_EVIDENCE_DIR")
+    or Path(__file__).resolve().parents[1] / "storage" / "glosas"
+)
 
 
 def _parse_date(value, field):
@@ -27,23 +40,35 @@ def _parse_date(value, field):
         raise ValueError(f"{field} inválida.")
 
 
-def _parse_decimal(value, field, default=None, places="0.01"):
+def _parse_decimal(value, field, default=None, places="0.01", allow_zero=False):
     if value in (None, "") and default is not None:
         return default
     try:
         parsed = Decimal(str(value).replace(",", "."))
     except (InvalidOperation, ValueError):
         raise ValueError(f"{field} inválido.")
-    if parsed <= 0:
-        raise ValueError(f"{field} deve ser maior que zero.")
+    if parsed < 0 or (parsed == 0 and not allow_zero):
+        comparison = "maior ou igual a zero" if allow_zero else "maior que zero"
+        raise ValueError(f"{field} deve ser {comparison}.")
     return parsed.quantize(Decimal(places))
+
+
+def _money(value):
+    return f"R$ {float(value or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 class DisallowanceService:
     @staticmethod
-    def _serialize(row):
+    def _evidence_url(item):
+        if not item.evidencia_arquivo:
+            return None
+        return f"{request.host_url.rstrip('/')}/arquivos/glosas/{item.evidencia_arquivo}"
+
+    @classmethod
+    def _serialize(cls, row):
         item = row.Disallowance
-        dias = float(item.quantidade_dias)
+        dias = float(item.quantidade_dias or 0)
+        dias_cobertos = float(item.quantidade_coberta_dias or 0)
         return {
             "id": item.id,
             "competencia": item.competencia.isoformat(),
@@ -59,10 +84,17 @@ class DisallowanceService:
             "cobertura": item.cobertura,
             "quantidade_dias": round(dias, 4),
             "quantidade_horas": round(dias * 8, 2),
-            "valor_diaria": float(item.valor_diaria),
-            "valor_total": float(item.valor_total),
+            "quantidade_coberta_dias": round(dias_cobertos, 4),
+            "quantidade_coberta_horas": round(dias_cobertos * 8, 2),
+            "valor_diaria": float(item.valor_diaria or 0),
+            "valor_total": float(item.valor_total or 0),
+            "valor_coberto": float(item.valor_coberto or 0),
+            "valor_descoberto": float(item.valor_descoberto or 0),
             "justificativa": item.justificativa,
             "observacao": item.observacao,
+            "evidencia_nome": item.evidencia_nome_original,
+            "evidencia_mime": item.evidencia_mime,
+            "evidencia_url": cls._evidence_url(item),
             "criado_por": row.criado_por,
             "alterado_por": row.alterado_por,
             "created_at": item.created_at,
@@ -89,34 +121,121 @@ class DisallowanceService:
             .outerjoin(Editor, Editor.id == Disallowance.alterado_por_usuario_id)
         )
 
-    @safe_route
-    def read(self, token_data):
-        if not has_permission(token_data, "controle_glosas", "view"):
-            return jsonify("Você não possui acesso ao Controle de Glosas."), 403
-
+    def _records_and_summary(self, token_data):
         query = apply_cost_center_scope(self._query(), Disallowance.centro_custo_id, token_data)
         if request.args.get("inicio"):
-            try:
-                query = query.filter(Disallowance.competencia >= _parse_date(request.args["inicio"], "Competência inicial"))
-            except ValueError as error:
-                return jsonify(str(error)), 400
+            query = query.filter(
+                Disallowance.competencia >= _parse_date(request.args["inicio"], "Competência inicial")
+            )
         if request.args.get("fim"):
-            try:
-                query = query.filter(Disallowance.competencia <= _parse_date(request.args["fim"], "Competência final"))
-            except ValueError as error:
-                return jsonify(str(error)), 400
-        rows = query.order_by(Disallowance.competencia.desc(), Disallowance.data_falta.desc()).all()
-        records = [self._serialize(row) for row in rows]
+            query = query.filter(
+                Disallowance.competencia <= _parse_date(request.args["fim"], "Competência final")
+            )
+
+        scoped_records = [
+            self._serialize(row)
+            for row in query.order_by(
+                Disallowance.competencia.desc(), Disallowance.data_falta.desc()
+            ).all()
+        ]
+        filter_options = {
+            "departamentos": sorted(
+                {str(item["departamento"]) for item in scoped_records if item["departamento"] not in (None, "")},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "contratos": sorted(
+                [
+                    {"label": item["contrato"], "value": item["centro_custo_id"]}
+                    for item in {
+                        record["centro_custo_id"]: record
+                        for record in scoped_records
+                        if record["centro_custo_id"]
+                    }.values()
+                ],
+                key=lambda item: (item["label"] or "").casefold(),
+            ),
+            "colaboradores": sorted(
+                [
+                    {
+                        "label": item["colaborador"],
+                        "value": item["colaborador_id"],
+                        "matricula": item["matricula"],
+                    }
+                    for item in {
+                        record["colaborador_id"]: record
+                        for record in scoped_records
+                        if record["colaborador_id"] and record["colaborador"]
+                    }.values()
+                ],
+                key=lambda item: item["label"].casefold(),
+            ),
+        }
+
+        coverage = request.args.get("cobertura")
+        department = request.args.get("departamento")
+        contract = request.args.get("contrato")
+        employee = request.args.get("colaborador")
+        search = str(request.args.get("busca") or "").strip().casefold()
+
+        records = []
+        for item in scoped_records:
+            if coverage and coverage != "__all__" and item["cobertura"] != coverage:
+                continue
+            if department and department != "__all__" and str(item["departamento"]) != str(department):
+                continue
+            if contract and contract != "__all__" and str(item["centro_custo_id"]) != str(contract):
+                continue
+            if employee and employee != "__all__" and str(item["colaborador_id"]) != str(employee):
+                continue
+            if search and not any(
+                search in str(value or "").casefold()
+                for value in (
+                    item["contrato"],
+                    item["colaborador"],
+                    item["matricula"],
+                    item["justificativa"],
+                    item["observacao"],
+                )
+            ):
+                continue
+            records.append(item)
 
         summary = {
             "total_registros": len(records),
             "dias": round(sum(item["quantidade_dias"] for item in records), 2),
             "valor_total": round(sum(item["valor_total"] for item in records), 2),
-            "valor_coberto": round(sum(item["valor_total"] for item in records if item["cobertura"] == "coberta"), 2),
-            "valor_descoberto": round(sum(item["valor_total"] for item in records if item["cobertura"] == "descoberta"), 2),
-            "valor_em_analise": round(sum(item["valor_total"] for item in records if item["cobertura"] == "em_analise"), 2),
+            "valor_coberto": round(sum(item["valor_coberto"] for item in records), 2),
+            "valor_descoberto": round(
+                sum(
+                    item["valor_descoberto"]
+                    for item in records
+                    if item["cobertura"] in {"parcial", "descoberta"}
+                ),
+                2,
+            ),
+            "valor_em_analise": round(
+                sum(item["valor_total"] for item in records if item["cobertura"] == "em_analise"),
+                2,
+            ),
         }
-        return jsonify({"registros": records, "resumo": summary, "valor_diaria_padrao": float(DEFAULT_DAILY_VALUE)}), 200
+        return records, summary, filter_options
+
+    @safe_route
+    def read(self, token_data):
+        if not has_permission(token_data, "controle_glosas", "view"):
+            return jsonify("Você não possui acesso ao Controle de Glosas."), 403
+        try:
+            records, summary, filter_options = self._records_and_summary(token_data)
+        except ValueError as error:
+            return jsonify(str(error)), 400
+        return jsonify(
+            {
+                "registros": records,
+                "resumo": summary,
+                "filtros": filter_options,
+                "valor_diaria_padrao": float(DEFAULT_DAILY_VALUE),
+            }
+        ), 200
 
     @staticmethod
     def get_default_daily_value(cost_center_id):
@@ -147,17 +266,27 @@ class DisallowanceService:
                 item.centro_custo_id = center_id
             if creating or "quantidade_dias" in body or "quantidade_horas" in body:
                 if "quantidade_dias" in body:
-                    item.quantidade_dias = _parse_decimal(body.get("quantidade_dias"), "Quantidade de dias", Decimal("1"), places="0.0001")
-                elif "quantidade_horas" in body:
-                    horas = _parse_decimal(body.get("quantidade_horas"), "Quantidade de horas", Decimal("8"), places="0.01")
-                    item.quantidade_dias = (horas / Decimal("8")).quantize(Decimal("0.0001"))
+                    item.quantidade_dias = _parse_decimal(
+                        body.get("quantidade_dias"),
+                        "Quantidade de dias",
+                        Decimal("1"),
+                        places="0.0001",
+                    )
+                else:
+                    hours = _parse_decimal(
+                        body.get("quantidade_horas"),
+                        "Quantidade de horas",
+                        Decimal("8"),
+                        places="0.01",
+                    )
+                    item.quantidade_dias = (hours / Decimal("8")).quantize(Decimal("0.0001"))
         except (TypeError, ValueError) as error:
             return str(error)
 
         if "cobertura" in body or creating:
             coverage = str(body.get("cobertura") or "em_analise").strip().lower()
             if coverage not in VALID_COVERAGE:
-                return "Informe se a glosa está em análise, coberta ou descoberta."
+                return "Informe se a glosa está em análise, coberta, parcialmente coberta ou descoberta."
             item.cobertura = coverage
 
         if "falta_id" in body:
@@ -182,13 +311,23 @@ class DisallowanceService:
             if employee_id and not employee:
                 return "Colaborador não encontrado."
             item.colaborador_id = employee.id if employee else None
-            item.colaborador_nome = employee.nome if employee else str(body.get("colaborador_nome") or "").strip() or None
-            item.colaborador_matricula = employee.matricula if employee else str(body.get("colaborador_matricula") or "").strip() or None
+            item.colaborador_nome = (
+                employee.nome
+                if employee
+                else str(body.get("colaborador_nome") or "").strip() or None
+            )
+            item.colaborador_matricula = (
+                employee.matricula
+                if employee
+                else str(body.get("colaborador_matricula") or "").strip() or None
+            )
             if employee and employee.centro_id:
                 item.centro_custo_id = employee.centro_id
         elif "colaborador_nome" in body and not item.colaborador_id:
             item.colaborador_nome = str(body.get("colaborador_nome") or "").strip() or None
-            item.colaborador_matricula = str(body.get("colaborador_matricula") or "").strip() or None
+            item.colaborador_matricula = (
+                str(body.get("colaborador_matricula") or "").strip() or None
+            )
 
         if creating and not item.centro_custo_id:
             return "O colaborador selecionado não possui contrato/centro de custo vinculado."
@@ -196,17 +335,50 @@ class DisallowanceService:
         default_rate = self.get_default_daily_value(item.centro_custo_id)
         if "valor_diaria" in body:
             try:
-                item.valor_diaria = _parse_decimal(body.get("valor_diaria"), "Valor da diária", default_rate)
+                item.valor_diaria = _parse_decimal(
+                    body.get("valor_diaria"), "Valor da diária", default_rate
+                )
             except ValueError as error:
                 return str(error)
         elif creating or not item.valor_diaria:
             item.valor_diaria = default_rate
 
+        total_days = Decimal(item.quantidade_dias or 0)
+        if item.cobertura == "coberta":
+            covered_days = total_days
+        elif item.cobertura == "parcial":
+            try:
+                if "quantidade_coberta_dias" in body:
+                    covered_days = _parse_decimal(
+                        body.get("quantidade_coberta_dias"),
+                        "Quantidade coberta",
+                        places="0.0001",
+                    )
+                elif "quantidade_coberta_horas" in body:
+                    covered_hours = _parse_decimal(
+                        body.get("quantidade_coberta_horas"),
+                        "Horas cobertas",
+                        places="0.01",
+                    )
+                    covered_days = (covered_hours / Decimal("8")).quantize(Decimal("0.0001"))
+                else:
+                    covered_days = Decimal(item.quantidade_coberta_dias or 0)
+            except ValueError as error:
+                return str(error)
+            if covered_days <= 0 or covered_days >= total_days:
+                return "Na cobertura parcial, informe um tempo coberto maior que zero e menor que o total."
+        else:
+            covered_days = Decimal("0")
+
+        item.quantidade_coberta_dias = covered_days
+        item.valor_total = (total_days * Decimal(item.valor_diaria)).quantize(Decimal("0.01"))
+        item.valor_coberto = (covered_days * Decimal(item.valor_diaria)).quantize(Decimal("0.01"))
+        item.valor_descoberto = (item.valor_total - item.valor_coberto).quantize(Decimal("0.01"))
+
         if "justificativa" in body or creating:
             item.justificativa = str(body.get("justificativa") or "").strip() or None
         if "observacao" in body or creating:
             item.observacao = str(body.get("observacao") or "").strip() or None
-        item.valor_total = (Decimal(item.quantidade_dias) * Decimal(item.valor_diaria)).quantize(Decimal("0.01"))
         return None
 
     @safe_route
@@ -240,7 +412,230 @@ class DisallowanceService:
         item.updated_at = dt.now()
         db.session.commit()
         socketio.emit("disallowance_update", {"id": item.id, "action": "updated"})
-        return jsonify("Glosa atualizada."), 200
+        return jsonify({"message": "Glosa atualizada.", "id": item.id}), 200
+
+    @safe_route
+    def upload_evidence(self, glosa_id, token_data):
+        if not has_permission(token_data, "controle_glosas", "edit"):
+            return jsonify("Você não possui permissão para alterar glosas."), 403
+        item = db.session.get(Disallowance, glosa_id)
+        if not item:
+            return jsonify("Glosa não encontrada."), 404
+        if not can_access_cost_center(token_data, item.centro_custo_id):
+            return jsonify("Você não possui acesso à filial desta glosa."), 403
+
+        uploaded = request.files.get("evidencia")
+        if not uploaded or not uploaded.filename:
+            return jsonify("Selecione uma imagem ou PDF como evidência."), 400
+        original_name = secure_filename(uploaded.filename)
+        extension = Path(original_name).suffix.lower()
+        if extension not in ALLOWED_EVIDENCE_EXTENSIONS:
+            return jsonify("Formato inválido. Envie PDF, PNG, JPG, JPEG ou WEBP."), 400
+
+        uploaded.stream.seek(0, 2)
+        size = uploaded.stream.tell()
+        uploaded.stream.seek(0)
+        if size > MAX_EVIDENCE_SIZE:
+            return jsonify("A evidência deve ter no máximo 15 MB."), 400
+
+        stored_name = f"{uuid4().hex}{extension}"
+        stored_path = EVIDENCE_DIR / stored_name
+        try:
+            EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+            uploaded.save(stored_path)
+        except OSError as error:
+            return jsonify(
+                f"Não foi possível salvar a evidência no servidor: {error.strerror or error}"
+            ), 500
+
+        old_name = item.evidencia_arquivo
+        item.evidencia_arquivo = stored_name
+        item.evidencia_nome_original = original_name
+        item.evidencia_mime = uploaded.mimetype
+        item.alterado_por_usuario_id = token_data.get("id")
+        item.updated_at = dt.now()
+        try:
+            db.session.commit()
+        except Exception:
+            if stored_path.is_file():
+                stored_path.unlink()
+            raise
+
+        if old_name:
+            old_path = EVIDENCE_DIR / Path(old_name).name
+            if old_path.is_file():
+                old_path.unlink()
+
+        socketio.emit("disallowance_update", {"id": item.id, "action": "evidence_updated"})
+        return jsonify(
+            {
+                "message": "Evidência salva.",
+                "nome": item.evidencia_nome_original,
+                "url": self._evidence_url(item),
+            }
+        ), 200
+
+    @safe_route
+    def remove_evidence(self, glosa_id, token_data):
+        if not has_permission(token_data, "controle_glosas", "edit"):
+            return jsonify("Você não possui permissão para alterar glosas."), 403
+        item = db.session.get(Disallowance, glosa_id)
+        if not item:
+            return jsonify("Glosa não encontrada."), 404
+        if not can_access_cost_center(token_data, item.centro_custo_id):
+            return jsonify("Você não possui acesso à filial desta glosa."), 403
+        stored_name = item.evidencia_arquivo
+        item.evidencia_arquivo = None
+        item.evidencia_nome_original = None
+        item.evidencia_mime = None
+        item.alterado_por_usuario_id = token_data.get("id")
+        item.updated_at = dt.now()
+        db.session.commit()
+        if stored_name:
+            path = EVIDENCE_DIR / Path(stored_name).name
+            if path.is_file():
+                path.unlink()
+        socketio.emit("disallowance_update", {"id": item.id, "action": "evidence_removed"})
+        return jsonify("Evidência removida."), 200
+
+    @staticmethod
+    def serve_evidence(filename):
+        safe_name = Path(filename).name
+        item = Disallowance.query.filter_by(evidencia_arquivo=safe_name).first()
+        if not item or safe_name != filename:
+            return jsonify("Evidência não encontrada."), 404
+        return send_from_directory(EVIDENCE_DIR, safe_name, as_attachment=False)
+
+    @safe_route
+    def export(self, token_data):
+        if not has_permission(token_data, "controle_glosas", "view"):
+            return jsonify("Você não possui acesso ao Controle de Glosas."), 403
+        try:
+            records, summary, _ = self._records_and_summary(token_data)
+        except ValueError as error:
+            return jsonify(str(error)), 400
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Controle de Glosas"
+        sheet.sheet_view.showGridLines = False
+        green = "20A65A"
+        dark = "173925"
+        light = "EAF6EF"
+        red = "D64545"
+        amber = "D99000"
+        white = "FFFFFF"
+        thin = Side(style="thin", color="DDE7E1")
+
+        sheet.merge_cells("A1:M2")
+        title = sheet["A1"]
+        title.value = "CONTROLE DE GLOSAS"
+        title.font = Font(size=20, bold=True, color=white)
+        title.fill = PatternFill("solid", fgColor=dark)
+        title.alignment = Alignment(vertical="center", horizontal="left")
+
+        cards = [
+            ("REGISTROS", summary["total_registros"], dark),
+            ("VALOR APONTADO", _money(summary["valor_total"]), green),
+            ("VALOR COBERTO", _money(summary["valor_coberto"]), "2E8B57"),
+            ("SALDO DESCOBERTO", _money(summary["valor_descoberto"]), red),
+            ("EM ANÁLISE", _money(summary["valor_em_analise"]), amber),
+        ]
+        columns = (1, 4, 7, 10, 12)
+        widths = (3, 3, 3, 2, 2)
+        for (label, value, color), start, width in zip(cards, columns, widths):
+            end = start + width - 1
+            sheet.merge_cells(start_row=4, start_column=start, end_row=4, end_column=end)
+            sheet.merge_cells(start_row=5, start_column=start, end_row=6, end_column=end)
+            label_cell = sheet.cell(4, start, label)
+            value_cell = sheet.cell(5, start, value)
+            for row in range(4, 7):
+                for column in range(start, end + 1):
+                    cell = sheet.cell(row, column)
+                    cell.fill = PatternFill("solid", fgColor=light)
+                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            label_cell.font = Font(size=9, bold=True, color=color)
+            value_cell.font = Font(size=14, bold=True, color=dark)
+            label_cell.alignment = value_cell.alignment = Alignment(
+                horizontal="center", vertical="center"
+            )
+
+        headers = [
+            "Competência",
+            "Data da falta",
+            "Departamento",
+            "Contrato",
+            "Colaborador",
+            "Matrícula",
+            "Situação",
+            "Dias apontados",
+            "Dias cobertos",
+            "Valor apontado",
+            "Valor coberto",
+            "Saldo descoberto",
+            "Evidência",
+        ]
+        header_row = 8
+        for column, label in enumerate(headers, 1):
+            cell = sheet.cell(header_row, column, label)
+            cell.font = Font(bold=True, color=white)
+            cell.fill = PatternFill("solid", fgColor=dark)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        coverage_labels = {
+            "em_analise": "Em análise",
+            "coberta": "Coberta",
+            "parcial": "Parcialmente coberta",
+            "descoberta": "Descoberta",
+        }
+        for row_index, item in enumerate(records, header_row + 1):
+            values = [
+                item["competencia"],
+                item["data_falta"],
+                item["departamento"],
+                item["contrato"],
+                item["colaborador"],
+                item["matricula"],
+                coverage_labels.get(item["cobertura"], item["cobertura"]),
+                item["quantidade_dias"],
+                item["quantidade_coberta_dias"],
+                item["valor_total"],
+                item["valor_coberto"],
+                item["valor_descoberto"],
+                "Abrir evidência" if item["evidencia_url"] else "",
+            ]
+            for column, value in enumerate(values, 1):
+                cell = sheet.cell(row_index, column, value)
+                cell.fill = PatternFill(
+                    "solid", fgColor="FFFFFF" if row_index % 2 else "F5F9F7"
+                )
+                cell.border = Border(bottom=thin)
+                cell.alignment = Alignment(vertical="center")
+            for column in (10, 11, 12):
+                sheet.cell(row_index, column).number_format = 'R$ #,##0.00'
+            if item["evidencia_url"]:
+                evidence = sheet.cell(row_index, 13)
+                evidence.hyperlink = item["evidencia_url"]
+                evidence.style = "Hyperlink"
+
+        sheet.freeze_panes = "A9"
+        sheet.auto_filter.ref = f"A8:M{max(header_row, header_row + len(records))}"
+        widths = [15, 15, 15, 42, 34, 14, 22, 16, 15, 18, 18, 19, 22]
+        for index, width in enumerate(widths, 1):
+            sheet.column_dimensions[chr(64 + index)].width = width
+        sheet.row_dimensions[1].height = 25
+        sheet.row_dimensions[5].height = 24
+        sheet.row_dimensions[8].height = 30
+
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f"controle_glosas_{date.today().isoformat()}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @safe_route
     def delete(self, token_data):
@@ -253,7 +648,12 @@ class DisallowanceService:
         if not can_access_cost_center(token_data, item.centro_custo_id):
             return jsonify("Você não possui acesso à filial desta glosa."), 403
         item_id = item.id
+        stored_name = item.evidencia_arquivo
         db.session.delete(item)
         db.session.commit()
+        if stored_name:
+            path = EVIDENCE_DIR / Path(stored_name).name
+            if path.is_file():
+                path.unlink()
         socketio.emit("disallowance_update", {"id": item_id, "action": "deleted"})
         return jsonify("Glosa excluída."), 200

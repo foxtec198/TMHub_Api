@@ -29,9 +29,4 @@ jobs: # Jobs will run
             set -e
             cd /home/guibs/api_tmhub
             sudo git pull origin main
-            venv/bin/python migrations/add_user_theme.py
-            venv/bin/python migrations/add_requisition_opened_at.py
-            venv/bin/python migrations/add_vacancy_hired_registration.py
-            venv/bin/python migrations/add_branches.py
-            venv/bin/python migrations/add_absence_control.py
             sudo systemctl restart api_tmhub

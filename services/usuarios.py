@@ -11,7 +11,8 @@ import secrets
 import smtplib
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
-from models.filiais import Branch
+from models.filiais import Branch, filial_usuarios
+from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
 
 PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$")
@@ -21,7 +22,7 @@ PHOTO_PATTERN = re.compile(r"^data:image/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+
 class UserServices:
     @staticmethod
     def _is_admin(token_data):
-        return str(token_data.get("perm", "")).upper() == "ADMIN"
+        return is_admin(token_data)
 
     @staticmethod
     def _normalize_cpf(value):
@@ -31,7 +32,25 @@ class UserServices:
     def read(self, token_data):
         detailed = rq.args.get("detail") == "1"
         include_photo = rq.args.get("include_photo") == "1"
-        users = Users.query.order_by(Users.nome).all()
+        admin = self._is_admin(token_data)
+        if detailed and not admin:
+            return jsonify("Apenas administradores podem consultar configurações de usuários."), 403
+
+        users_query = Users.query
+        if not admin:
+            current_user_branches = filial_usuarios.alias("current_user_branches")
+            branch_ids = db.session.query(current_user_branches.c.filial_id).filter(
+                current_user_branches.c.usuario_id == token_data.get("id")
+            )
+            users_query = (
+                users_query.join(
+                    filial_usuarios,
+                    filial_usuarios.c.usuario_id == Users.id,
+                )
+                .filter(filial_usuarios.c.filial_id.in_(branch_ids))
+                .distinct()
+            )
+        users = users_query.order_by(Users.nome).all()
 
         if not detailed:
             return jsonify([{
@@ -40,12 +59,11 @@ class UserServices:
                 **({"foto_perfil": user.foto_perfil} if include_photo else {}),
             } for user in users]), 200
 
-        is_admin = self._is_admin(token_data)
         return jsonify([{
             "id": user.id,
             "nome": user.nome,
             "email": user.email,
-            "cpf": user.cpf if is_admin else None,
+            "cpf": user.cpf if admin else None,
             "role": user.role,
             "gerencia_faltas": bool(user.gerencia_faltas),
             "created_at": user.created_at,

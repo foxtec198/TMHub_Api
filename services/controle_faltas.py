@@ -1,8 +1,9 @@
 from datetime import datetime as dt, timedelta
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
-from sqlalchemy import case, or_
+from sqlalchemy import String, case, cast, or_
 from sqlalchemy.orm import aliased
 
 from models.centros_de_custo import CostCenters
@@ -14,7 +15,7 @@ from models.rp_timeline import Timeline
 from models.supervisores import Supervisors
 from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor, is_admin
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
@@ -90,6 +91,8 @@ class AbsenceControlService:
         absence.centro_custo_id = req.cc
         absence.supervisor_id = req.supervisor_id
         absence.motivo = req.motivo
+        if not absence.tipo_ausencia:
+            absence.tipo_ausencia = "integral"
         absence.data_falta = req.created_at
         if is_new and req.obs:
             absence.observacao = req.obs
@@ -132,6 +135,8 @@ class AbsenceControlService:
                 AbsenceControl.requisicao_id,
                 AbsenceControl.data_falta,
                 AbsenceControl.motivo,
+                AbsenceControl.tipo_ausencia,
+                AbsenceControl.quantidade_horas,
                 AbsenceControl.prazo_atestado,
                 AbsenceControl.classificacao,
                 AbsenceControl.status,
@@ -139,7 +144,10 @@ class AbsenceControlService:
                 AbsenceControl.tratado_em,
                 AbsenceControl.automatizado_em,
                 db.func.coalesce(Employees.nome, AbsenceControl.colaborador_nome).label("colaborador"),
-                db.func.coalesce(Employees.matricula, AbsenceControl.colaborador_matricula).label("matricula"),
+                db.func.coalesce(
+                    cast(Employees.matricula, String),
+                    AbsenceControl.colaborador_matricula,
+                ).label("matricula"),
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento,
                 Supervisors.nome.label("supervisor"),
@@ -188,6 +196,117 @@ class AbsenceControlService:
             and (not classification or row.classificacao == classification)
         ]
         return jsonify([row._asdict() for row in rows]), 200
+
+    @safe_route
+    def create_manual(self, token_data):
+        if not has_permission(token_data, "controle_faltas", "edit"):
+            return jsonify("Você não possui permissão para lançar faltas manualmente."), 403
+
+        body = request.get_json(silent=True) or {}
+        try:
+            employee_id = int(body.get("colaborador_id"))
+            supervisor_id = int(body.get("supervisor_id"))
+        except (TypeError, ValueError):
+            return jsonify("Selecione o colaborador e o supervisor."), 400
+
+        employee = db.session.get(Employees, employee_id)
+        if not employee:
+            return jsonify("Colaborador não encontrado."), 404
+        if not employee.centro_id:
+            return jsonify("O colaborador selecionado não possui contrato/local vinculado."), 400
+        if not can_access_cost_center(token_data, employee.centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador."), 403
+        if not db.session.get(Supervisors, supervisor_id):
+            return jsonify("Supervisor não encontrado."), 404
+        if not can_access_supervisor(token_data, supervisor_id):
+            return jsonify("Você não possui acesso à filial deste supervisor."), 403
+
+        reason = str(body.get("motivo") or "").strip().upper()
+        if not reason:
+            return jsonify("Informe o motivo da falta."), 400
+
+        absence_type = str(body.get("tipo_ausencia") or "").strip().lower()
+        if absence_type not in {"integral", "parcial"}:
+            return jsonify("Informe se a falta foi integral ou parcial."), 400
+
+        try:
+            absence_date = dt.fromisoformat(str(body.get("data_falta") or "").replace("Z", "+00:00"))
+        except ValueError:
+            return jsonify("Informe uma data válida para a falta."), 400
+        if absence_date.tzinfo:
+            absence_date = absence_date.astimezone(SAO_PAULO).replace(tzinfo=None)
+
+        absence_hours = None
+        if absence_type == "parcial":
+            try:
+                absence_hours = Decimal(str(body.get("quantidade_horas")).replace(",", ".")).quantize(Decimal("0.01"))
+            except (InvalidOperation, TypeError, ValueError):
+                return jsonify("Informe a quantidade de horas da falta parcial."), 400
+            if absence_hours <= 0 or absence_hours >= 24:
+                return jsonify("As horas da falta parcial devem ser maiores que zero e menores que 24."), 400
+
+        observation = str(body.get("observacao") or "").strip()
+        type_label = "PARCIAL" if absence_type == "parcial" else "INTEGRAL"
+        coverage_note = f"FALTA {type_label}"
+        if absence_hours is not None:
+            formatted_hours = format(absence_hours, "f").rstrip("0").rstrip(".")
+            coverage_note += f" DE {formatted_hours}H"
+        request_observation = f"{coverage_note} · LANÇADA PELO CONTROLE DE FALTAS · SEM COBERTURA"
+        if observation:
+            request_observation += f" · {observation.upper()}"
+
+        try:
+            requisition = Requisicao(
+                reserva_id=0,
+                ausente_id=employee.id,
+                cc=employee.centro_id,
+                supervisor_id=supervisor_id,
+                warning=False,
+                motivo=reason,
+                obs=request_observation,
+                created_at=absence_date,
+                opened_at=dt.now(SAO_PAULO),
+                status="pending",
+            )
+            db.session.add(requisition)
+            db.session.flush()
+
+            absence = self.ensure_for_request(requisition)
+            absence.tipo_ausencia = absence_type
+            absence.quantidade_horas = absence_hours
+            absence.observacao = observation or request_observation
+
+            db.session.add(Timeline(
+                requisicao_id=requisition.id,
+                reserva_id=0,
+                ausente_id=employee.id,
+                cc=employee.centro_id,
+                supervisor_id=supervisor_id,
+                criado_por_usuario_id=token_data.get("id"),
+                status="pending",
+                tipo="Requisição criada através do Controle de Faltas",
+                motivo=reason,
+                obs=request_observation,
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        socketio.emit("absence_control_update", {"id": absence.id, "action": "created_manually"})
+        socketio.emit("new_request")
+        socketio.emit("new_history")
+        socketio.emit("kds_update", {
+            "action": "created_from_absence_control",
+            "request_id": requisition.id,
+            "status": requisition.status,
+            "emitted_at": dt.now(SAO_PAULO).isoformat(),
+        })
+        return jsonify({
+            "message": "Falta lançada e requisição sem cobertura criada.",
+            "falta_id": absence.id,
+            "requisicao_id": requisition.id,
+        }), 201
 
     @safe_route
     def update(self, token_data):

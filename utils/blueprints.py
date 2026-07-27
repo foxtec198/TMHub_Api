@@ -19,7 +19,7 @@ from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
 from routes.filiais import branch_bp
 from routes.controle_faltas import absence_control_bp
-from routes.glosas import disallowance_bp
+from routes.glosas import disallowance_bp, disallowance_files_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -39,6 +39,7 @@ blueprints = {
     branch_bp: "/filiais",
     absence_control_bp: "/controle-faltas",
     disallowance_bp: "/glosas",
+    disallowance_files_bp: "/arquivos/glosas",
 
     #Estoque
     categorias_bp: "/estoque/categorias",

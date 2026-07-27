@@ -14,10 +14,11 @@ from models.supervisores import Supervisors
 from models.cargos import Cargos
 from models.cidades import Cities
 from models.situacoes import Situations
+from utils.filial_scope import apply_cost_center_scope
 
 class DashboardService:
     @safe_route
-    def get_employees_by_department(self):
+    def get_employees_by_department(self, token_data):
         query = (
             db.session.query(
                 Employees.id,
@@ -42,6 +43,7 @@ class DashboardService:
             .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento.notin_([0, 10, 24]))
         )
 
+        query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         employees = query.order_by(
             CostCenters.departamento,
             CostCenters.local,
@@ -51,7 +53,7 @@ class DashboardService:
         return jsonify([employee._asdict() for employee in employees]), 200
 
     @safe_route
-    def get_repos(self):
+    def get_repos(self, token_data):
         bd = rq.get_json()
 
         init = bd.get("init", None)
@@ -70,9 +72,12 @@ class DashboardService:
         
         response = {"abertas": 0, "historico": [], "multas": [], "meter": {'total': 0, 'cobertas': 0, 'sem_cobertura': 0}}
         # Open requests follow the same status contract used by the operational request queue.
-        response["abertas"] = Requisicao.query.filter(
+        open_requests = Requisicao.query.filter(
             Requisicao.created_at.between(init, end),
             Requisicao.status.in_(["pending", "updated"]),
+        )
+        response["abertas"] = apply_cost_center_scope(
+            open_requests, Requisicao.cc, token_data
         ).count()
 
         Ausente = aliased(Employees)
@@ -86,7 +91,7 @@ class DashboardService:
             .group_by(History.requisicao_id)
             .subquery()
         )
-        hists = (
+        history_query = (
             db.session.query(
                 History.id,
                 Ausente.nome.label("ausente"),
@@ -114,8 +119,10 @@ class DashboardService:
                 History.status.in_(["approved", "reproved"]),
             )
             .order_by(History.created_at.desc())
-            .all()
         )
+        hists = apply_cost_center_scope(
+            history_query, History.cc, token_data
+        ).all()
         response["historico"] = [h._asdict() for h in hists]
         
         return jsonify(response), 200

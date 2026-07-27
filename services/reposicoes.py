@@ -23,7 +23,7 @@ from sqlalchemy.orm import aliased
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from zoneinfo import ZoneInfo
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor
 from utils.token import decode_token
 from services.controle_faltas import AbsenceControlService
 
@@ -36,6 +36,21 @@ def _emit_kds_update(action, request_id=None, status=None):
         "status": status,
         "emitted_at": dt.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
     })
+
+
+def _can_access_employee(token_data, employee_id, allow_uncovered=False):
+    if allow_uncovered and employee_id in (None, 0, "0"):
+        return True
+    try:
+        employee = db.session.get(Employees, int(employee_id))
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        employee
+        and employee.centro_id
+        and can_access_cost_center(token_data, employee.centro_id)
+    )
+
 
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
@@ -226,6 +241,12 @@ class RequestService:
 
         if not ok:
             return jsonify(error), 400
+        try:
+            supervisor_id = int(supervisor_id)
+        except (TypeError, ValueError):
+            return jsonify("Supervisor inválido."), 400
+        if not db.session.get(Supervisors, supervisor_id):
+            return jsonify("Supervisor não encontrado."), 404
         adv = True if advertencia and advertencia.lower() == "aplicado" else False
         created_at = self._parse_datetime(data)
         absent_employee = db.session.get(Employees, ausente_id)
@@ -244,13 +265,32 @@ class RequestService:
         if not centro_id:
             return jsonify("O colaborador ausente não possui um local cadastrado."), 400
         access_token = request.headers.get("Access-Token")
-        if access_token and not can_access_cost_center(decode_token(access_token), centro_id):
-            return jsonify("Você não possui acesso à filial deste colaborador."), 403
+        if access_token:
+            token_data = decode_token(access_token)
+            if not can_access_cost_center(token_data, centro_id):
+                return jsonify("Você não possui acesso à filial deste colaborador."), 403
+            if not can_access_supervisor(token_data, supervisor_id):
+                return jsonify("Você não possui acesso à filial deste supervisor."), 403
+        if not access_token:
+            center = db.session.get(CostCenters, centro_id)
+            if not center or center.supervisor_id != supervisor_id:
+                return jsonify("O colaborador não pertence aos contratos deste supervisor."), 403
 
         if reserva_id not in (None, 0):
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
             if not reservation:
                 return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
+            if access_token and not _can_access_employee(token_data, reserva_id):
+                return jsonify("Você não possui acesso à filial desta reserva."), 403
+            if not access_token:
+                reserve_employee = db.session.get(Employees, reserva_id)
+                reserve_center = (
+                    db.session.get(CostCenters, reserve_employee.centro_id)
+                    if reserve_employee and reserve_employee.centro_id
+                    else None
+                )
+                if not reserve_center or reserve_center.supervisor_id != supervisor_id:
+                    return jsonify("A reserva não pertence aos contratos deste supervisor."), 403
             day_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = created_at.replace(hour=23, minute=59, second=59, microsecond=999999)
             conflicting_request = Requisicao.query.filter(
@@ -302,6 +342,12 @@ class RequestService:
         target_center = bd.get("centro_id", req.cc)
         if not can_access_cost_center(token_data, req.cc) or not can_access_cost_center(token_data, target_center):
             return jsonify("Você não possui acesso à filial desta requisição."), 403
+        if "ausente_id" in bd and not _can_access_employee(token_data, bd.get("ausente_id")):
+            return jsonify("Você não possui acesso à filial do colaborador ausente."), 403
+        if "reserva_id" in bd and not _can_access_employee(
+            token_data, bd.get("reserva_id"), allow_uncovered=True
+        ):
+            return jsonify("Você não possui acesso à filial desta reserva."), 403
 
         if "reserva_id" in bd: req.reserva_id = bd.get("reserva_id")
         if "centro_id" in bd: req.cc = bd.get("centro_id")
@@ -412,9 +458,12 @@ class RequestService:
 
         allowed_centers = apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data).all()
         allowed_center_ids = {center.id for center in allowed_centers}
+        allowed_supervisor_ids = {
+            center.supervisor_id for center in allowed_centers if center.supervisor_id
+        }
         reference_sheets = [
-            ("Supervisores", ["id", "nome"], db.session.query(Supervisors.id, Supervisors.nome).order_by(Supervisors.nome).all()),
-            ("Reservas", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).select_from(Floaters).join(Employees, Employees.id == Floaters.employee_id).order_by(Employees.nome).all()),
+            ("Supervisores", ["id", "nome"], db.session.query(Supervisors.id, Supervisors.nome).filter(Supervisors.id.in_(allowed_supervisor_ids)).order_by(Supervisors.nome).all()),
+            ("Reservas", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).select_from(Floaters).join(Employees, Employees.id == Floaters.employee_id).filter(Employees.centro_id.in_(allowed_center_ids)).order_by(Employees.nome).all()),
             ("Colaboradores", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).filter(Employees.centro_id.in_(allowed_center_ids)).order_by(Employees.nome).all()),
             ("Centros", ["id", "local", "departamento"], [(center.id, center.local, center.departamento) for center in allowed_centers]),
         ]
@@ -452,10 +501,23 @@ class RequestService:
 
         indexes = {header: position for position, header in enumerate(headers)}
         # Cache valid foreign keys once to avoid one database round trip per spreadsheet row.
-        supervisor_ids = {row[0] for row in db.session.query(Supervisors.id).all()}
-        employee_ids = {row[0] for row in db.session.query(Employees.id).all()}
-        reservation_ids = {row[0] for row in db.session.query(Floaters.employee_id).all()}
         center_ids = {row[0] for row in apply_cost_center_scope(db.session.query(CostCenters.id), CostCenters.id, token_data).all()}
+        supervisor_ids = {
+            row[0] for row in db.session.query(CostCenters.supervisor_id)
+            .filter(
+                CostCenters.id.in_(center_ids),
+                CostCenters.supervisor_id.isnot(None),
+            ).distinct().all()
+        }
+        employee_ids = {
+            row[0] for row in db.session.query(Employees.id)
+            .filter(Employees.centro_id.in_(center_ids)).all()
+        }
+        reservation_ids = {
+            row[0] for row in db.session.query(Floaters.employee_id)
+            .join(Employees, Employees.id == Floaters.employee_id)
+            .filter(Employees.centro_id.in_(center_ids)).all()
+        }
         today = dt.now().date()
         allowed_dates = {today, today + timedelta(days=1)}
         created = []
@@ -578,7 +640,7 @@ class RequestService:
             .subquery()
         )
 
-        reservations = (
+        reservation_query = (
             db.session.query(
                 Employees.id,
                 Employees.nome,
@@ -589,6 +651,7 @@ class RequestService:
             )
             .select_from(Floaters)
             .join(Employees, Employees.id == Floaters.employee_id)
+            .join(CostCenters, CostCenters.id == Employees.centro_id)
             .join(Cargos, Cargos.id == Employees.cargo)
             .join(Situations, Situations.id == Employees.situacao)
             .outerjoin(last_usage, and_(
@@ -596,8 +659,20 @@ class RequestService:
                 last_usage.c.ordem == 1,
             ))
             .order_by(Employees.nome)
-            .all()
         )
+        access_token = request.headers.get("Access-Token")
+        if access_token:
+            reservation_query = apply_cost_center_scope(
+                reservation_query, Employees.centro_id, decode_token(access_token)
+            )
+        else:
+            supervisor_id = request.args.get("supervisor_id", type=int)
+            if not supervisor_id:
+                return jsonify("Selecione o supervisor para consultar as reservas."), 400
+            reservation_query = reservation_query.filter(
+                CostCenters.supervisor_id == supervisor_id
+            )
+        reservations = reservation_query.all()
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
             "data": init.strftime("%Y-%m-%d"),
@@ -774,6 +849,14 @@ class HistoryService:
         target_center = bd.get("centro_id", hist.cc)
         if not can_access_cost_center(token_data, hist.cc) or not can_access_cost_center(token_data, target_center):
             return jsonify("Você não possui acesso à filial desta requisição."), 403
+        if "ausente_id" in bd and not _can_access_employee(token_data, bd.get("ausente_id")):
+            return jsonify("Você não possui acesso à filial do colaborador ausente."), 403
+        if "reserva_id" in bd and not _can_access_employee(
+            token_data, bd.get("reserva_id"), allow_uncovered=True
+        ):
+            return jsonify("Você não possui acesso à filial desta reserva."), 403
+        if "supervisor_id" in bd and not can_access_supervisor(token_data, bd.get("supervisor_id")):
+            return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
         req = Requisicao.query.filter(Requisicao.id == hist.requisicao_id).first()
         if not req:
@@ -866,6 +949,7 @@ class TimelineService:
         tipo,
         obs=None,
         criado_por_supervisor_id=None,
+        criado_por_usuario_id=None,
         alterado_por_usuario_id=None,
     ):
         db.session.add(
@@ -876,6 +960,7 @@ class TimelineService:
                 cc=req.cc,
                 supervisor_id=req.supervisor_id,
                 criado_por_supervisor_id=criado_por_supervisor_id,
+                criado_por_usuario_id=criado_por_usuario_id,
                 alterado_por_usuario_id=alterado_por_usuario_id,
                 status=status,
                 tipo=tipo,
@@ -892,6 +977,7 @@ class TimelineService:
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
         Criador = aliased(Supervisors)
+        CriadorUsuario = aliased(Users)
         Alterador = aliased(Users)
 
         query = (
@@ -909,6 +995,7 @@ class TimelineService:
                 CostCenters.local,
                 Supervisors.nome.label("supervisor"),
                 Criador.nome.label("criado_por"),
+                CriadorUsuario.nome.label("criado_por_usuario"),
                 Alterador.nome.label("alterado_por"),
                 Timeline.motivo,
                 Timeline.obs,
@@ -919,6 +1006,7 @@ class TimelineService:
             .join(CostCenters, CostCenters.id == Timeline.cc)
             .join(Supervisors, Supervisors.id == Timeline.supervisor_id)
             .outerjoin(Criador, Criador.id == Timeline.criado_por_supervisor_id)
+            .outerjoin(CriadorUsuario, CriadorUsuario.id == Timeline.criado_por_usuario_id)
             .outerjoin(Alterador, Alterador.id == Timeline.alterado_por_usuario_id)
             .order_by(Timeline.created_at.desc())
         )

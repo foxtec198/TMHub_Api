@@ -1,11 +1,25 @@
 from flask import jsonify, request as rq
 from models.supervisores import Supervisors, db
+from models.centros_de_custo import CostCenters
 from utils.safe_route import safe_route
 from utils.check_field import check_field
+from utils.filial_scope import apply_cost_center_scope, is_admin
+from utils.token import decode_token
 
 class ServiceSupervisors():
     def read(self):
-        sups = Supervisors().query.all()
+        query = Supervisors.query
+        access_token = rq.headers.get("Access-Token")
+        if access_token:
+            token_data = decode_token(access_token)
+            if not is_admin(token_data):
+                query = query.join(
+                    CostCenters, CostCenters.supervisor_id == Supervisors.id
+                ).distinct()
+                query = apply_cost_center_scope(
+                    query, CostCenters.id, token_data
+                )
+        sups = query.order_by(Supervisors.nome).all()
         return jsonify([s.to_dict() for s in sups]), 200
     
     @safe_route
