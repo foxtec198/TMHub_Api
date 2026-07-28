@@ -115,9 +115,15 @@ class Vacancy(BaseModel):
     colaborador_id = db.Column(
         db.Integer,
         db.ForeignKey("colaboradores.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    centro_custo_id = db.Column(
+        db.Integer,
+        db.ForeignKey("centro_de_custo.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    tipo = db.Column(db.String(20), nullable=False, default="substituicao", index=True)
     # Nullable preserva vagas legadas; novas vagas exigem o supervisor no serviço.
     supervisor_id = db.Column(
         db.Integer,
@@ -173,6 +179,11 @@ class Vacancy(BaseModel):
     updated_at = db.Column(db.DateTime, default=dt.now, onupdate=dt.now)
 
     __table_args__ = (
+        db.CheckConstraint(
+            "(tipo = 'substituicao' AND colaborador_id IS NOT NULL) OR "
+            "(tipo = 'aditivo' AND centro_custo_id IS NOT NULL)",
+            name="ck_ad_vagas_origem_obrigatoria",
+        ),
         db.CheckConstraint(
             "status <> 'concluido' OR ("
             "(colaborador_entrada_id IS NOT NULL OR NULLIF(TRIM(colaborador_entrada_matricula), '') IS NOT NULL) "

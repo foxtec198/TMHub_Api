@@ -14,6 +14,7 @@ from models.centros_de_custo import CostCenters
 from models.admissao import InterviewHistory, Vacancy, VacancyCandidateHistory, VacancyEvent, WorkSchedule, db
 from models.supervisores import Supervisors
 from models.usuarios import Users
+from utils.business_time import business_hours_between
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor
 
 STATUS_VALIDOS = ("aberta", "entrevista", "certidao", "aso", "unico", "concluido")
@@ -74,6 +75,8 @@ class VacancyService:
 
     @staticmethod
     def _vacancy_center_id(vacancy):
+        if vacancy.centro_custo_id:
+            return vacancy.centro_custo_id
         return db.session.query(Employees.centro_id).filter(
             Employees.id == vacancy.colaborador_id
         ).scalar()
@@ -287,17 +290,23 @@ class VacancyService:
                 CostCenters.local.label("contrato"),
                 responsavel_vaga.nome.label("responsavel"),
             )
-            .join(Employees, Employees.id == Vacancy.colaborador_id)
-            .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .outerjoin(Employees, Employees.id == Vacancy.colaborador_id)
+            .join(
+                CostCenters,
+                CostCenters.id == db.func.coalesce(Vacancy.centro_custo_id, Employees.centro_id),
+            )
             .outerjoin(
                 colaborador_contratado, cast(colaborador_contratado.matricula, String)
                 == Vacancy.colaborador_entrada_matricula,
             )
             .outerjoin(responsavel_vaga, responsavel_vaga.id == Vacancy.responsavel_usuario_id)
-            .filter(Vacancy.aviso_em.between(start_at, end_at))
+            .filter(
+                Vacancy.aviso_em.between(start_at, end_at),
+                Vacancy.tipo == "substituicao",
+            )
         )
         vacancy_rows = apply_cost_center_scope(
-            vacancy_query, Employees.centro_id, token_data
+            vacancy_query, CostCenters.id, token_data
         ).all()
         # Eventos preservam quem realizou a primeira ação e em qual instante ela ocorreu.
         vacancy_ids = [row.Vacancy.id for row in vacancy_rows]
@@ -344,6 +353,7 @@ class VacancyService:
                 "contrato": row.contrato,
                 "responsavel": row.responsavel or (first_action.usuario_nome if first_action else "Rafael Nogara"),
                 "colaborador_saida": row.colaborador_saida,
+                "tipo": vacancy.tipo,
                 "candidato": (
                     row.colaborador_contratado
                     if vacancy.status == "concluido" and row.colaborador_contratado
@@ -396,9 +406,9 @@ class VacancyService:
             notice = record["aviso_em"]
             action = record["primeira_acao_em"]
             closed = record["concluido_em"]
-            record["sla_acao_horas"] = max((action - notice).total_seconds() / 3600, 0) if action else None
-            record["sla_conclusao_horas"] = max((closed - notice).total_seconds() / 3600, 0) if closed else None
-            elapsed = max(((action or now) - notice).total_seconds() / 3600, 0)
+            record["sla_acao_horas"] = business_hours_between(notice, action) if action else None
+            record["sla_conclusao_horas"] = business_hours_between(notice, closed) if closed else None
+            elapsed = business_hours_between(notice, action or now)
             record["sla_acao_decorrido_horas"] = elapsed
             record["acao_no_prazo"] = record["sla_acao_horas"] is not None and record["sla_acao_horas"] <= action_target
             record["conclusao_no_prazo"] = record["sla_conclusao_horas"] is not None and record["sla_conclusao_horas"] <= close_target
@@ -515,6 +525,7 @@ class VacancyService:
         """Lista vagas com todos os dados derivados necessários para a interface."""
         status = rq.args.get("status")
         departamento = rq.args.get("departamento")
+        tipo = rq.args.get("tipo")
         order = rq.args.get("order", "desc")
 
         colaborador_entrada = aliased(Employees)
@@ -523,7 +534,9 @@ class VacancyService:
         query = (
             db.session.query(
                 Vacancy.id,
+                Vacancy.tipo,
                 Vacancy.colaborador_id,
+                Vacancy.centro_custo_id,
                 Vacancy.supervisor_id,
                 Supervisors.nome.label("supervisor"),
                 Vacancy.responsavel_usuario_id,
@@ -557,9 +570,12 @@ class VacancyService:
                 Vacancy.updated_at,
             )
             .select_from(Vacancy)
-            .join(Employees, Employees.id == Vacancy.colaborador_id)
-            .join(Cargos, Cargos.id == Employees.cargo)
-            .join(CostCenters, CostCenters.id == Employees.centro_id)
+            .outerjoin(Employees, Employees.id == Vacancy.colaborador_id)
+            .outerjoin(Cargos, Cargos.id == Employees.cargo)
+            .join(
+                CostCenters,
+                CostCenters.id == db.func.coalesce(Vacancy.centro_custo_id, Employees.centro_id),
+            )
             .outerjoin(Supervisors, Supervisors.id == Vacancy.supervisor_id)
             .outerjoin(responsavel, responsavel.id == Vacancy.responsavel_usuario_id)
             .outerjoin(WorkSchedule, WorkSchedule.id == Vacancy.horario_trabalho_id)
@@ -573,8 +589,9 @@ class VacancyService:
             )
             .outerjoin(recrutador, recrutador.id == Vacancy.concluido_por_usuario_id)
         )
-        query = apply_cost_center_scope(query, Employees.centro_id, token_data)
+        query = apply_cost_center_scope(query, CostCenters.id, token_data)
         if status: query = query.filter(Vacancy.status == status)
+        if tipo: query = query.filter(Vacancy.tipo == tipo)
         if departamento: query = query.filter(CostCenters.departamento == int(departamento))
 
         query = query.order_by(Vacancy.created_at.asc() if order == "asc" else Vacancy.created_at.desc())
@@ -662,7 +679,9 @@ class VacancyService:
     def create(self, token_data):
         """Cria a vaga e seu primeiro evento de auditoria na mesma transação."""
         body = rq.get_json()
+        tipo = (body.get("tipo") or "substituicao").strip().lower()
         colaborador_id = body.get("colaborador_id")
+        centro_custo_id = body.get("centro_custo_id")
         supervisor_id = body.get("supervisor_id")
         colaborador_entrada = (body.get("colaborador_entrada") or "").strip() or None
         telefone_colaborador_entrada = (body.get("telefone_colaborador_entrada") or "").strip() or None
@@ -670,24 +689,41 @@ class VacancyService:
         horario_trabalho = body.get("horario_trabalho")
         motivo_saida = body.get("motivo_saida")
 
-        ok, error = check_field(
-            colaborador_id=colaborador_id,
-            supervisor_id=supervisor_id,
-            aviso_em=aviso_em_raw,
-            horario_trabalho=horario_trabalho,
-            motivo_saida=motivo_saida,
-        )
+        if tipo not in ("substituicao", "aditivo"):
+            return jsonify("Tipo de vaga inválido"), 400
+
+        required = {"aviso_em": aviso_em_raw, "horario_trabalho": horario_trabalho}
+        if tipo == "aditivo":
+            required["centro_custo_id"] = centro_custo_id
+        else:
+            required.update({
+                "colaborador_id": colaborador_id,
+                "supervisor_id": supervisor_id,
+                "motivo_saida": motivo_saida,
+            })
+        ok, error = check_field(**required)
         if not ok: return jsonify(error), 400
 
-        emp = self._lookup_employee(colaborador_id)
-        if not emp: return jsonify("Colaborador não encontrado na base"), 404
-        if not can_access_cost_center(token_data, emp.centro_id):
-            return jsonify("Você não possui acesso à filial deste colaborador"), 403
+        emp = None
+        center = None
+        supervisor = None
+        if tipo == "aditivo":
+            center = db.session.get(CostCenters, centro_custo_id)
+            if not center: return jsonify("Contrato não encontrado na base"), 404
+            if not can_access_cost_center(token_data, center.id):
+                return jsonify("Você não possui acesso à filial deste contrato"), 403
+            supervisor = db.session.get(Supervisors, center.supervisor_id) if center.supervisor_id else None
+            motivo_saida = "ADITIVO CONTRATUAL"
+        else:
+            emp = self._lookup_employee(colaborador_id)
+            if not emp: return jsonify("Colaborador não encontrado na base"), 404
+            if not can_access_cost_center(token_data, emp.centro_id):
+                return jsonify("Você não possui acesso à filial deste colaborador"), 403
 
-        supervisor = db.session.get(Supervisors, supervisor_id)
-        if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
-        if not can_access_supervisor(token_data, supervisor_id):
-            return jsonify("Você não possui acesso à filial deste supervisor"), 403
+            supervisor = db.session.get(Supervisors, supervisor_id)
+            if not supervisor: return jsonify("Supervisor não encontrado na base"), 404
+            if not can_access_supervisor(token_data, supervisor_id):
+                return jsonify("Você não possui acesso à filial deste supervisor"), 403
 
         try:
             schedule = self._resolve_schedule(horario_trabalho)
@@ -707,8 +743,10 @@ class VacancyService:
             return jsonify("Usuário responsável não encontrado"), 404
 
         nova_vaga = Vacancy(
-            colaborador_id=emp.id,
-            supervisor_id=supervisor.id,
+            tipo=tipo,
+            colaborador_id=emp.id if emp else None,
+            centro_custo_id=center.id if center else None,
+            supervisor_id=supervisor.id if supervisor else None,
             responsavel_usuario_id=recrutador.id,
             colaborador_entrada=colaborador_entrada,
             telefone_colaborador_entrada=telefone_colaborador_entrada,
