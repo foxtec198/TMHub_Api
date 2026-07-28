@@ -6,3 +6,9 @@ class Supervisors(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String)
+    colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        unique=True,
+        index=True,
+    )

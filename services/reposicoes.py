@@ -282,15 +282,6 @@ class RequestService:
                 return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
             if access_token and not _can_access_employee(token_data, reserva_id):
                 return jsonify("Você não possui acesso à filial desta reserva."), 403
-            if not access_token:
-                reserve_employee = db.session.get(Employees, reserva_id)
-                reserve_center = (
-                    db.session.get(CostCenters, reserve_employee.centro_id)
-                    if reserve_employee and reserve_employee.centro_id
-                    else None
-                )
-                if not reserve_center or reserve_center.supervisor_id != supervisor_id:
-                    return jsonify("A reserva não pertence aos contratos deste supervisor."), 403
             day_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = created_at.replace(hour=23, minute=59, second=59, microsecond=999999)
             conflicting_request = Requisicao.query.filter(
@@ -669,9 +660,8 @@ class RequestService:
             supervisor_id = request.args.get("supervisor_id", type=int)
             if not supervisor_id:
                 return jsonify("Selecione o supervisor para consultar as reservas."), 400
-            reservation_query = reservation_query.filter(
-                CostCenters.supervisor_id == supervisor_id
-            )
+            if not db.session.get(Supervisors, supervisor_id):
+                return jsonify("Supervisor não encontrado."), 404
         reservations = reservation_query.all()
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
