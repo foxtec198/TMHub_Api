@@ -22,6 +22,7 @@ class EmployeesService:
         situation_id = bd.get("situacao", None)
         center_id = bd.get("centro_id", None) or bd.get("centro_custo_id", None)
         supervisor_id = bd.get("supervisor_id", None)
+        public_lookup = str(bd.get("publico", "")).strip().lower() in {"1", "true", "sim"}
         require_center = str(bd.get("com_local", "")).strip().lower() in {"1", "true", "sim"}
         limit = bd.get("limit")
         search = bd.get("search")
@@ -47,14 +48,14 @@ class EmployeesService:
         )
 
         access_token = rq.headers.get("Access-Token")
-        if access_token:
+        if access_token and not public_lookup:
             emp = apply_cost_center_scope(emp, Employees.centro_id, decode_token(access_token))
-        elif supervisor_id:
+        elif supervisor_id and not public_lookup:
             try:
                 emp = emp.filter(CostCenters.supervisor_id == int(supervisor_id))
             except (TypeError, ValueError):
                 return jsonify("Supervisor inválido."), 400
-        else:
+        elif not public_lookup:
             # A tela pública não possui filial autenticada; o supervisor escolhido
             # é o contexto mínimo necessário para impedir uma consulta global.
             return jsonify([]), 200
@@ -63,7 +64,10 @@ class EmployeesService:
         if situation_id: emp = emp.filter(Situations.id == int(situation_id))
         if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))
-        if limit: emp = emp.limit(int(limit))
+        if public_lookup:
+            emp = emp.limit(min(int(limit or 50), 50))
+        elif limit:
+            emp = emp.limit(int(limit))
             
         emp = emp.all()  # Obtem tudo
         return jsonify([e._asdict() for e in emp]), 200

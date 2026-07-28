@@ -652,11 +652,12 @@ class RequestService:
             .order_by(Employees.nome)
         )
         access_token = request.headers.get("Access-Token")
-        if access_token:
+        public_lookup = str(request.args.get("publico", "")).strip().lower() in {"1", "true", "sim"}
+        if access_token and not public_lookup:
             reservation_query = apply_cost_center_scope(
                 reservation_query, Employees.centro_id, decode_token(access_token)
             )
-        else:
+        elif not public_lookup:
             supervisor_id = request.args.get("supervisor_id", type=int)
             if not supervisor_id:
                 return jsonify("Selecione o supervisor para consultar as reservas."), 400
