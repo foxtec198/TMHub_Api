@@ -1,6 +1,7 @@
 from flask import jsonify, request as rq
 from models.supervisores import Supervisors, db
 from models.centros_de_custo import CostCenters
+from models.colaboradores import Employees
 from utils.safe_route import safe_route
 from utils.check_field import check_field
 from utils.filial_scope import apply_cost_center_scope, is_admin
@@ -26,13 +27,25 @@ class ServiceSupervisors():
     def create(self):
         body = rq.get_json()
         nome = body.get("nome")
+        colaborador_id = body.get("colaborador_id") or None
         
         ok, error = check_field(nome=nome)
         if not ok: return jsonify(error), 400 
         
         if len(nome.split(" ")) < 1: return jsonify("Nome completo obrgatorio"), 400
 
-        new_sup = Supervisors(nome=nome.upper())
+        if colaborador_id:
+            employee = db.session.get(Employees, colaborador_id)
+            if not employee:
+                return jsonify("Colaborador não encontrado"), 404
+            if Supervisors.query.filter_by(colaborador_id=employee.id).first():
+                return jsonify("Este colaborador já está vinculado a um supervisor"), 400
+            colaborador_id = employee.id
+
+        new_sup = Supervisors(
+            nome=nome.upper(),
+            colaborador_id=colaborador_id,
+        )
         db.session.add(new_sup)
         db.session.commit()
         return jsonify("Supervisor criado com sucesso"), 201

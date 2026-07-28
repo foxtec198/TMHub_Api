@@ -12,6 +12,7 @@ from argparse import ArgumentParser
 from datetime import date, datetime
 from os import getenv
 from re import fullmatch, sub
+from unicodedata import combining, normalize
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
@@ -61,6 +62,12 @@ def parse_decimal(value, default=0.0):
     if isinstance(value, str):
         value = value.replace(".", "").replace(",", ".")
     return float(value)
+
+
+def normalize_name(value):
+    text_value = normalize("NFKD", str(value or "").upper())
+    text_value = "".join(char for char in text_value if not combining(char))
+    return sub(r"[^A-Z0-9]+", " ", text_value).strip()
 
 
 def latest_employees(items):
@@ -172,6 +179,48 @@ def create_employees(connection, employees):
     return created, updated, ignored
 
 
+def link_supervisors_to_employees(connection, employees):
+    """Vincula o cadastro operacional do supervisor à sua matrícula."""
+    supervisors = connection.execute(
+        text("SELECT id, nome, colaborador_id FROM supervisores ORDER BY id")
+    ).mappings().all()
+    positions = {
+        row.id: row.nome
+        for row in connection.execute(text("SELECT id, nome FROM cargos"))
+    }
+    candidates_by_name = {}
+    for item in employees:
+        name_key = normalize_name(item.get("nome"))
+        candidates_by_name.setdefault(name_key, []).append(item)
+
+    linked = unresolved = 0
+    statement = text(
+        "UPDATE supervisores SET colaborador_id = :employee_id WHERE id = :supervisor_id"
+    )
+    for supervisor in supervisors:
+        candidates = candidates_by_name.get(normalize_name(supervisor["nome"]), [])
+        candidates.sort(
+            key=lambda item: (
+                int(str(item.get("situacao")) == "1"),
+                int("SUPERVISOR" in str(positions.get(item.get("cargo_id"), item.get("cargo")) or "").upper()),
+                item["_admissao"],
+            ),
+            reverse=True,
+        )
+        if not candidates:
+            unresolved += 1
+            continue
+        connection.execute(
+            statement,
+            {
+                "employee_id": candidates[0]["_matricula"],
+                "supervisor_id": supervisor["id"],
+            },
+        )
+        linked += 1
+    return linked, unresolved
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument(
@@ -204,6 +253,11 @@ def main():
         print(
             f"Colaboradores: {created} criados, {updated} atualizados e "
             f"{ignored} ignorados por possuirem admissao mais recente no banco."
+        )
+        linked, unresolved = link_supervisors_to_employees(connection, employees)
+        print(
+            f"Supervisores: {linked} vinculados às matrículas e "
+            f"{unresolved} sem correspondência."
         )
 
 
