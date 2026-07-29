@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./public/brands/main_brand.svg" alt="TM Hub" width="260">
+  <img src="./static/assets/brands/main_brand.svg" alt="TM Hub" width="260">
   <h1>TM Hub | API</h1>
 
 
