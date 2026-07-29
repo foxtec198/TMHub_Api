@@ -1,432 +1,345 @@
-<!DOCTYPE html>
-<html lang="en">
-
+<!doctype html>
+<html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API - TM Hub</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Documentação interativa da API TM Hub">
+    <title>TM Hub API — Swagger</title>
+    <link
+        rel="icon"
+        type="image/png"
+        href="https://raw.githubusercontent.com/foxtec198/tmhub/main/public/brands/main_fav.png"
+    >
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
+    <style>
+        :root {
+            color-scheme: dark;
+            --accent: #4bd66e;
+            --surface: #111713;
+            --surface-2: #19251c;
+            --border: #315b3b;
+            --text: #f3f7f4;
+            --muted: #aebbb1;
+        }
+
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #080b09; }
+
+        .api-header {
+            position: sticky;
+            z-index: 20;
+            top: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: .8rem clamp(1rem, 4vw, 3rem);
+            color: var(--text);
+            border-bottom: 1px solid var(--border);
+            background: rgba(8, 14, 10, .94);
+            backdrop-filter: blur(14px);
+            font-family: Inter, "Segoe UI", sans-serif;
+        }
+
+        .api-brand { display: flex; align-items: center; gap: .85rem; }
+        .api-logo {
+            display: block;
+            width: 7.8rem;
+            height: 2.7rem;
+            object-fit: contain;
+            object-position: left center;
+            animation: float 2.4s ease-in-out infinite;
+        }
+        .api-brand strong { display: block; font-size: 1rem; }
+        .api-brand span, .api-status { color: var(--muted); font-size: .78rem; }
+        .api-status::before {
+            display: inline-block;
+            width: .55rem;
+            height: .55rem;
+            margin-right: .4rem;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 0 .25rem rgba(75, 214, 110, .12);
+            content: "";
+        }
+
+        .api-search {
+            max-width: 1460px;
+            padding: 1rem 1.25rem 0;
+            margin: 0 auto;
+            font-family: Inter, "Segoe UI", sans-serif;
+        }
+        .api-search label {
+            display: block;
+            margin-bottom: .4rem;
+            color: var(--muted);
+            font-size: .75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+        .api-search-field {
+            position: relative;
+        }
+        .api-search-field span {
+            position: absolute;
+            top: 50%;
+            left: 1rem;
+            color: #78df91;
+            transform: translateY(-50%);
+        }
+        .api-search input {
+            width: 100%;
+            padding: .85rem 1rem .85rem 2.75rem;
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            outline: none;
+            background: var(--surface);
+            font: inherit;
+        }
+        .api-search input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 .18rem rgba(75, 214, 110, .13);
+        }
+        .api-search input::placeholder { color: #8fa096; }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+        }
+
+        .swagger-ui { color: var(--text); }
+        .swagger-ui .topbar { display: none; }
+        .swagger-ui .info { margin: 32px 0 24px; }
+        .swagger-ui .info .title,
+        .swagger-ui .info p,
+        .swagger-ui .info li,
+        .swagger-ui .scheme-container,
+        .swagger-ui .opblock-tag,
+        .swagger-ui .opblock-description-wrapper p,
+        .swagger-ui .response-col_status,
+        .swagger-ui .response-col_description,
+        .swagger-ui table thead tr th,
+        .swagger-ui table thead tr td,
+        .swagger-ui label,
+        .swagger-ui .parameter__name,
+        .swagger-ui .parameter__type,
+        .swagger-ui .model-title,
+        .swagger-ui .model {
+            color: var(--text);
+        }
+        .swagger-ui .info .title small { background: #1f6e33; }
+        .swagger-ui .info a, .swagger-ui .opblock-tag:hover { color: var(--accent); }
+        .swagger-ui .scheme-container {
+            background: var(--surface);
+            box-shadow: none;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .swagger-ui .opblock-tag { border-bottom-color: var(--border); }
+        .swagger-ui .opblock {
+            overflow: hidden;
+            border-radius: 10px;
+            box-shadow: none;
+        }
+        .swagger-ui .opblock .opblock-summary-description,
+        .swagger-ui .opblock .opblock-summary-path,
+        .swagger-ui .opblock .opblock-summary-path__deprecated {
+            color: #f3f7f4 !important;
+        }
+        .swagger-ui .opblock .opblock-summary-description {
+            color: #c4d0c7 !important;
+        }
+        .swagger-ui .opblock-tag small,
+        .swagger-ui .opblock-tag small p,
+        .swagger-ui .info .base-url,
+        .swagger-ui .info .link,
+        .swagger-ui .markdown p,
+        .swagger-ui .markdown li {
+            color: #b7c2ba !important;
+        }
+        .swagger-ui .opblock-body,
+        .swagger-ui section.models {
+            color: var(--text);
+            background: var(--surface);
+        }
+        .swagger-ui .opblock .opblock-section-header,
+        .swagger-ui .opblock .opblock-section-header h4,
+        .swagger-ui .opblock .opblock-section-header label,
+        .swagger-ui .responses-inner h4,
+        .swagger-ui .responses-inner h5 {
+            color: var(--text) !important;
+            background: var(--surface-2) !important;
+        }
+        .swagger-ui .opblock .opblock-section-header {
+            min-height: 3.25rem;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            box-shadow: none;
+        }
+        .swagger-ui .parameters-container,
+        .swagger-ui .responses-wrapper,
+        .swagger-ui .request-body,
+        .swagger-ui .table-container {
+            color: var(--text);
+            background: var(--surface) !important;
+        }
+        .swagger-ui .parameters-col_description,
+        .swagger-ui .parameter__in,
+        .swagger-ui .response-col_links,
+        .swagger-ui .response-col_links i,
+        .swagger-ui .tab li,
+        .swagger-ui .renderedMarkdown p {
+            color: var(--muted) !important;
+        }
+        .swagger-ui .parameter__name,
+        .swagger-ui .parameter__type,
+        .swagger-ui .parameter__deprecated,
+        .swagger-ui .response-col_status,
+        .swagger-ui .response-col_description,
+        .swagger-ui .response-col_description p,
+        .swagger-ui .response-col_description code,
+        .swagger-ui .model-title,
+        .swagger-ui .model,
+        .swagger-ui .model-box,
+        .swagger-ui .prop-name,
+        .swagger-ui .prop-type,
+        .swagger-ui .prop-format,
+        .swagger-ui .model-toggle,
+        .swagger-ui .brace-open,
+        .swagger-ui .brace-close {
+            color: #e7eee9 !important;
+        }
+        .swagger-ui .prop-type,
+        .swagger-ui .parameter__type,
+        .swagger-ui .parameter__in {
+            color: #79e897 !important;
+        }
+        .swagger-ui .tab li button.tablinks,
+        .swagger-ui .response-control-media-type__accept-message,
+        .swagger-ui .download-contents {
+            color: #9eebaf !important;
+        }
+        .swagger-ui table tbody tr td,
+        .swagger-ui table thead tr th,
+        .swagger-ui .responses-table td {
+            border-color: #283a2d !important;
+            background: transparent !important;
+        }
+        .swagger-ui .opblock-body pre.microlight {
+            color: #f4f7f5 !important;
+            background: #202320 !important;
+        }
+        .swagger-ui section.models {
+            border-color: var(--border);
+            border-radius: 10px;
+        }
+        .swagger-ui input, .swagger-ui select, .swagger-ui textarea {
+            color: var(--text);
+            border-color: var(--border);
+            background: #0d120f;
+        }
+        .swagger-ui .operation-filter-input {
+            color: var(--text) !important;
+            border: 1px solid var(--border) !important;
+            background: #111713 !important;
+        }
+        .swagger-ui .operation-filter-input::placeholder {
+            color: #8fa096;
+        }
+        .swagger-ui .btn.try-out__btn,
+        .swagger-ui .btn.execute {
+            color: var(--text);
+            border-color: #4b7256;
+            background: #1c2a20;
+        }
+        .swagger-ui .btn.authorize {
+            color: #156128;
+            border-color: #249443;
+        }
+        .swagger-ui .btn.authorize svg { fill: #249443; }
+
+        @media (max-width: 640px) {
+            .api-status { display: none; }
+            .swagger-ui .wrapper { padding: 0 .7rem; }
+        }
+    </style>
 </head>
-
 <body>
-    <svg width="100%" viewBox="0 0 680 340" role="img" xmlns="http://www.w3.org/2000/svg">
-        <title>API em Execução</title>
-        <desc>Robozinho feliz animado com texto API em Execução e badge Documentação Em breve</desc>
-
-        <defs>
-            <clipPath id="display-clip">
-                <rect x="164" y="166" width="76" height="38" rx="8" />
-            </clipPath>
-        </defs>
-
-        <style>
-            .robot {
-                animation: bodyBounce 2.4s ease-in-out infinite;
-            }
-
-            @keyframes bodyBounce {
-
-                0%,
-                100% {
-                    transform: translateY(0px);
-                }
-
-                50% {
-                    transform: translateY(-8px);
-                }
-            }
-
-            .arm-wave {
-                transform-origin: 146px 162px;
-                animation: wave 1.2s ease-in-out infinite;
-            }
-
-            @keyframes wave {
-
-                0%,
-                100% {
-                    transform: rotate(0deg);
-                }
-
-                30% {
-                    transform: rotate(-22deg);
-                }
-
-                60% {
-                    transform: rotate(8deg);
-                }
-            }
-
-            .antenna-dot {
-                animation: antPulse 1.4s ease-in-out infinite;
-            }
-
-            @keyframes antPulse {
-
-                0%,
-                100% {
-                    r: 6;
-                    opacity: 1;
-                }
-
-                50% {
-                    r: 9;
-                    opacity: 0.4;
-                }
-            }
-
-            .pupil-l {
-                transform-origin: 186px 99px;
-                animation: blinkL 3.5s step-start infinite;
-            }
-
-            .pupil-r {
-                transform-origin: 217px 99px;
-                animation: blinkR 3.5s step-start infinite;
-            }
-
-            @keyframes blinkL {
-
-                0%,
-                45%,
-                55%,
-                100% {
-                    transform: scaleY(1);
-                }
-
-                50% {
-                    transform: scaleY(0.05);
-                }
-            }
-
-            @keyframes blinkR {
-
-                0%,
-                47%,
-                57%,
-                100% {
-                    transform: scaleY(1);
-                }
-
-                52% {
-                    transform: scaleY(0.05);
-                }
-            }
-
-            .gear {
-                transform-origin: 310px 215px;
-                animation: gearSpin 3s linear infinite;
-            }
-
-            @keyframes gearSpin {
-                to {
-                    transform: rotate(360deg);
-                }
-            }
-
-            .bar1 {
-                animation: bar 1.1s ease-in-out infinite;
-                transform-origin: 176px 196px;
-            }
-
-            .bar2 {
-                animation: bar 1.1s ease-in-out infinite 0.15s;
-                transform-origin: 188px 196px;
-            }
-
-            .bar3 {
-                animation: bar 1.1s ease-in-out infinite 0.30s;
-                transform-origin: 200px 196px;
-            }
-
-            .bar4 {
-                animation: bar 1.1s ease-in-out infinite 0.45s;
-                transform-origin: 212px 196px;
-            }
-
-            .bar5 {
-                animation: bar 1.1s ease-in-out infinite 0.60s;
-                transform-origin: 224px 196px;
-            }
-
-            @keyframes bar {
-
-                0%,
-                100% {
-                    transform: scaleY(0.4);
-                    opacity: 0.5;
-                }
-
-                50% {
-                    transform: scaleY(1.0);
-                    opacity: 1;
-                }
-            }
-
-            .status-dot {
-                animation: statusPulse 1.8s ease-in-out infinite;
-            }
-
-            @keyframes statusPulse {
-
-                0%,
-                100% {
-                    opacity: 1;
-                    r: 5;
-                }
-
-                50% {
-                    opacity: 0.3;
-                    r: 7;
-                }
-            }
-
-            .p1 {
-                animation: float1 3.2s ease-in-out infinite;
-            }
-
-            .p2 {
-                animation: float2 2.8s ease-in-out infinite 0.5s;
-            }
-
-            .p3 {
-                animation: float3 3.6s ease-in-out infinite 1.0s;
-            }
-
-            .p4 {
-                animation: float1 2.5s ease-in-out infinite 0.3s;
-            }
-
-            .p5 {
-                animation: float2 3.9s ease-in-out infinite 0.8s;
-            }
-
-            .p6 {
-                animation: float3 2.9s ease-in-out infinite 1.4s;
-            }
-
-            @keyframes float1 {
-
-                0%,
-                100% {
-                    transform: translateY(0) scale(1);
-                    opacity: 0.7;
-                }
-
-                50% {
-                    transform: translateY(-10px) scale(1.2);
-                    opacity: 0.3;
-                }
-            }
-
-            @keyframes float2 {
-
-                0%,
-                100% {
-                    transform: translateY(0) scale(1);
-                    opacity: 0.5;
-                }
-
-                50% {
-                    transform: translateY(-14px) scale(0.8);
-                    opacity: 0.9;
-                }
-            }
-
-            @keyframes float3 {
-
-                0%,
-                100% {
-                    transform: translateY(0);
-                    opacity: 0.6;
-                }
-
-                40% {
-                    transform: translateY(-8px);
-                    opacity: 0.2;
-                }
-
-                80% {
-                    transform: translateY(-4px);
-                    opacity: 0.8;
-                }
-            }
-
-            .txt-main {
-                animation: slideIn 0.8s cubic-bezier(.22, 1, .36, 1) both;
-            }
-
-            .txt-sub {
-                animation: slideIn 0.8s cubic-bezier(.22, 1, .36, 1) 0.15s both;
-            }
-
-            .txt-badge {
-                animation: slideIn 0.8s cubic-bezier(.22, 1, .36, 1) 0.30s both;
-            }
-
-            @keyframes slideIn {
-                from {
-                    opacity: 0;
-                    transform: translateX(18px);
-                }
-
-                to {
-                    opacity: 1;
-                    transform: translateX(0);
-                }
-            }
-
-            .badge-pill {
-                animation: pillGlow 2.2s ease-in-out infinite;
-            }
-
-            @keyframes pillGlow {
-
-                0%,
-                100% {
-                    opacity: 1;
-                }
-
-                50% {
-                    opacity: 0.65;
-                }
-            }
-
-            .divider {
-                animation: growLine 0.9s cubic-bezier(.22, 1, .36, 1) 0.1s both;
-                transform-origin: 358px 60px;
-            }
-
-            @keyframes growLine {
-                from {
-                    transform: scaleY(0);
-                    opacity: 0;
-                }
-
-                to {
-                    transform: scaleY(1);
-                    opacity: 1;
-                }
-            }
-
-            .lbl {
-                font-family: 'Inter', 'Segoe UI', sans-serif;
-            }
-        </style>
-
-        <!-- Fundo -->
-        <rect x="40" y="18" width="600" height="304" rx="24" fill="#f2faf5" opacity="0.65" />
-
-        <!-- ═══ ROBÔ ═══ -->
-        <g class="robot">
-
-            <!-- Antena -->
-            <line x1="201" y1="76" x2="201" y2="54" stroke="#5DCAA5" stroke-width="3" stroke-linecap="round" />
-            <circle cx="201" cy="50" class="antenna-dot" r="6" fill="#1D9E75" />
-
-            <!-- Cabeça -->
-            <rect x="162" y="76" width="78" height="64" rx="14" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="2" />
-
-            <!-- Olhos -->
-            <rect x="178" y="92" width="16" height="14" rx="4" fill="#fff" />
-            <rect class="pupil-l" x="182" y="95" width="8" height="8" rx="2" fill="#0F6E56" />
-            <rect x="209" y="92" width="16" height="14" rx="4" fill="#fff" />
-            <rect class="pupil-r" x="213" y="95" width="8" height="8" rx="2" fill="#0F6E56" />
-
-            <!-- Blush -->
-            <ellipse cx="172" cy="115" rx="6" ry="4" fill="#5DCAA5" opacity="0.45" />
-            <ellipse cx="229" cy="115" rx="6" ry="4" fill="#5DCAA5" opacity="0.45" />
-
-            <!-- Sorriso -->
-            <path d="M185 116 Q201 131 217 116" fill="none" stroke="#0F6E56" stroke-width="2.5"
-                stroke-linecap="round" />
-
-            <!-- Pescoço -->
-            <rect x="191" y="140" width="20" height="12" rx="4" fill="#5DCAA5" />
-
-            <!-- Corpo -->
-            <rect x="148" y="152" width="108" height="80" rx="16" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="2" />
-
-            <!-- Display -->
-            <rect x="164" y="166" width="76" height="38" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="1.5" />
-            <g clip-path="url(#display-clip)">
-                <rect class="bar1" x="172" y="178" width="8" height="18" rx="2" fill="#1D9E75" opacity="0.55" />
-                <rect class="bar2" x="184" y="172" width="8" height="24" rx="2" fill="#1D9E75" opacity="0.80" />
-                <rect class="bar3" x="196" y="175" width="8" height="21" rx="2" fill="#1D9E75" />
-                <rect class="bar4" x="208" y="169" width="8" height="27" rx="2" fill="#0F6E56" />
-                <rect class="bar5" x="220" y="173" width="8" height="23" rx="2" fill="#1D9E75" opacity="0.65" />
-            </g>
-
-            <!-- Braço direito -->
-            <rect x="258" y="156" width="28" height="14" rx="7" fill="#5DCAA5" stroke="#1D9E75" stroke-width="1.5" />
-            <circle cx="294" cy="163" r="10" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="1.5" />
-
-            <!-- Braço esquerdo (acenando) -->
-            <g class="arm-wave">
-                <rect x="118" y="156" width="28" height="14" rx="7" fill="#5DCAA5" stroke="#1D9E75"
-                    stroke-width="1.5" />
-                <circle cx="109" cy="148" r="10" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="1.5" />
-                <line x1="104" y1="140" x2="101" y2="133" stroke="#5DCAA5" stroke-width="2" stroke-linecap="round" />
-                <line x1="109" y1="138" x2="107" y2="131" stroke="#5DCAA5" stroke-width="2" stroke-linecap="round" />
-                <line x1="114" y1="139" x2="114" y2="132" stroke="#5DCAA5" stroke-width="2" stroke-linecap="round" />
-            </g>
-
-            <!-- Pernas -->
-            <rect x="167" y="232" width="24" height="36" rx="8" fill="#5DCAA5" stroke="#1D9E75" stroke-width="1.5" />
-            <rect x="213" y="232" width="24" height="36" rx="8" fill="#5DCAA5" stroke="#1D9E75" stroke-width="1.5" />
-
-            <!-- Pés -->
-            <rect x="161" y="262" width="36" height="14" rx="7" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="1.5" />
-            <rect x="207" y="262" width="36" height="14" rx="7" fill="#9FE1CB" stroke="#5DCAA5" stroke-width="1.5" />
-
-            <!-- Engrenagem -->
-            <g class="gear">
-                <circle cx="310" cy="215" r="11" fill="none" stroke="#1D9E75" stroke-width="2.5"
-                    stroke-dasharray="5 3" />
-                <circle cx="310" cy="215" r="4.5" fill="#1D9E75" />
-            </g>
-        </g>
-
-        <!-- ═══ PARTÍCULAS ═══ -->
-        <circle class="p1" cx="490" cy="72" r="5" fill="#9FE1CB" opacity="0.70" />
-        <circle class="p2" cx="512" cy="56" r="3.5" fill="#5DCAA5" opacity="0.55" />
-        <circle class="p3" cx="536" cy="80" r="7" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="1.5" />
-        <circle class="p4" cx="558" cy="60" r="4" fill="#1D9E75" opacity="0.35" />
-        <circle class="p5" cx="574" cy="84" r="3" fill="#9FE1CB" opacity="0.65" />
-        <circle class="p6" cx="600" cy="68" r="5.5" fill="#5DCAA5" opacity="0.30" />
-        <circle class="p3" cx="492" cy="278" r="4" fill="#9FE1CB" opacity="0.50" />
-        <circle class="p1" cx="522" cy="294" r="6" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="1.5" />
-        <circle class="p5" cx="556" cy="272" r="3.5" fill="#5DCAA5" opacity="0.45" />
-        <circle class="p2" cx="582" cy="292" r="5" fill="#9FE1CB" opacity="0.60" />
-        <circle class="p4" cx="610" cy="280" r="3" fill="#1D9E75" opacity="0.30" />
-
-        <!-- ═══ TEXTO ═══ -->
-        <rect class="divider" x="358" y="60" width="3" height="220" rx="2" fill="#9FE1CB" />
-
-        <g class="txt-main">
-            <text x="380" y="122" class="lbl" font-size="30" font-weight="700" fill="#1a6b3c">API em</text>
-            <text x="380" y="160" class="lbl" font-size="30" font-weight="700" fill="#1a6b3c">Execução</text>
-        </g>
-
-        <g class="txt-sub">
-            <circle class="status-dot" cx="385" cy="183" r="5" fill="#1D9E75" />
-            <text x="397" y="187" class="lbl" font-size="12" font-weight="400" fill="#4caf80"
-                letter-spacing="0.04">sistema ativo e respondendo</text>
-        </g>
-
-        <g class="txt-badge">
-            <rect x="380" y="210" width="234" height="48" rx="12" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="1.5" />
-            <rect x="396" y="221" width="16" height="20" rx="2" fill="none" stroke="#1D9E75" stroke-width="1.8" />
-            <line x1="401" y1="227" x2="407" y2="227" stroke="#1D9E75" stroke-width="1.4" stroke-linecap="round" />
-            <line x1="401" y1="231" x2="407" y2="231" stroke="#1D9E75" stroke-width="1.4" stroke-linecap="round" />
-            <line x1="401" y1="235" x2="405" y2="235" stroke="#1D9E75" stroke-width="1.4" stroke-linecap="round" />
-            <text x="420" y="228" class="lbl" font-size="11" font-weight="700" fill="#0f6e56"
-                letter-spacing="0.07">DOCUMENTAÇÃO</text>
-            <rect class="badge-pill" x="420" y="237" width="68" height="18" rx="9" fill="#0F6E56" />
-            <text x="454" y="249" class="lbl" font-size="11" font-weight="500" fill="#fff" text-anchor="middle">Em
-                breve</text>
-        </g>
-
-    </svg>
+    <header class="api-header">
+        <div class="api-brand">
+            <img
+                class="api-logo"
+                src="https://raw.githubusercontent.com/foxtec198/tmhub/main/public/brands/main_brand_white.svg"
+                alt="TM Hub — Painel Executivo"
+            >
+            <div>
+                <strong>TM Hub API</strong>
+                <span>Documentação interativa OpenAPI</span>
+            </div>
+        </div>
+        <div class="api-status">API em execução</div>
+    </header>
+    <div class="api-search">
+        <label for="api-operation-search">Pesquisa global</label>
+        <div class="api-search-field">
+            <span aria-hidden="true">⌕</span>
+            <input
+                id="api-operation-search"
+                type="search"
+                placeholder="Buscar por método, endpoint, tag ou categoria"
+                autocomplete="off"
+            >
+        </div>
+    </div>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js" crossorigin></script>
+    <script>
+        window.onload = () => {
+            window.ui = SwaggerUIBundle({
+                url: "/openapi.json",
+                dom_id: "#swagger-ui",
+                deepLinking: true,
+                displayRequestDuration: true,
+                filter: false,
+                persistAuthorization: true,
+                tryItOutEnabled: false,
+                docExpansion: "list",
+                defaultModelsExpandDepth: 1,
+                validatorUrl: null
+            });
+
+            const search = document.getElementById("api-operation-search");
+            const normalize = (value) => value
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase()
+                .trim();
+            const applySearch = () => {
+                const query = normalize(search.value);
+                document.querySelectorAll(".opblock-tag-section").forEach((section) => {
+                    const tag = section.querySelector(".opblock-tag");
+                    const tagText = normalize(tag?.textContent || "");
+                    const tagMatches = !query || tagText.includes(query);
+                    let hasVisibleOperation = false;
+
+                    section.querySelectorAll(".opblock").forEach((operation) => {
+                        const operationMatches = tagMatches
+                            || normalize(operation.textContent || "").includes(query);
+                        operation.style.display = operationMatches ? "" : "none";
+                        hasVisibleOperation ||= operationMatches;
+                    });
+                    section.style.display = hasVisibleOperation || tagMatches ? "" : "none";
+                });
+            };
+            search.addEventListener("input", applySearch);
+            const keepSearchApplied = new MutationObserver(applySearch);
+            keepSearchApplied.observe(document.getElementById("swagger-ui"), {
+                childList: true,
+                subtree: true
+            });
+        };
+    </script>
 </body>
-
 </html>
