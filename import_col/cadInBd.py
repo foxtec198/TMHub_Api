@@ -18,9 +18,6 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 
-from cols import cols
-
-
 load_dotenv()
 
 
@@ -104,7 +101,7 @@ def create_cost_centers(connection, employees):
             "id": center_id,
             "local": item.get("centro_custo"),
             "dpto": item.get("departamento_codigo") or 0,
-            "cidade_id": item.get("cidade_id") or 0,
+            "cidade_id": item.get("cidade_id") or None,
         }
 
     created = updated = 0
@@ -124,11 +121,33 @@ def create_cost_centers(connection, employees):
     return created, updated
 
 
-def create_employees(connection, employees):
+def ensure_positions(connection, employees):
     positions = {
-        row.nome: row.id
-        for row in connection.execute(text("SELECT nome, id FROM cargos"))
+        normalize_name(row["nome"]): row["id"]
+        for row in connection.execute(text("SELECT nome, id FROM cargos")).mappings()
+        if normalize_name(row["nome"])
     }
+    created = 0
+    for item in employees:
+        cargo_name = str(item.get("cargo") or "").strip().upper()
+        cargo_key = normalize_name(cargo_name)
+        if not cargo_key or cargo_key in positions:
+            continue
+        cargo_id = connection.execute(
+            text(
+                "INSERT INTO cargos (nome, multa, active) "
+                "VALUES (:nome, NULL, TRUE) RETURNING id"
+            ),
+            {"nome": cargo_name},
+        ).scalar_one()
+        positions[cargo_key] = cargo_id
+        created += 1
+    return positions, created
+
+
+def create_employees(connection, employees, positions=None, progress_callback=None):
+    if positions is None:
+        positions, _ = ensure_positions(connection, employees)
     statement = text("""
         INSERT INTO colaboradores (
             id, matricula, nome, centro_id, data_admissao,
@@ -154,7 +173,7 @@ def create_employees(connection, employees):
     """)
 
     created = updated = ignored = 0
-    for item in tqdm(employees, desc="Sincronizando colaboradores"):
+    for processed, item in enumerate(tqdm(employees, desc="Sincronizando colaboradores"), start=1):
         name = sub(r"[\d'\".,]", "", str(item.get("nome") or "")).strip()
         result = connection.execute(
             statement,
@@ -164,7 +183,7 @@ def create_employees(connection, employees):
                 "centro_id": item.get("centro_custo_num"),
                 "admissao": item["_admissao"],
                 "situacao": item.get("situacao"),
-                "cargo_id": positions.get(item.get("cargo"), 0),
+                "cargo_id": positions.get(normalize_name(item.get("cargo"))),
                 "carga_horaria": parse_decimal(item.get("hor")),
                 "salario": parse_decimal(item.get("salario")),
                 "cpf": item.get("cpf"),
@@ -176,6 +195,8 @@ def create_employees(connection, employees):
             created += 1
         else:
             updated += 1
+        if progress_callback:
+            progress_callback(processed)
     return created, updated, ignored
 
 
@@ -234,7 +255,12 @@ def main():
     if not database_uri:
         raise RuntimeError("DB_URI nao configurada")
 
-    employees, invalid, duplicates = latest_employees(cols["empregados"])
+    try:
+        from import_col.cols import _load_cols
+    except ModuleNotFoundError:
+        from cols import _load_cols
+
+    employees, invalid, duplicates = latest_employees(_load_cols()["empregados"])
     print(
         f"Carga: {len(employees)} matriculas validas, "
         f"{duplicates} duplicidades e {len(invalid)} registros invalidos."
@@ -249,7 +275,9 @@ def main():
             created, updated = create_cost_centers(connection, employees)
             print(f"Centros de custo: {created} criados, {updated} atualizados.")
 
-        created, updated, ignored = create_employees(connection, employees)
+        positions, created_positions = ensure_positions(connection, employees)
+        print(f"Cargos: {created_positions} criados.")
+        created, updated, ignored = create_employees(connection, employees, positions)
         print(
             f"Colaboradores: {created} criados, {updated} atualizados e "
             f"{ignored} ignorados por possuirem admissao mais recente no banco."
