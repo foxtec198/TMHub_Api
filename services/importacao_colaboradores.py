@@ -1,4 +1,7 @@
 import json
+import shutil
+import tempfile
+from pathlib import Path
 from threading import Lock, Thread
 from time import time
 from uuid import uuid4
@@ -19,7 +22,9 @@ from utils.safe_route import safe_route
 
 
 MAX_JSON_SIZE = 60 * 1024 * 1024
+MAX_CHUNK_SIZE = 768 * 1024
 JOB_TTL_SECONDS = 60 * 60
+UPLOAD_ROOT = Path(tempfile.gettempdir()) / "tmhub-importacao-colaboradores"
 _jobs = {}
 _jobs_lock = Lock()
 
@@ -46,6 +51,35 @@ def _cleanup_jobs():
         ]
         for job_id in expired:
             _jobs.pop(job_id, None)
+            shutil.rmtree(UPLOAD_ROOT / job_id, ignore_errors=True)
+
+
+def _create_processing_job(employees, invalid, duplicates, job_id=None):
+    job_id = job_id or uuid4().hex
+    now = time()
+    with _jobs_lock:
+        current = _jobs.get(job_id, {})
+        _jobs[job_id] = {
+            **current,
+            "id": job_id,
+            "status": "queued",
+            "phase": "preparando",
+            "total": len(employees),
+            "processados": 0,
+            "percentual": 0,
+            "registros_invalidos": len(invalid),
+            "duplicidades": duplicates,
+            "created_at": current.get("created_at", now),
+            "updated_at": now,
+        }
+    app = current_app._get_current_object()
+    Thread(
+        target=_run_import,
+        args=(app, job_id, employees, invalid, duplicates),
+        daemon=True,
+        name=f"importacao-colaboradores-{job_id[:8]}",
+    ).start()
+    return _job_snapshot(job_id)
 
 
 def _run_import(app, job_id, employees, invalid, duplicates):
@@ -124,30 +158,112 @@ class CollaboratorImportService:
             return jsonify("O JSON não contém colaboradores válidos."), 400
 
         _cleanup_jobs()
+        return jsonify(_create_processing_job(employees, invalid, duplicates)), 202
+
+    @safe_route
+    def start_upload(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar colaboradores."), 403
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "")
+        size = int(data.get("size") or 0)
+        chunks = int(data.get("chunks") or 0)
+        if not filename.lower().endswith(".json"):
+            return jsonify("Envie o relatório no formato .json."), 400
+        if size <= 0 or size > MAX_JSON_SIZE:
+            return jsonify("O arquivo JSON deve ter no máximo 60 MB."), 413
+        if chunks <= 0:
+            return jsonify("Quantidade de partes inválida."), 400
+
+        _cleanup_jobs()
         job_id = uuid4().hex
         now = time()
+        (UPLOAD_ROOT / job_id).mkdir(parents=True, exist_ok=False)
         with _jobs_lock:
             _jobs[job_id] = {
                 "id": job_id,
-                "status": "queued",
-                "phase": "preparando",
-                "total": len(employees),
-                "processados": 0,
-                "percentual": 0,
-                "registros_invalidos": len(invalid),
-                "duplicidades": duplicates,
+                "status": "uploading",
+                "phase": "upload",
+                "filename": filename,
+                "file_size": size,
+                "chunks": chunks,
+                "chunks_recebidos": [],
+                "bytes_recebidos": 0,
+                "percentual_upload": 0,
                 "created_at": now,
                 "updated_at": now,
             }
+        return jsonify(_job_snapshot(job_id)), 201
 
-        app = current_app._get_current_object()
-        Thread(
-            target=_run_import,
-            args=(app, job_id, employees, invalid, duplicates),
-            daemon=True,
-            name=f"importacao-colaboradores-{job_id[:8]}",
-        ).start()
-        return jsonify(_job_snapshot(job_id)), 202
+    @safe_route
+    def upload_chunk(self, job_id, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar colaboradores."), 403
+        job = _job_snapshot(job_id)
+        if not job or job.get("status") != "uploading":
+            return jsonify("Envio não encontrado ou já finalizado."), 404
+
+        uploaded = request.files.get("chunk")
+        try:
+            index = int(request.form.get("index", -1))
+        except (TypeError, ValueError):
+            index = -1
+        if not uploaded or index < 0 or index >= job["chunks"]:
+            return jsonify("Parte do arquivo inválida."), 400
+
+        content = uploaded.read(MAX_CHUNK_SIZE + 1)
+        if len(content) > MAX_CHUNK_SIZE:
+            return jsonify("Parte do arquivo excede o limite permitido."), 413
+
+        part_path = UPLOAD_ROOT / job_id / f"{index:06d}.part"
+        part_path.write_bytes(content)
+        with _jobs_lock:
+            current = _jobs[job_id]
+            received = set(current["chunks_recebidos"])
+            received.add(index)
+            current["chunks_recebidos"] = sorted(received)
+            current["bytes_recebidos"] = sum(
+                path.stat().st_size for path in (UPLOAD_ROOT / job_id).glob("*.part")
+            )
+            current["percentual_upload"] = round(
+                min(100, current["bytes_recebidos"] / current["file_size"] * 100), 2
+            )
+            current["updated_at"] = time()
+        return jsonify(_job_snapshot(job_id)), 200
+
+    @safe_route
+    def complete_upload(self, job_id, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar colaboradores."), 403
+        job = _job_snapshot(job_id)
+        if not job or job.get("status") != "uploading":
+            return jsonify("Envio não encontrado ou já finalizado."), 404
+        if len(job["chunks_recebidos"]) != job["chunks"]:
+            return jsonify("Ainda existem partes do arquivo pendentes."), 409
+
+        upload_dir = UPLOAD_ROOT / job_id
+        assembled_path = upload_dir / "arquivo.json"
+        try:
+            with assembled_path.open("wb") as assembled:
+                for index in range(job["chunks"]):
+                    assembled.write((upload_dir / f"{index:06d}.part").read_bytes())
+            if assembled_path.stat().st_size != job["file_size"]:
+                return jsonify("O arquivo recebido está incompleto."), 409
+            with assembled_path.open("r", encoding="utf-8-sig") as stream:
+                payload = json.load(stream)
+            employees, invalid, duplicates = latest_employees(
+                prepare_uploaded_json(payload)
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            return jsonify(f"Não foi possível ler o JSON: {error}"), 400
+        finally:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        if not employees:
+            return jsonify("O JSON não contém colaboradores válidos."), 400
+
+        return jsonify(
+            _create_processing_job(employees, invalid, duplicates, job_id=job_id)
+        ), 202
 
     @safe_route
     def read(self, job_id, token_data):
