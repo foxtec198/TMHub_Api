@@ -29,7 +29,10 @@ app.before_request(enforce_request_permission)
 
 for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp]) # Carrega os BPS das Rotas
 db.init_app(app)  # Inicia o banco de dados
-with app.app_context(): db.create_all()  # Cria as tabelas
+with app.app_context():
+    db.create_all()  # Cria as tabelas
+    from services.noticias import seed_default_news
+    seed_default_news()
 
 @app.route("/")
 @app.route("/docs")

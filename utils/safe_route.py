@@ -43,6 +43,8 @@ def _data_channel(path, method):
         return "pcd"
     if path.startswith("/dash/ponto-48h"):
         return "ponto48"
+    if path.startswith("/updates/noticias"):
+        return "configuracoes"
     if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/supervisores", "/funcionarios"}:
         return "configuracoes"
     return None
