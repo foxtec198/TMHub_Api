@@ -1,3 +1,107 @@
  * Restarting with stat
  * Debugger is active!
  * Debugger PIN: 124-694-771
+ * Detected change in 'C:\\Users\\Guilherme\\Documents\\api_tmhub\\services\\funcionarios.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 124-694-771
+ * Detected change in 'C:\\Users\\Guilherme\\Documents\\api_tmhub\\models\\supervisores.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 124-694-771
+ * Detected change in 'C:\\Users\\Guilherme\\Documents\\api_tmhub\\utils\\permissions.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 124-694-771
+ * Detected change in 'C:\\Users\\Guilherme\\Documents\\api_tmhub\\services\\estrutura.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 124-694-771
+Traceback (most recent call last):
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+    ^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask\app.py", line 1514, in wsgi_app
+    response = self.handle_exception(e)
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask_cors\extension.py", line 206, in wrapped_function
+    return cors_after_request(app_any.make_response(f(*args, **kwargs)))
+                                                    ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask_cors\extension.py", line 206, in wrapped_function
+    return cors_after_request(app_any.make_response(f(*args, **kwargs)))
+                                                    ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\Guilherme\Documents\api_tmhub\routes\supervisores.py", line 10, in root
+    case "GET": return service.read()
+                       ~~~~~~~~~~~~^^
+  File "C:\Users\Guilherme\Documents\api_tmhub\services\supervisores.py", line 23, in read
+    sups = query.order_by(Supervisors.nome).all()
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\orm\query.py", line 2711, in all
+    return self._iter().all()  # type: ignore
+           ~~~~~~~~~~^^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\orm\query.py", line 2864, in _iter
+    result: Union[ScalarResult[_T], Result[_T]] = self.session.execute(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\orm\session.py", line 2373, in execute
+    return self._execute_internal(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\orm\session.py", line 2271, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\orm\context.py", line 306, in orm_execute_statement
+    result = conn.execute(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1421, in execute
+    return meth(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\sql\elements.py", line 526, in _execute_on_connection
+    return connection._execute_clauseelement(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1643, in _execute_clauseelement
+    ret = self._execute_context(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+    
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+    ^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+    ^
+  File "C:\Users\Guilherme\Documents\api_tmhub\venv\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+[SQL: SELECT supervisores.id AS supervisores_id, supervisores.nome AS supervisores_nome, supervisores.colaborador_id AS supervisores_colaborador_id 
+FROM supervisores ORDER BY supervisores.nome]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
