@@ -14,6 +14,11 @@ class Employees(BaseModel):
     cargo = db.Column(db.Integer)
     carga_horaria  =  db.Column(db.Integer)
 
+    # Controle de PCD (Pessoa com Deficiência)
+    pcd = db.Column(db.Boolean, nullable=False, default=False)
+    type_pcd = db.Column(db.String)
+    obs_pcd = db.Column(db.String)
+
     centro_id = db.Column(
         db.Integer,
         db.ForeignKey(
