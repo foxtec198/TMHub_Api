@@ -17,19 +17,45 @@ def _response_status(result):
     return getattr(result, "status_code", 200)
 
 
-def _should_emit_data_change(path):
-    # The import endpoint emits only after the background transaction finishes.
-    # Uploading each chunk must not refresh every connected screen.
-    return not path.startswith("/importacao-colaboradores")
+def _data_channel(path, method):
+    """Map mutations to the screen domain that owns the changed data."""
+    if path == "/repo" or path.startswith("/repo/request"):
+        return "reposicoes.requisicoes"
+    if path.startswith("/repo/history") and method in {"PATCH", "DELETE"}:
+        return "reposicoes.historico"
+    if path.startswith("/reservas"):
+        return "reposicoes.reservas"
+    if path.startswith(("/estoque/produtos", "/estoque/categorias")):
+        return "estoque.produtos"
+    if path.startswith("/estoque/movimentos"):
+        return "estoque.movimentos"
+    if path.startswith("/admissao/vagas"):
+        return "admissao"
+    if path == "/controle-faltas":
+        return "controle_faltas"
+    if path.startswith("/glosas"):
+        return "glosas"
+    if path.startswith("/projetos"):
+        return "projetos"
+    if path == "/estrutura":
+        return "estrutura"
+    if path.startswith("/pcd"):
+        return "pcd"
+    if path.startswith("/dash/ponto-48h"):
+        return "ponto48"
+    if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/supervisores", "/funcionarios"}:
+        return "configuracoes"
+    return None
 
 
-def _emit_data_change(token_data):
+def _emit_data_change(token_data, channel):
     try:
         socketio.emit(
             "data_changed",
             {
                 "path": rq.path,
                 "method": rq.method,
+                "channel": channel,
                 "resource": rq.path.strip("/").split("/", 1)[0] or "root",
                 "source_socket": rq.headers.get("X-TMHub-Socket-Id"),
                 "user_id": token_data.get("id"),
@@ -54,12 +80,13 @@ def safe_route(func):
                 kwargs["token_data"] = token_data
 
             result = func(*args, **kwargs)
+            channel = _data_channel(rq.path, rq.method)
             if (
                 rq.method in MUTATION_METHODS
                 and _response_status(result) < 400
-                and _should_emit_data_change(rq.path)
+                and channel
             ):
-                _emit_data_change(token_data)
+                _emit_data_change(token_data, channel)
             return result
         except ExpiredSignatureError:
             return jsonify("Token de acesso expirado"), 401

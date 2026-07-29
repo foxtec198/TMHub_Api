@@ -62,6 +62,7 @@ def _emit_import_outcome(job_id, severity, summary, detail, broadcast_change=Fal
             socketio.emit(
                 "data_changed",
                 {
+                    "channel": "colaboradores",
                     "resource": "colaboradores",
                     "action": "import_completed",
                     "user_id": job.get("user_id") if job else None,
