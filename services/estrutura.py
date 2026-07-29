@@ -1,10 +1,15 @@
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 
 from models.centros_de_custo import CostCenters
 from models.estrutura import StructureAsset, StructureLocation
 from models.supervisores import Supervisors
 from utils.db import db
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from utils.filial_scope import (
+    apply_cost_center_scope,
+    can_access_cost_center,
+    can_access_supervisor,
+    is_admin,
+)
 from utils.safe_route import safe_route
 
 
@@ -53,6 +58,7 @@ class StructureService:
             departments.setdefault(department, []).append({
                 "id": center.id,
                 "contrato": center.local,
+                "supervisor_id": center.supervisor_id,
                 "supervisor": supervisors.get(center.supervisor_id) or "SEM SUPERVISOR",
                 "locais": locations_by_center.get(center.id, []),
                 "ativos": assets_by_center.get(center.id, []),
@@ -61,6 +67,71 @@ class StructureService:
             {"departamento": department, "contratos": contracts}
             for department, contracts in departments.items()
         ])
+
+    @safe_route
+    def read_supervisors(self, token_data):
+        query = Supervisors.query
+        if not is_admin(token_data):
+            scoped_center_ids = (
+                apply_cost_center_scope(
+                    db.session.query(CostCenters.id),
+                    CostCenters.id,
+                    token_data,
+                )
+                .subquery()
+            )
+            query = (
+                query
+                .join(CostCenters, CostCenters.supervisor_id == Supervisors.id)
+                .filter(CostCenters.id.in_(db.session.query(scoped_center_ids.c.id)))
+                .distinct()
+            )
+        supervisors = query.order_by(Supervisors.nome).all()
+        return jsonify([
+            {"id": supervisor.id, "nome": supervisor.nome}
+            for supervisor in supervisors
+        ])
+
+    @safe_route
+    def update_contract_supervisor(self, center_id, token_data):
+        center = db.session.get(CostCenters, center_id)
+        if not center:
+            return jsonify("Contrato não encontrado."), 404
+        if not can_access_cost_center(token_data, center.id):
+            return jsonify("Você não possui acesso à filial deste contrato."), 403
+
+        body = request.get_json(silent=True) or {}
+        try:
+            supervisor_id = int(body.get("supervisor_id"))
+        except (TypeError, ValueError):
+            return jsonify("Informe um supervisor válido."), 400
+
+        supervisor = db.session.get(Supervisors, supervisor_id)
+        if not supervisor:
+            return jsonify("Supervisor não encontrado."), 404
+        if not can_access_supervisor(token_data, supervisor.id):
+            return jsonify("Você não possui acesso à filial deste supervisor."), 403
+
+        previous_supervisor_id = center.supervisor_id
+        center.supervisor_id = supervisor.id
+        db.session.commit()
+        current_app.logger.info(
+            "Supervisor do contrato alterado",
+            extra={
+                "centro_custo_id": center.id,
+                "supervisor_anterior_id": previous_supervisor_id,
+                "supervisor_novo_id": supervisor.id,
+                "alterado_por_usuario_id": token_data.get("id"),
+            },
+        )
+        return jsonify({
+            "message": "Supervisor alterado com sucesso.",
+            "contrato": {
+                "id": center.id,
+                "supervisor_id": supervisor.id,
+                "supervisor": supervisor.nome,
+            },
+        })
 
     @safe_route
     def create(self, token_data):

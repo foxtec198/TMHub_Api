@@ -37,7 +37,7 @@ def _data_channel(path, method):
         return "glosas"
     if path.startswith("/projetos"):
         return "projetos"
-    if path == "/estrutura":
+    if path.startswith("/estrutura"):
         return "estrutura"
     if path.startswith("/pcd"):
         return "pcd"
