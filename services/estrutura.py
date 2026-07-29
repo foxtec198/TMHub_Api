@@ -126,3 +126,25 @@ class StructureService:
         db.session.add(item)
         db.session.commit()
         return jsonify({"message": "Cadastro realizado com sucesso.", "item": item.to_dict()}), 201
+
+    @safe_route
+    def delete(self, token_data):
+        body = request.get_json(silent=True) or {}
+        kind = _text(body.get("tipo")).lower()
+        try:
+            item_id = int(body.get("id"))
+        except (TypeError, ValueError):
+            return jsonify("Registro inválido."), 400
+
+        model = {"local": StructureLocation, "ativo": StructureAsset}.get(kind)
+        if not model:
+            return jsonify("Escolha entre local ou ativo."), 400
+        item = db.session.get(model, item_id)
+        if not item:
+            return jsonify("Registro não encontrado."), 404
+        if not can_access_cost_center(token_data, item.centro_custo_id):
+            return jsonify("Você não possui acesso à filial deste contrato."), 403
+
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify("Registro excluído com sucesso."), 200
