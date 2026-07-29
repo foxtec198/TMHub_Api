@@ -105,3 +105,7 @@ server closed the connection unexpectedly
 [SQL: SELECT supervisores.id AS supervisores_id, supervisores.nome AS supervisores_nome, supervisores.colaborador_id AS supervisores_colaborador_id 
 FROM supervisores ORDER BY supervisores.nome]
 (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ * Detected change in 'C:\\Users\\Guilherme\\Documents\\api_tmhub\\app.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 124-694-771
