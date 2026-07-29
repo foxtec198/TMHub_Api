@@ -1,5 +1,5 @@
 from gevent import monkey; monkey.patch_all() # Importante manter em primeira instancia
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 from os import getenv
@@ -7,6 +7,7 @@ from utils.blueprints import blueprints
 from utils.socket import socketio
 from utils.db import db
 from utils.permissions import enforce_request_permission
+from utils.openapi import build_openapi_spec
 load_dotenv()  # Carrega o dotenv
 
 # Variaveis de Instancia - SandBox()
@@ -31,7 +32,11 @@ db.init_app(app)  # Inicia o banco de dados
 with app.app_context(): db.create_all()  # Cria as tabelas
 
 @app.route("/")
+@app.route("/docs")
 def index(): return render_template("index.html")
+
+@app.get("/openapi.json")
+def openapi_spec(): return jsonify(build_openapi_spec(app))
 
 # Inicia o servidor
 if __name__ == "__main__": socketio.run(app, debug=DEBUG, port=PORT, host=HOST)
