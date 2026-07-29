@@ -4,7 +4,7 @@ from openpyxl import load_workbook
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees, db
-from models.filiais import Branch, filial_centros_custo
+from models.filiais import Branch, filial_departamentos
 from models.supervisores import Supervisors
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.safe_route import safe_route
@@ -21,10 +21,34 @@ TIPO_LABELS = {
 }
 
 
+def _filiais_by_departamento(departamentos):
+    """Mapeia código de departamento -> lista de nomes de filial cadastradas em
+    `filial_departamentos`. Um mesmo código pode pertencer a mais de uma filial (ex: Matriz
+    e Londrina usando o mesmo número) — nesse caso todas aparecem, para exibição em tag."""
+    departamentos = {d for d in departamentos if d is not None}
+    if not departamentos:
+        return {}
+
+    rows = (
+        db.session.query(filial_departamentos.c.departamento, Branch.nome)
+        .join(Branch, Branch.id == filial_departamentos.c.filial_id)
+        .filter(filial_departamentos.c.departamento.in_(departamentos))
+        .distinct()
+        .all()
+    )
+    result = {}
+    for departamento, filial_nome in rows:
+        result.setdefault(departamento, []).append(filial_nome)
+    for departamento, nomes in result.items():
+        nomes.sort(key=str)
+    return result
+
+
 class PcdService:
     @safe_route
     def read(self, token_data):
-        """Retorna os colaboradores PCD agrupados em Filial -> Departamento -> Supervisor."""
+        """Retorna a lista plana de colaboradores PCD (departamento, centro de custo e
+        supervisor), respeitando o mesmo escopo de acesso usado no Colab. por DPTO."""
         query = (
             db.session.query(
                 Employees.id,
@@ -35,6 +59,7 @@ class PcdService:
                 Employees.centro_id,
                 CostCenters.local.label("centro_local"),
                 CostCenters.departamento,
+                Supervisors.id.label("supervisor_id"),
                 Supervisors.nome.label("supervisor_nome"),
                 Cargos.nome.label("cargo"),
             )
@@ -48,40 +73,29 @@ class PcdService:
         query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         rows = query.all()
 
-        centro_ids = {r.centro_id for r in rows if r.centro_id}
-        filial_by_centro = {}
-        if centro_ids:
-            branch_rows = (
-                db.session.query(filial_centros_custo.c.centro_custo_id, Branch.nome)
-                .join(Branch, Branch.id == filial_centros_custo.c.filial_id)
-                .filter(filial_centros_custo.c.centro_custo_id.in_(centro_ids))
-                .all()
-            )
-            for centro_id, filial_nome in branch_rows:
-                # Um centro pode estar ligado a mais de uma filial; ficamos com a primeira.
-                filial_by_centro.setdefault(centro_id, filial_nome)
+        colaboradores = [{
+            "id": r.id,
+            "matricula": r.matricula,
+            "nome": r.nome,
+            "cargo": r.cargo,
+            "type_pcd": r.type_pcd,
+            "obs_pcd": r.obs_pcd,
+            "centro_id": r.centro_id,
+            "centro_custo": r.centro_local or "Sem centro de custo",
+            "departamento": r.departamento,
+            "supervisor_id": r.supervisor_id,
+            "supervisor": r.supervisor_nome or "Sem supervisor",
+        } for r in rows]
 
-        tree = {}
-        total = 0
-        for r in rows:
-            filial_nome = filial_by_centro.get(r.centro_id, "Sem filial")
-            departamento_nome = r.centro_local or "Sem departamento"
-            supervisor_nome = r.supervisor_nome or "Sem supervisor"
-            departamento = (
-                tree.setdefault(filial_nome, {})
-                .setdefault(departamento_nome, {"supervisor": supervisor_nome, "colaboradores": []})
-            )
-            departamento["colaboradores"].append({
-                "id": r.id,
-                "matricula": r.matricula,
-                "nome": r.nome,
-                "cargo": r.cargo,
-                "type_pcd": r.type_pcd,
-                "obs_pcd": r.obs_pcd,
-            })
-            total += 1
+        filiais_por_departamento = _filiais_by_departamento({r.departamento for r in rows})
 
-        return jsonify({"total": total, "filiais": tree}), 200
+        return jsonify({
+            "total": len(colaboradores),
+            "colaboradores": colaboradores,
+            "filiais_por_departamento": filiais_por_departamento,
+        }), 200
+
+        return jsonify({"total": len(colaboradores), "colaboradores": colaboradores}), 200
 
     @safe_route
     def update(self, token_data):
