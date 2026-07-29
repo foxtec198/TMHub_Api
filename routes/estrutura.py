@@ -14,3 +14,13 @@ def root():
     if request.method == "POST":
         return service.create()
     return service.delete()
+
+
+@structure_bp.get("/supervisores")
+def supervisors():
+    return service.read_supervisors()
+
+
+@structure_bp.patch("/contratos/<int:center_id>/supervisor")
+def update_contract_supervisor(center_id):
+    return service.update_contract_supervisor(center_id)
