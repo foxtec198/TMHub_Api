@@ -36,3 +36,15 @@ def request_email_code(): return service.request_email_code()
 
 @user_bp.post("/email/confirmar")
 def confirm_email(): return service.confirm_email()
+
+@user_bp.get("/pendencias")
+def pending_requirements(): return service.pending_requirements()
+
+@user_bp.patch("/onboarding/perfil")
+def complete_required_profile(): return service.complete_required_profile()
+
+@user_bp.post("/onboarding/senha")
+def change_required_password(): return service.change_required_password()
+
+@user_bp.post("/onboarding/senha-padrao/ignorar")
+def ignore_default_password(): return service.ignore_default_password()

@@ -1,39 +1,79 @@
-from flask import jsonify, request as rq
-from utils.safe_route import safe_route
-from utils.token import create_token
-from models.usuarios import Users, db
-from utils.check_field import check_field, check_password_hash
 from datetime import datetime as dt
+
+from flask import jsonify, request as rq
+
+from models.usuarios import Users, db
+from utils.check_field import check_field
+from utils.password_security import (
+    hash_password,
+    is_default_password,
+    is_strong_password,
+    verify_password,
+)
 from utils.permissions import serialize_permissions
+from utils.token import create_token
+from utils.user_requirements import auth_requirements, normalize_cpf, refresh_user_requirements
+
+
+def issue_user_token(user):
+    return create_token({
+        "id": user.id,
+        "perm": user.role,
+        "ver": int(user.token_version or 0),
+    })
+
 
 class AuthService:
     def login(self):
-        body = rq.get_json() # Obtem o JSON
-        username = body.get("username") # Obtem o user (Email ou CPF)
-        password = body.get("password") # Obtem a senha do usuário
-        
-        ok, erro = check_field(usuario=username, senha=password) # Confirma os dados (Se foram passados)
-        if not ok: return jsonify(erro), 400 # Retorna BAD REQUEST caso de erro
-        
-        if "@" in username: user = Users().query.filter_by(email=username).first() # Confirma se tem arroba no username
-        else: user = Users().query.filter_by(cpf=username).first() # Caso contrario busca por CPF
+        body = rq.get_json(silent=True) or {}
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
 
-        if not user: return jsonify("Usuário nao encontrado!"), 404 # Retorna NOT FOUND, 404
-        if not check_password_hash(password, user.hash): return jsonify("Senha incorreta!"), 400 # Confirma se a senha esta correta
-        token = create_token({"id": user.id, "perm": user.role}) # Cria o access_token
-        last_login = user.last_login # Salva o ultimo login registrado
-        user.last_login = dt.now() # Atualiza o ultimo login (Atual)
-        db.session.commit() # Salva os dados
+        ok, error = check_field(usuario=username, senha=password)
+        if not ok:
+            return jsonify(error), 400
+
+        if "@" in username:
+            user = Users.query.filter(db.func.lower(Users.email) == username.lower()).first()
+        else:
+            user = Users.query.filter_by(cpf=normalize_cpf(username)).first()
+        if not user:
+            return jsonify("Usuário não encontrado!"), 404
+
+        valid, legacy_hash, needs_rehash = verify_password(password, user.hash)
+        if not valid:
+            return jsonify("Senha incorreta!"), 400
+
+        hash_migrated = legacy_hash or needs_rehash
+        if hash_migrated:
+            user.hash = hash_password(password)
+
+        user.senha_padrao = is_default_password(password)
+        user.troca_senha_obrigatoria = not is_strong_password(password) and not user.senha_padrao
+        refresh_user_requirements(user)
+        requirements = auth_requirements(user, hash_needs_migration=False)
+        last_login = user.last_login
+        user.last_login = dt.now()
+        db.session.commit()
 
         return jsonify({
             "id": user.id,
-            "display_name": user.nome, 
-            "access_token": token, 
-            "role": user.role, 
+            "display_name": user.nome,
+            "access_token": issue_user_token(user),
+            "role": user.role,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "light",
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
-            "last_login": last_login
+            "last_login": last_login,
+            "primeiro_acesso": requirements["primeiro_acesso"],
+            "cpf_pendente": requirements["cpf_pendente"],
+            "foto_pendente": requirements["foto_pendente"],
+            "troca_senha_obrigatoria": requirements["troca_senha_obrigatoria"],
+            "senha_padrao": requirements["senha_padrao"],
+            "hash_precisa_migracao": False,
+            "hash_migrado": hash_migrated,
+            "pendencia_obrigatoria": requirements["pendencia_obrigatoria"],
+            "interacao_pendente": requirements["interacao_pendente"],
         }), 200

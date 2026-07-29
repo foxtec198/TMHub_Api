@@ -134,6 +134,7 @@ Copie `.env.example` para `.env` e configure o ambiente:
 
 ```env
 SECRET=troque-por-uma-chave-segura
+PASSWORD_PEPPER=gere-um-segredo-aleatorio-com-pelo-menos-32-caracteres
 DB_URI=postgresql://usuario:senha@localhost:5432/tmhub
 HOST=0.0.0.0
 PORT=8590
@@ -180,6 +181,11 @@ As rotas autenticadas recebem o JWT pelo cabeçalho:
 ```http
 Access-Token: <token>
 ```
+
+As senhas novas utilizam Argon2id com um pepper fornecido exclusivamente por
+`PASSWORD_PEPPER`. Mantenha o mesmo valor em todas as instâncias da API e nunca
+o grave no banco ou no repositório. A troca de senha incrementa a versão da
+sessão e invalida os JWTs emitidos anteriormente.
 
 A autorização combina:
 

@@ -14,10 +14,22 @@ from openpyxl import Workbook, load_workbook
 from models.filiais import Branch, filial_usuarios
 from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
+from utils.password_security import (
+    hash_password,
+    is_default_password,
+    is_strong_password,
+    verify_password,
+)
+from utils.token import create_token
+from utils.user_requirements import (
+    auth_requirements,
+    is_valid_cpf,
+    normalize_cpf,
+    refresh_user_requirements,
+    validate_profile_photo,
+)
 
-PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-PHOTO_PATTERN = re.compile(r"^data:image/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$")
 
 class UserServices:
     @staticmethod
@@ -26,7 +38,7 @@ class UserServices:
 
     @staticmethod
     def _normalize_cpf(value):
-        return re.sub(r"\D", "", str(value or ""))
+        return normalize_cpf(value)
 
     @safe_route
     def read(self, token_data):
@@ -213,20 +225,33 @@ class UserServices:
         ok, error = check_field(nome=nome, senha=password)
         if not ok:
             return None, error
-        if cpf and len(cpf) != 11:
-            return None, "O CPF deve conter 11 dígitos."
+        if cpf and not is_valid_cpf(cpf):
+            return None, "Informe um CPF válido."
         if email and not EMAIL_PATTERN.fullmatch(email):
             return None, "Informe um e-mail válido."
         if role not in {"SUPERVISOR", "GERENTE", "USER", "ADMIN"}:
             return None, "A role deve ser SUPERVISOR, GERENTE, USER ou ADMIN."
-        if not PASSWORD_PATTERN.fullmatch(password):
+        if not is_strong_password(password):
             return None, "A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."
         if cpf and Users.query.filter_by(cpf=cpf).first():
             return None, "CPF já cadastrado."
         if email and Users.query.filter_by(email=email).first():
             return None, "E-mail já cadastrado."
 
-        return Users(nome=nome, cpf=cpf, email=email, role=role, gerencia_faltas=bool(body.get("gerencia_faltas", False)), hash=sha256(password.encode()).hexdigest()), None
+        return Users(
+            nome=nome,
+            cpf=cpf,
+            email=email,
+            role=role,
+            gerencia_faltas=bool(body.get("gerencia_faltas", False)),
+            hash=hash_password(password),
+            primeiro_acesso=True,
+            cpf_pendente=not bool(cpf),
+            foto_pendente=True,
+            troca_senha_obrigatoria=False,
+            senha_padrao=is_default_password(password),
+            token_version=0,
+        ), None
 
     def _apply_user_changes(self, user, body):
         if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions")):
@@ -240,8 +265,8 @@ class UserServices:
 
         if "cpf" in body:
             cpf = self._normalize_cpf(body.get("cpf")) or None
-            if cpf and len(cpf) != 11:
-                return "O CPF deve conter 11 dígitos."
+            if cpf and not is_valid_cpf(cpf):
+                return "Informe um CPF válido."
             if cpf and Users.query.filter(Users.cpf == cpf, Users.id != user.id).first():
                 return "CPF já cadastrado."
             user.cpf = cpf
@@ -262,13 +287,18 @@ class UserServices:
 
         if body.get("password"):
             password = str(body["password"])
-            if not PASSWORD_PATTERN.fullmatch(password):
+            if not is_strong_password(password):
                 return "A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."
-            user.hash = sha256(password.encode()).hexdigest()
+            user.hash = hash_password(password)
+            user.senha_padrao = is_default_password(password)
+            user.troca_senha_obrigatoria = False
+            user.token_version = int(user.token_version or 0) + 1
+            user.senha_alterada_em = dt.now()
 
         if "gerencia_faltas" in body:
             user.gerencia_faltas = bool(body.get("gerencia_faltas"))
 
+        refresh_user_requirements(user)
         return None
 
     @staticmethod
@@ -344,7 +374,7 @@ class UserServices:
             user.nome = nome
 
         if foto is not None:
-            if foto and (len(foto) > 2_000_000 or not PHOTO_PATTERN.fullmatch(foto)):
+            if foto and not validate_profile_photo(foto):
                 return jsonify("A foto deve ser PNG, JPG ou WEBP e ter até 1,5 MB."), 400
             user.foto_perfil = foto or None
 
@@ -355,17 +385,26 @@ class UserServices:
             user.tema = tema
 
         if nova_senha is not None:
-            if sha256(str(senha_atual or "").encode()).hexdigest() != user.hash:
+            valid_password, _, _ = verify_password(str(senha_atual or ""), user.hash)
+            if not valid_password:
                 return jsonify("Senha atual incorreta."), 400
-            if not PASSWORD_PATTERN.fullmatch(nova_senha):
+            if not is_strong_password(nova_senha):
                 return jsonify("A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."), 400
-            user.hash = sha256(nova_senha.encode()).hexdigest()
+            user.hash = hash_password(nova_senha)
+            user.senha_padrao = is_default_password(nova_senha)
+            user.troca_senha_obrigatoria = False
+            user.token_version = int(user.token_version or 0) + 1
+            user.senha_alterada_em = dt.now()
 
         if not any(value is not None for value in (nome, foto, tema, nova_senha)):
             return jsonify("Nenhuma alteração informada."), 400
 
+        refresh_user_requirements(user)
         db.session.commit()
-        return jsonify(self._serialize(user))
+        response = self._serialize(user)
+        if nova_senha is not None:
+            response["access_token"] = create_token({"id": user.id, "perm": user.role, "ver": user.token_version})
+        return jsonify(response)
 
     @safe_route
     def request_email_code(self, token_data):
@@ -410,6 +449,86 @@ class UserServices:
         db.session.commit()
         return jsonify(self._serialize(user))
 
+    @safe_route
+    def pending_requirements(self, token_data):
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+        return jsonify({
+            "requirements": auth_requirements(user),
+            "cpf": user.cpf,
+            "foto_perfil": user.foto_perfil,
+        })
+
+    @safe_route
+    def complete_required_profile(self, token_data):
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+        body = rq.get_json(silent=True) or {}
+        cpf = normalize_cpf(body.get("cpf") if "cpf" in body else user.cpf)
+        photo = body.get("foto_perfil") if "foto_perfil" in body else user.foto_perfil
+        if not is_valid_cpf(cpf):
+            return jsonify("Informe um CPF válido."), 400
+        if Users.query.filter(Users.cpf == cpf, Users.id != user.id).first():
+            return jsonify("CPF já cadastrado para outro usuário."), 409
+        if not validate_profile_photo(photo):
+            return jsonify("A foto deve ser PNG, JPG ou WEBP e ter até 1,5 MB."), 400
+
+        user.cpf = cpf
+        user.foto_perfil = photo
+        refresh_user_requirements(user)
+        db.session.commit()
+        return jsonify({
+            "requirements": auth_requirements(user),
+            "cpf": user.cpf,
+            "foto_perfil": user.foto_perfil,
+        })
+
+    @safe_route
+    def change_required_password(self, token_data):
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+        requirements = auth_requirements(user)
+        if requirements["cpf_pendente"] or requirements["foto_pendente"]:
+            return jsonify("Conclua o cadastro de CPF e foto primeiro."), 409
+
+        new_password = str((rq.get_json(silent=True) or {}).get("nova_senha") or "")
+        if not is_strong_password(new_password):
+            return jsonify("A senha deve ter ao menos 8 caracteres, com maiúscula, minúscula, número e caractere especial."), 400
+        if is_default_password(new_password):
+            return jsonify("Escolha uma senha diferente da senha padrão."), 400
+        same_password, _, _ = verify_password(new_password, user.hash)
+        if same_password:
+            return jsonify("A nova senha deve ser diferente da senha atual."), 400
+
+        user.hash = hash_password(new_password)
+        user.troca_senha_obrigatoria = False
+        user.senha_padrao = False
+        user.token_version = int(user.token_version or 0) + 1
+        user.senha_alterada_em = dt.now()
+        db.session.commit()
+        token = create_token({"id": user.id, "perm": user.role, "ver": user.token_version})
+        return jsonify({
+            "access_token": token,
+            "requirements": auth_requirements(user),
+        })
+
+    @safe_route
+    def ignore_default_password(self, token_data):
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+        requirements = auth_requirements(user)
+        if requirements["cpf_pendente"] or requirements["foto_pendente"]:
+            return jsonify("Conclua o cadastro de CPF e foto primeiro."), 409
+        if not user.senha_padrao:
+            return jsonify({"requirements": requirements})
+        user.senha_padrao = False
+        db.session.commit()
+        return jsonify({"requirements": auth_requirements(user)})
+
     @staticmethod
     def _serialize(user):
         return {
@@ -422,6 +541,7 @@ class UserServices:
             "gerencia_faltas": bool(user.gerencia_faltas),
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
             "permissions": serialize_permissions(user),
+            "requirements": auth_requirements(user),
         }
 
     @safe_route

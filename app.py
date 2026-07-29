@@ -7,6 +7,7 @@ from utils.blueprints import blueprints
 from utils.socket import socketio
 from utils.db import db
 from utils.permissions import enforce_request_permission
+from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
 load_dotenv()  # Carrega o dotenv
 
@@ -25,6 +26,7 @@ CORS(app, allow_headers="*")  # Carrega os CORS security
 app.config["SECRET_KEY"] = getenv("SECRET")
 app.config["SQLALCHEMY_DATABASE_URI"] = getenv("DB_URI")
 
+app.before_request(enforce_auth_state)
 app.before_request(enforce_request_permission)
 
 for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp]) # Carrega os BPS das Rotas

@@ -19,6 +19,13 @@ class Users(BaseModel):
     email_pendente = db.Column(db.String)
     email_codigo_hash = db.Column(db.String)
     email_codigo_expira_em = db.Column(db.DateTime)
+    primeiro_acesso = db.Column(db.Boolean, nullable=False, default=True)
+    cpf_pendente = db.Column(db.Boolean, nullable=False, default=True)
+    foto_pendente = db.Column(db.Boolean, nullable=False, default=True)
+    troca_senha_obrigatoria = db.Column(db.Boolean, nullable=False, default=False)
+    senha_padrao = db.Column(db.Boolean, nullable=False, default=False)
+    token_version = db.Column(db.Integer, nullable=False, default=0)
+    senha_alterada_em = db.Column(db.DateTime)
     filiais = db.relationship("Branch", secondary="filial_usuarios", back_populates="usuarios")
     permissoes = db.relationship(
         "UserPermission",

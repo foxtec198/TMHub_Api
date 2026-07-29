@@ -93,6 +93,11 @@ def safe_route(func):
         except ExpiredSignatureError:
             return jsonify("Token de acesso expirado"), 401
         except Exception as error:
+            try:
+                from utils.db import db
+                db.session.rollback()
+            except Exception:
+                pass
             return jsonify("Erro com o servidor: " + str(error)), 500
 
     return wrapper
