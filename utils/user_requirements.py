@@ -48,17 +48,17 @@ def validate_profile_photo(value):
 
 def refresh_user_requirements(user):
     user.cpf_pendente = not is_valid_cpf(user.cpf)
-    user.foto_pendente = not validate_profile_photo(user.foto_perfil)
-    user.primeiro_acesso = bool(user.cpf_pendente or user.foto_pendente)
+    user.foto_pendente = False
+    user.primeiro_acesso = bool(user.cpf_pendente)
 
 
 def auth_requirements(user, hash_needs_migration=False):
     cpf_pending = bool(user.cpf_pendente)
-    photo_pending = bool(user.foto_pendente)
+    photo_pending = False
     password_required = bool(user.troca_senha_obrigatoria)
     default_password = bool(user.senha_padrao)
-    first_access = bool(user.primeiro_acesso or cpf_pending or photo_pending)
-    mandatory = cpf_pending or photo_pending or password_required
+    first_access = cpf_pending
+    mandatory = cpf_pending or password_required
     return {
         "primeiro_acesso": first_access,
         "cpf_pendente": cpf_pending,

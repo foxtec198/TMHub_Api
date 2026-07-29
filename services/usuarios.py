@@ -247,7 +247,7 @@ class UserServices:
             hash=hash_password(password),
             primeiro_acesso=True,
             cpf_pendente=not bool(cpf),
-            foto_pendente=True,
+            foto_pendente=False,
             troca_senha_obrigatoria=False,
             senha_padrao=is_default_password(password),
             token_version=0,
@@ -467,16 +467,17 @@ class UserServices:
             return jsonify("Usuário não encontrado."), 404
         body = rq.get_json(silent=True) or {}
         cpf = normalize_cpf(body.get("cpf") if "cpf" in body else user.cpf)
-        photo = body.get("foto_perfil") if "foto_perfil" in body else user.foto_perfil
+        photo = body.get("foto_perfil") if "foto_perfil" in body else None
         if not is_valid_cpf(cpf):
             return jsonify("Informe um CPF válido."), 400
         if Users.query.filter(Users.cpf == cpf, Users.id != user.id).first():
             return jsonify("CPF já cadastrado para outro usuário."), 409
-        if not validate_profile_photo(photo):
+        if photo and not validate_profile_photo(photo):
             return jsonify("A foto deve ser PNG, JPG ou WEBP e ter até 1,5 MB."), 400
 
         user.cpf = cpf
-        user.foto_perfil = photo
+        if photo:
+            user.foto_perfil = photo
         refresh_user_requirements(user)
         db.session.commit()
         return jsonify({
@@ -491,8 +492,8 @@ class UserServices:
         if not user:
             return jsonify("Usuário não encontrado."), 404
         requirements = auth_requirements(user)
-        if requirements["cpf_pendente"] or requirements["foto_pendente"]:
-            return jsonify("Conclua o cadastro de CPF e foto primeiro."), 409
+        if requirements["cpf_pendente"]:
+            return jsonify("Conclua o cadastro do CPF primeiro."), 409
 
         new_password = str((rq.get_json(silent=True) or {}).get("nova_senha") or "")
         if not is_strong_password(new_password):
@@ -521,8 +522,8 @@ class UserServices:
         if not user:
             return jsonify("Usuário não encontrado."), 404
         requirements = auth_requirements(user)
-        if requirements["cpf_pendente"] or requirements["foto_pendente"]:
-            return jsonify("Conclua o cadastro de CPF e foto primeiro."), 409
+        if requirements["cpf_pendente"]:
+            return jsonify("Conclua o cadastro do CPF primeiro."), 409
         if not user.senha_padrao:
             return jsonify({"requirements": requirements})
         user.senha_padrao = False
