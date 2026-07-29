@@ -308,6 +308,23 @@ class UserServices:
         return jsonify(self._serialize(user))
 
     @safe_route
+    def support_admins(self, token_data):
+        admins = (
+            Users.query
+            .filter(db.func.upper(Users.role) == "ADMIN")
+            .order_by(Users.nome)
+            .all()
+        )
+        return jsonify([
+            {
+                "id": admin.id,
+                "nome": admin.nome,
+                "foto_perfil": admin.foto_perfil,
+            }
+            for admin in admins
+        ]), 200
+
+    @safe_route
     def update_profile(self, token_data):
         user = db.session.get(Users, token_data.get("id"))
         if not user:
