@@ -21,7 +21,7 @@ PERMISSION_CATALOG = [
     {"key": "estoque_codigos", "label": "Códigos de barras", "group": "Estoque", "actions": ["view", "create"]},
     {"key": "estoque_movimentos", "label": "Movimentações", "group": "Estoque", "actions": ["view", "create", "edit"]},
     {"key": "projetos", "label": "Meus Projetos", "group": "Outros", "actions": ["view", "create", "edit"]},
-    {"key": "estrutura", "label": "Estrutura", "group": "Operação", "actions": ["view", "create", "edit"]},
+    {"key": "indicador_pcd", "label": "Indicador PCD", "group": "Indicadores", "actions": ["view", "edit"]},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
@@ -140,11 +140,12 @@ def request_permission(path, method):
         ("/estoque/movimentos", "estoque_movimentos", {"GET": "view", "POST": "create", "DELETE": "edit"}),
         ("/admissao/vagas/dashboard", "dashboard_admissoes", {"GET": "view"}),
         ("/admissao/vagas", "admissoes", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
+        ("/pcd/importar", "indicador_pcd", {"POST": "edit"}),
+        ("/pcd", "indicador_pcd", {"GET": "view", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/ponto-48h", "dashboard_ponto48", {"GET": "view", "POST": "create", "DELETE": "edit"}),
         ("/dash/reposicoes", "dashboard_reposicoes", {"POST": "view"}),
         ("/dash/colaboradores-departamento", "dashboard_colaboradores", {"POST": "view"}),
         ("/projetos", "projetos", {"GET": "view", "POST": "create", "PATCH": "edit", "PUT": "edit", "DELETE": "edit"}),
-        ("/estrutura", "estrutura", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
     ]
     for prefix, screen, actions in rules:
         if path == prefix or path.startswith(f"{prefix}/"):
