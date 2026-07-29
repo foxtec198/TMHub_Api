@@ -1,5 +1,7 @@
 <div align="center">
-  <h1>TM Hub API</h1>
+  <img src="./public/brands/main_brand.svg" alt="TM Hub" width="260">
+  <h1>TM Hub | API</h1>
+
 
   <p>
     API, regras de negócio e eventos em tempo real do Painel Executivo TM Hub.
