@@ -38,3 +38,4 @@ storage/
 .idea/
 .vscode/
 __pycache__/
+*.log
