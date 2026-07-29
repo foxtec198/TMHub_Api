@@ -22,6 +22,9 @@ def download_import_template(): return service.download_template()
 @user_bp.get("/perfil")
 def profile(): return service.profile()
 
+@user_bp.get("/suporte")
+def support_admins(): return service.support_admins()
+
 @user_bp.patch("/perfil")
 def update_profile(): return service.update_profile()
 
