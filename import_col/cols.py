@@ -125,10 +125,8 @@ def _load_cols(path: str = FUNCIONARIOS_JSON_PATH) -> dict:
     return {"empregados": empregados}
 
 
-cols = _load_cols()
-
-
 if __name__ == "__main__":
+    cols = _load_cols()
     sem_cidade = {
         e["departamento_codigo"] for e in cols["empregados"] if e["cidade_id"] is None
     }

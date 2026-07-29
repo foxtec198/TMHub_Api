@@ -22,6 +22,7 @@ from routes.filiais import branch_bp
 from routes.controle_faltas import absence_control_bp
 from routes.glosas import disallowance_bp, disallowance_files_bp
 from routes.estrutura import structure_bp
+from routes.importacao_colaboradores import collaborator_import_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -43,6 +44,7 @@ blueprints = {
     disallowance_bp: "/glosas",
     disallowance_files_bp: "/arquivos/glosas",
     structure_bp: "/estrutura",
+    collaborator_import_bp: "/importacao-colaboradores",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
