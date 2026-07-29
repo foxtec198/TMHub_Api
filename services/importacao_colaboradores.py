@@ -19,6 +19,7 @@ from import_col.json_loader import prepare_uploaded_json
 from utils.db import db
 from utils.filial_scope import is_admin
 from utils.safe_route import safe_route
+from utils.socket import socketio
 
 
 MAX_JSON_SIZE = 60 * 1024 * 1024
@@ -54,7 +55,36 @@ def _cleanup_jobs():
             shutil.rmtree(UPLOAD_ROOT / job_id, ignore_errors=True)
 
 
-def _create_processing_job(employees, invalid, duplicates, job_id=None):
+def _emit_import_outcome(job_id, severity, summary, detail, broadcast_change=False):
+    job = _job_snapshot(job_id)
+    try:
+        if broadcast_change:
+            socketio.emit(
+                "data_changed",
+                {
+                    "resource": "colaboradores",
+                    "action": "import_completed",
+                    "user_id": job.get("user_id") if job else None,
+                },
+            )
+        if job and job.get("user_id") is not None:
+            socketio.emit(
+                "system_notification",
+                {
+                    "severity": severity,
+                    "summary": summary,
+                    "detail": detail,
+                    "job_id": job_id,
+                },
+                to=f"user:{job['user_id']}",
+            )
+    except Exception:
+        # The committed import result remains authoritative even if the
+        # realtime transport is temporarily unavailable.
+        return
+
+
+def _create_processing_job(employees, invalid, duplicates, job_id=None, user_id=None):
     job_id = job_id or uuid4().hex
     now = time()
     with _jobs_lock:
@@ -69,6 +99,7 @@ def _create_processing_job(employees, invalid, duplicates, job_id=None):
             "percentual": 0,
             "registros_invalidos": len(invalid),
             "duplicidades": duplicates,
+            "user_id": current.get("user_id", user_id),
             "created_at": current.get("created_at", now),
             "updated_at": now,
         }
@@ -131,8 +162,21 @@ def _run_import(app, job_id, employees, invalid, duplicates):
                 duplicidades=duplicates,
                 erros=invalid[:20],
             )
+            _emit_import_outcome(
+                job_id,
+                "success",
+                "Importação concluída",
+                f"{len(employees)} colaboradores foram processados.",
+                broadcast_change=True,
+            )
         except Exception as error:
             _update_job(job_id, status="error", phase="erro", erro=str(error))
+            _emit_import_outcome(
+                job_id,
+                "error",
+                "Erro na importação",
+                str(error),
+            )
 
 
 class CollaboratorImportService:
@@ -158,7 +202,12 @@ class CollaboratorImportService:
             return jsonify("O JSON não contém colaboradores válidos."), 400
 
         _cleanup_jobs()
-        return jsonify(_create_processing_job(employees, invalid, duplicates)), 202
+        return jsonify(_create_processing_job(
+            employees,
+            invalid,
+            duplicates,
+            user_id=token_data.get("id"),
+        )), 202
 
     @safe_route
     def start_upload(self, token_data):
@@ -190,6 +239,7 @@ class CollaboratorImportService:
                 "chunks_recebidos": [],
                 "bytes_recebidos": 0,
                 "percentual_upload": 0,
+                "user_id": token_data.get("id"),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -262,7 +312,13 @@ class CollaboratorImportService:
             return jsonify("O JSON não contém colaboradores válidos."), 400
 
         return jsonify(
-            _create_processing_job(employees, invalid, duplicates, job_id=job_id)
+            _create_processing_job(
+                employees,
+                invalid,
+                duplicates,
+                job_id=job_id,
+                user_id=token_data.get("id"),
+            )
         ), 202
 
     @safe_route
