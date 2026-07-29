@@ -141,7 +141,7 @@ def request_permission(path, method):
         ("/admissao/vagas/dashboard", "dashboard_admissoes", {"GET": "view"}),
         ("/admissao/vagas", "admissoes", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/pcd/importar", "indicador_pcd", {"POST": "edit"}),
-        ("/pcd", "indicador_pcd", {"GET": "view", "PATCH": "edit"}),
+        ("/pcd", "indicador_pcd", {"GET": "view", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/ponto-48h", "dashboard_ponto48", {"GET": "view", "POST": "create", "DELETE": "edit"}),
         ("/dash/reposicoes", "dashboard_reposicoes", {"POST": "view"}),
         ("/dash/colaboradores-departamento", "dashboard_colaboradores", {"POST": "view"}),

@@ -6,7 +6,7 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees, db
 from models.filiais import Branch, filial_centros_custo
 from models.supervisores import Supervisors
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.safe_route import safe_route
 
 # Colunas de tipo de deficiência do relatório "Relação de Empregados - Cadastro".
@@ -67,12 +67,11 @@ class PcdService:
             filial_nome = filial_by_centro.get(r.centro_id, "Sem filial")
             departamento_nome = r.centro_local or "Sem departamento"
             supervisor_nome = r.supervisor_nome or "Sem supervisor"
-            colaboradores = (
+            departamento = (
                 tree.setdefault(filial_nome, {})
-                .setdefault(departamento_nome, {})
-                .setdefault(supervisor_nome, [])
+                .setdefault(departamento_nome, {"supervisor": supervisor_nome, "colaboradores": []})
             )
-            colaboradores.append({
+            departamento["colaboradores"].append({
                 "id": r.id,
                 "matricula": r.matricula,
                 "nome": r.nome,
@@ -192,4 +191,20 @@ class PcdService:
             "nao_encontrados": not_found,
             "ignorados": skipped,
             "sem_acesso": no_access,
+        }), 200
+
+    @safe_route
+    def delete_all(self, token_data):
+        """Zera o indicador de PCD de todos os colaboradores. Somente ADMIN, para casos de erro na importação."""
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem excluir todos os dados de PCD."), 403
+
+        affected = Employees.query.filter(Employees.pcd.is_(True)).update(
+            {Employees.pcd: False, Employees.type_pcd: None, Employees.obs_pcd: None},
+            synchronize_session=False,
+        )
+        db.session.commit()
+        return jsonify({
+            "message": f"{affected} colaborador(es) tiveram o indicador de PCD removido.",
+            "removidos": affected,
         }), 200
