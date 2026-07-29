@@ -13,3 +13,7 @@ def root():
 @pcd_bp.post("/importar")
 def importar():
     return service.import_xlsx()
+
+@pcd_bp.delete("/todos")
+def excluir_todos():
+    return service.delete_all()
