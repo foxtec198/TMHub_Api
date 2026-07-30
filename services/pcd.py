@@ -5,6 +5,7 @@ from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees, db
 from models.filiais import Branch, filial_departamentos
+from models.situacoes import Situations
 from models.supervisores import Supervisors
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.safe_route import safe_route
@@ -62,11 +63,14 @@ class PcdService:
                 Supervisors.id.label("supervisor_id"),
                 Supervisors.nome.label("supervisor_nome"),
                 Cargos.nome.label("cargo"),
+                Situations.id.label("situacao_id"),
+                Situations.tipo.label("situacao"),
             )
             .select_from(Employees)
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .outerjoin(Cargos, Cargos.id == Employees.cargo)
+            .outerjoin(Situations, Situations.id == Employees.situacao)
             .filter(Employees.pcd.is_(True))
             .order_by(Employees.nome.asc())
         )
@@ -85,6 +89,8 @@ class PcdService:
             "departamento": r.departamento,
             "supervisor_id": r.supervisor_id,
             "supervisor": r.supervisor_nome or "Sem supervisor",
+            "situacao_id": r.situacao_id,
+            "situacao": r.situacao or "Não informada",
         } for r in rows]
 
         filiais_por_departamento = _filiais_by_departamento({r.departamento for r in rows})
