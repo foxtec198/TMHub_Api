@@ -9,6 +9,7 @@ from models.situacoes import Situations
 from models.supervisores import Supervisors
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.safe_route import safe_route
+from utils.socket import socketio
 
 # Colunas de tipo de deficiência do relatório "Relação de Empregados - Cadastro".
 TIPO_COLUNAS = ["motora", "visual", "auditiva", "intelectual", "outras", "reabilitado"]
@@ -101,8 +102,6 @@ class PcdService:
             "filiais_por_departamento": filiais_por_departamento,
         }), 200
 
-        return jsonify({"total": len(colaboradores), "colaboradores": colaboradores}), 200
-
     @safe_route
     def update(self, token_data):
         """Marca/desmarca um colaborador como PCD ou atualiza seus dados (tipo/observação)."""
@@ -131,6 +130,7 @@ class PcdService:
                 employee.obs_pcd = body.get("obs_pcd") or None
 
         db.session.commit()
+        socketio.emit("pcd_update", {"id": employee.id, "action": "updated" if employee.pcd else "removed"})
         return jsonify(employee.to_dict()), 200
 
     @safe_route
@@ -205,6 +205,8 @@ class PcdService:
             updated.append(matricula)
 
         db.session.commit()
+        if updated:
+            socketio.emit("pcd_update", {"action": "imported", "atualizados": len(updated)})
         return jsonify({
             "message": f"{len(updated)} colaborador(es) marcados como PCD.",
             "atualizados": len(updated),
@@ -224,6 +226,7 @@ class PcdService:
             synchronize_session=False,
         )
         db.session.commit()
+        socketio.emit("pcd_update", {"action": "deleted_all", "removidos": affected})
         return jsonify({
             "message": f"{affected} colaborador(es) tiveram o indicador de PCD removido.",
             "removidos": affected,
