@@ -2,7 +2,7 @@ from flask import jsonify, request as rq
 from utils.safe_route import safe_route
 from datetime import datetime as dt
 from dateutils import relativedelta
-from sqlalchemy import case, func, extract
+from sqlalchemy import case, func
 from sqlalchemy.orm import aliased
 from calendar import monthrange
 
@@ -34,14 +34,17 @@ class DashboardService:
                 Supervisors.nome.label("supervisor"),
                 Cities.id.label("cidade_id"),
                 Cities.descricao.label("cidade"),
+                Cargos.nome.label("cargo")
             )
             .select_from(Employees)
             .join(CostCenters, CostCenters.id == Employees.centro_id)
             .join(Situations, Situations.id == Employees.situacao)
+            .join(Cargos, Cargos.id == Employees.cargo)
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .outerjoin(Cities, Cities.id == CostCenters.cidade_id)
             .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento.notin_([0, 10, 24]))
         )
+        
 
         query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         employees = query.order_by(
