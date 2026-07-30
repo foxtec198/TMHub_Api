@@ -5,9 +5,11 @@ from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees, db
 from models.filiais import Branch, filial_departamentos
+from models.situacoes import Situations
 from models.supervisores import Supervisors
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.safe_route import safe_route
+from utils.socket import socketio
 
 # Colunas de tipo de deficiência do relatório "Relação de Empregados - Cadastro".
 TIPO_COLUNAS = ["motora", "visual", "auditiva", "intelectual", "outras", "reabilitado"]
@@ -62,11 +64,14 @@ class PcdService:
                 Supervisors.id.label("supervisor_id"),
                 Supervisors.nome.label("supervisor_nome"),
                 Cargos.nome.label("cargo"),
+                Situations.id.label("situacao_id"),
+                Situations.tipo.label("situacao"),
             )
             .select_from(Employees)
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .outerjoin(Cargos, Cargos.id == Employees.cargo)
+            .outerjoin(Situations, Situations.id == Employees.situacao)
             .filter(Employees.pcd.is_(True))
             .order_by(Employees.nome.asc())
         )
@@ -85,6 +90,8 @@ class PcdService:
             "departamento": r.departamento,
             "supervisor_id": r.supervisor_id,
             "supervisor": r.supervisor_nome or "Sem supervisor",
+            "situacao_id": r.situacao_id,
+            "situacao": r.situacao or "Não informada",
         } for r in rows]
 
         filiais_por_departamento = _filiais_by_departamento({r.departamento for r in rows})
@@ -94,8 +101,6 @@ class PcdService:
             "colaboradores": colaboradores,
             "filiais_por_departamento": filiais_por_departamento,
         }), 200
-
-        return jsonify({"total": len(colaboradores), "colaboradores": colaboradores}), 200
 
     @safe_route
     def update(self, token_data):
@@ -125,6 +130,7 @@ class PcdService:
                 employee.obs_pcd = body.get("obs_pcd") or None
 
         db.session.commit()
+        socketio.emit("pcd_update", {"id": employee.id, "action": "updated" if employee.pcd else "removed"})
         return jsonify(employee.to_dict()), 200
 
     @safe_route
@@ -199,6 +205,8 @@ class PcdService:
             updated.append(matricula)
 
         db.session.commit()
+        if updated:
+            socketio.emit("pcd_update", {"action": "imported", "atualizados": len(updated)})
         return jsonify({
             "message": f"{len(updated)} colaborador(es) marcados como PCD.",
             "atualizados": len(updated),
@@ -218,6 +226,7 @@ class PcdService:
             synchronize_session=False,
         )
         db.session.commit()
+        socketio.emit("pcd_update", {"action": "deleted_all", "removidos": affected})
         return jsonify({
             "message": f"{affected} colaborador(es) tiveram o indicador de PCD removido.",
             "removidos": affected,
