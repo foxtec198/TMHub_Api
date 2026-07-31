@@ -16,6 +16,9 @@ DEBUG = getenv("DEBUG")
 PORT = int(getenv("PORT", 8590))
 HOST = getenv("HOST")
 
+
+# ALTERAÇÃO FEITA NA FEAT/TESTE
+
 # Variaveis Comuns
 agents = {}
 app = Flask(__name__)
