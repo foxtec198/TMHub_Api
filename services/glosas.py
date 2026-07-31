@@ -136,7 +136,7 @@ class DisallowanceService:
     def _evidence_url(item):
         if not item.evidencia_arquivo:
             return None
-        return f"{request.host_url.rstrip('/')}/arquivos/glosas/{item.evidencia_arquivo}"
+        return f"https://api.tmhub.hubbix.com.br/arquivos/glosas/{item.evidencia_arquivo}"
 
     @classmethod
     def _serialize(cls, row):
@@ -582,12 +582,9 @@ class DisallowanceService:
 
     @safe_route
     def export(self, token_data):
-        if not has_permission(token_data, "controle_glosas", "view"):
-            return jsonify("Você não possui acesso ao Controle de Glosas."), 403
-        try:
-            records, summary, _ = self._records_and_summary(token_data)
-        except ValueError as error:
-            return jsonify(str(error)), 400
+        if not has_permission(token_data, "controle_glosas", "view"): return jsonify("Você não possui acesso ao Controle de Glosas."), 403
+        try: records, summary, _ = self._records_and_summary(token_data)
+        except ValueError as error: return jsonify(str(error)), 400
 
         workbook = Workbook()
         sheet = workbook.active
