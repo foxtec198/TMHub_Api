@@ -11,7 +11,10 @@ from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
 load_dotenv()  # Carrega o dotenv
 
+# ALTERADO TESTE PR
+
 # Variaveis de Instancia - SandBox()
+
 DEBUG = getenv("DEBUG")
 PORT = int(getenv("PORT", 8590))
 HOST = getenv("HOST")
