@@ -24,6 +24,7 @@ from routes.glosas import disallowance_bp, disallowance_files_bp
 from routes.estrutura import structure_bp
 from routes.importacao_colaboradores import collaborator_import_bp
 from routes.updates import updates_bp
+from routes.dashboard_pcd import dashboard_pcd_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -58,4 +59,7 @@ blueprints = {
 
     #Indicadores
     pcd_bp: "/pcd",
+
+    #Dashboards PCD
+    dashboard_pcd_bp: "/dash/pcd",
 }
