@@ -3,7 +3,6 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from os import getenv
 from pathlib import Path
-from uuid import uuid4
 
 from flask import jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook
@@ -24,7 +23,6 @@ from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
-
 VALID_COVERAGE = {"em_analise", "coberta", "parcial", "descoberta"}
 DEFAULT_DAILY_VALUE = Decimal("180.00")
 MAX_EVIDENCE_SIZE = 15 * 1024 * 1024
@@ -34,13 +32,11 @@ EVIDENCE_DIR = Path(
     or Path(__file__).resolve().parents[1] / "storage" / "glosas"
 )
 
-
 def _parse_date(value, field):
     try:
         return date.fromisoformat(str(value)[:10])
     except (TypeError, ValueError):
         raise ValueError(f"{field} inválida.")
-
 
 def _parse_decimal(value, field, default=None, places="0.01", allow_zero=False):
     if value in (None, "") and default is not None:
@@ -54,10 +50,8 @@ def _parse_decimal(value, field, default=None, places="0.01", allow_zero=False):
         raise ValueError(f"{field} deve ser {comparison}.")
     return parsed.quantize(Decimal(places))
 
-
 def _money(value):
     return f"R$ {float(value or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
 
 class DisallowanceService:
     @classmethod
