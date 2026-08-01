@@ -381,6 +381,7 @@ class MovementService:
         daily = defaultdict(lambda: {"entrada": 0, "saida": 0})
         delivered_by_employee = defaultdict(int)
         delivered_by_center = defaultdict(int)
+        delivered_products = 0
         epi_delivered = 0
         for movement, recipients, quantity in filtered:
             moved_by_product[movement.item_id] += quantity
@@ -388,11 +389,13 @@ class MovementService:
             daily[key][movement.tipo] += quantity
             product = product_map.get(movement.item_id)
             is_epi = category_map.get(getattr(product, "categoria_id", None)) == "EPI"
-            if movement.tipo == "saida" and is_epi:
+            if movement.tipo == "saida":
                 for recipient in recipients:
-                    epi_delivered += recipient.quantidade
+                    delivered_products += recipient.quantidade
                     delivered_by_employee[recipient.colaborador_id] += recipient.quantidade
                     delivered_by_center[recipient.centro_custo_id] += recipient.quantidade
+                    if is_epi:
+                        epi_delivered += recipient.quantidade
 
         scoped_centers = (
             apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
@@ -411,6 +414,7 @@ class MovementService:
                     and int(product.quantidade or 0) <= int(product.quantidade_minima or 0)
                 ),
                 "sem_estoque": sum(1 for product in products if int(product.quantidade or 0) <= 0),
+                "produtos_entregues": delivered_products,
                 "epis_entregues": epi_delivered,
             },
             "estoque_baixo": [{
@@ -431,14 +435,14 @@ class MovementService:
                 {"data": day, **values}
                 for day, values in sorted(daily.items())
             ],
-            "epis_por_colaborador": [{
+            "produtos_por_colaborador": [{
                 "colaborador_id": item_id,
                 "colaborador": employee_map.get(item_id, f"#{item_id}"),
                 "quantidade": quantity,
             } for item_id, quantity in sorted(
                 delivered_by_employee.items(), key=lambda item: item[1], reverse=True
             )[:10]],
-            "epis_por_local": [{
+            "produtos_por_local": [{
                 "centro_custo_id": item_id,
                 "local": center_map.get(item_id, f"#{item_id}"),
                 "quantidade": quantity,
