@@ -144,6 +144,9 @@ class Vacancy(BaseModel):
         index=True,
     )
     motivo_saida = db.Column(db.String)
+    # Data efetiva ou prevista para a saída do colaborador substituído.
+    # É independente do aviso da vaga e não interfere no início do processo seletivo.
+    data_saida = db.Column(db.Date)
     # Nome livre: a pessoa ainda não existe na tabela de colaboradores.
     colaborador_entrada = db.Column(db.String)
     # Nome e telefone permanecem livres até a conclusão; somente então o ID é obrigatório.

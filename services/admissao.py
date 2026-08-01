@@ -277,6 +277,8 @@ class VacancyService:
                 "colaborador_saida": None,
                 "candidato": item.candidato_nome,
                 "tentativas": 1 if item.candidato_nome else 0,
+                "data_saida": None,
+                "data_saida_prevista": False,
             })
 
         responsavel_vaga = aliased(Users)
@@ -363,6 +365,10 @@ class VacancyService:
                 ),
                 "candidato_matricula": vacancy.colaborador_entrada_matricula,
                 "tentativas": attempts,
+                "data_saida": vacancy.data_saida,
+                # A presença da data identifica a vaga planejada durante todo o seu ciclo.
+                # Assim ela não passa a distorcer o SLA quando o dia da saída chegar.
+                "data_saida_prevista": vacancy.data_saida is not None,
             })
 
         # As opções são montadas antes do recorte para o painel não perder escolhas
@@ -403,6 +409,15 @@ class VacancyService:
         # Tempos em aberto usam o instante atual; tempos concluídos usam datas persistidas.
         now = dt.now(TIMEZONE)
         for record in records:
+            if record["data_saida_prevista"]:
+                record["sla_acao_horas"] = None
+                record["sla_conclusao_horas"] = None
+                record["sla_acao_decorrido_horas"] = None
+                record["acao_no_prazo"] = False
+                record["conclusao_no_prazo"] = False
+                record["sla_estourado"] = False
+                continue
+
             notice = record["aviso_em"]
             action = record["primeira_acao_em"]
             closed = record["concluido_em"]
@@ -458,8 +473,17 @@ class VacancyService:
         departments = {}
         for record in records:
             key = str(record["departamento"] if record["departamento"] is not None else "Sem DPTO")
-            bucket = departments.setdefault(key, {"departamento": key, "total": 0, "acao": [], "conclusao": [], "no_prazo": 0})
+            bucket = departments.setdefault(key, {
+                "departamento": key,
+                "total": 0,
+                "data_prevista": 0,
+                "acao": [],
+                "conclusao": [],
+                "no_prazo": 0,
+            })
             bucket["total"] += 1
+            if record["data_saida_prevista"]:
+                bucket["data_prevista"] += 1
             if record["sla_acao_horas"] is not None:
                 bucket["acao"].append(record["sla_acao_horas"])
                 if record["acao_no_prazo"] and (record["sla_conclusao_horas"] is None or record["conclusao_no_prazo"]):
@@ -472,6 +496,8 @@ class VacancyService:
             department_result.append({
                 "departamento": bucket["departamento"],
                 "total": bucket["total"],
+                "data_prevista": bucket["data_prevista"],
+                "avaliadas_sla": evaluated_count,
                 "sla_acao_horas": round(sum(bucket["acao"]) / evaluated_count, 1) if evaluated_count else None,
                 "sla_conclusao_dias": round(sum(bucket["conclusao"]) / len(bucket["conclusao"]), 1) if bucket["conclusao"] else None,
                 "percentual_no_prazo": round(bucket["no_prazo"] * 100 / evaluated_count, 1) if evaluated_count else None,
@@ -490,11 +516,17 @@ class VacancyService:
                 "primeira_acao_em": record["primeira_acao_em"].isoformat() if record["primeira_acao_em"] else None,
                 "entrevista_em": record["entrevista_em"].isoformat() if record["entrevista_em"] else None,
                 "concluido_em": record["concluido_em"].isoformat() if record["concluido_em"] else None,
+                "data_saida": record["data_saida"].isoformat() if record["data_saida"] else None,
             }
 
         recent = sorted(records, key=lambda item: item["aviso_em"], reverse=True)[:12]
         attention = sorted(
-            [record for record in records if record["id"].startswith("vaga-") and record["status"] != "concluido"],
+            [
+                record for record in records
+                if record["id"].startswith("vaga-")
+                and record["status"] != "concluido"
+                and not record["data_saida_prevista"]
+            ],
             key=lambda item: item["sla_acao_decorrido_horas"],
             reverse=True,
         )[:10]
@@ -506,10 +538,15 @@ class VacancyService:
                 "total_vagas": len(records),
                 "vagas_em_andamento": sum(record["status"] != "concluido" for record in records),
                 "vagas_concluidas": sum(record["status"] == "concluido" for record in records),
+                "vagas_data_prevista": sum(record["data_saida_prevista"] for record in records),
+                "vagas_avaliadas_sla": sum(not record["data_saida_prevista"] for record in records),
                 "sla_acao_medio_horas": round(sum(action_values) / len(action_values), 1) if action_values else None,
                 "sla_conclusao_medio_dias": round(sum(close_values) / len(close_values) / 24, 1) if close_values else None,
                 "percentual_no_prazo": round(len(compliant) * 100 / len(evaluated), 1) if evaluated else None,
-                "aguardando_primeira_acao": sum(record["primeira_acao_em"] is None for record in records),
+                "aguardando_primeira_acao": sum(
+                    not record["data_saida_prevista"] and record["primeira_acao_em"] is None
+                    for record in records
+                ),
                 "sla_estourado": sum(record["sla_estourado"] for record in records),
             },
             "mensal": monthly_result,
@@ -550,6 +587,7 @@ class VacancyService:
                 Vacancy.horario_trabalho_id,
                 WorkSchedule.descricao.label("horario_trabalho"),
                 Vacancy.motivo_saida,
+                Vacancy.data_saida,
                 Vacancy.colaborador_entrada,
                 Vacancy.telefone_colaborador_entrada,
                 Vacancy.colaborador_entrada_id,
@@ -688,6 +726,7 @@ class VacancyService:
         aviso_em_raw = body.get("aviso_em") or body.get("data_aviso")
         horario_trabalho = body.get("horario_trabalho")
         motivo_saida = body.get("motivo_saida")
+        data_saida_raw = body.get("data_saida")
 
         if tipo not in ("substituicao", "aditivo"):
             return jsonify("Tipo de vaga inválido"), 400
@@ -734,6 +773,12 @@ class VacancyService:
             aviso_em = self._parse_datetime(aviso_em_raw)
         except (TypeError, ValueError):
             return jsonify("Data e hora do aviso inválidas"), 400
+
+        try:
+            data_saida = self._parse_date(data_saida_raw) if tipo == "substituicao" else None
+        except (TypeError, ValueError):
+            return jsonify("Data de saída inválida"), 400
+
         created_at = dt.now(TIMEZONE)
         if aviso_em > created_at:
             return jsonify("A data do aviso deve ser anterior à criação da vaga"), 400
@@ -756,6 +801,7 @@ class VacancyService:
             updated_at=created_at,
             horario_trabalho_id=schedule.id,
             motivo_saida=motivo_saida,
+            data_saida=data_saida,
         )
         db.session.add(nova_vaga)
         db.session.flush()
@@ -889,6 +935,15 @@ class VacancyService:
                 return jsonify(str(error)), 400
             if not schedule: return jsonify("Informe o horário de trabalho"), 400
             vaga.horario_trabalho_id = schedule.id
+
+        if "data_saida" in body:
+            if vaga.tipo == "aditivo" and body["data_saida"]:
+                return jsonify("Data de saída é exclusiva para vagas de substituição"), 400
+
+            try:
+                vaga.data_saida = self._parse_date(body["data_saida"])
+            except (TypeError, ValueError):
+                return jsonify("Data de saída inválida"), 400
 
         if "supervisor_id" in body:
             supervisor = db.session.get(Supervisors, body["supervisor_id"])
