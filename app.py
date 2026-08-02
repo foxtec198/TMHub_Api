@@ -36,6 +36,21 @@ with app.app_context():
     from services.noticias import seed_default_news
     seed_default_news()
 
+
+def _schedular_worker():
+    """Reprograma rotinas vencidas sem depender de uma tela aberta."""
+    from services.schedular import SchedularService
+    while True:
+        socketio.sleep(60)
+        try:
+            with app.app_context():
+                SchedularService._process_due_routines()
+        except Exception as error:
+            app.logger.exception("Falha ao processar rotinas do Schedular: %s", error)
+
+
+socketio.start_background_task(_schedular_worker)
+
 @app.route("/")
 @app.route("/docs")
 def index(): return render_template("index.html")

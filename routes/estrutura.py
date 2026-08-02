@@ -24,3 +24,8 @@ def supervisors():
 @structure_bp.patch("/contratos/<int:center_id>/supervisor")
 def update_contract_supervisor(center_id):
     return service.update_contract_supervisor(center_id)
+
+
+@structure_bp.patch("/locais/<int:location_id>")
+def update_location(location_id):
+    return service.update_location(location_id)

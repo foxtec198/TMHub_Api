@@ -56,6 +56,11 @@ def _requested_branch_ids():
         return set()
 
 
+def requested_branch_ids():
+    """Return the branch ids selected in the MainLayout global selector."""
+    return _requested_branch_ids()
+
+
 def _cost_center_ids_for_branches(branch_ids):
     if not branch_ids:
         return set()
