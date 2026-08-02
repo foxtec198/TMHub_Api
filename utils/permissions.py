@@ -24,6 +24,7 @@ PERMISSION_CATALOG = [
     {"key": "projetos", "label": "Meus Projetos", "group": "Outros", "actions": ["view", "create", "edit"]},
     {"key": "indicador_pcd", "label": "Indicador PCD", "group": "Indicadores", "actions": ["view", "edit"]},
     {"key": "estrutura", "label": "Estrutura", "group": "Operação", "actions": ["view", "create", "edit"]},
+    {"key": "schedular", "label": "TM Schedular", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "dashboard_pcd", "label": "Dashboard PCD", "group": "Dashboards", "actions": ["view"]},
 ]
 

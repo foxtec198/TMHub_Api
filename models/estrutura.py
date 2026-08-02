@@ -12,6 +12,12 @@ class StructureLocation(BaseModel):
         nullable=False,
         index=True,
     )
+    parent_id = db.Column(
+        db.Integer,
+        db.ForeignKey("estrutura_locais.id", ondelete="SET NULL"),
+        index=True,
+    )
+    ordem = db.Column(db.Integer, nullable=False, default=0, index=True)
     nome = db.Column(db.String(160), nullable=False)
     descricao = db.Column(db.Text)
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), nullable=False)

@@ -29,7 +29,7 @@ class StructureService:
         locations = (
             StructureLocation.query
             .filter(StructureLocation.centro_custo_id.in_(center_ids))
-            .order_by(StructureLocation.nome)
+            .order_by(StructureLocation.ordem, StructureLocation.nome)
             .all()
             if center_ids else []
         )
@@ -61,12 +61,26 @@ class StructureService:
                 "supervisor_id": center.supervisor_id,
                 "supervisor": supervisors.get(center.supervisor_id) or "SEM SUPERVISOR",
                 "locais": locations_by_center.get(center.id, []),
+                "estrutura": self._location_tree(locations_by_center.get(center.id, [])),
                 "ativos": assets_by_center.get(center.id, []),
             })
         return jsonify([
             {"departamento": department, "contratos": contracts}
             for department, contracts in departments.items()
         ])
+
+    @staticmethod
+    def _location_tree(items):
+        by_parent = {}
+        for item in items:
+            by_parent.setdefault(item.get("parent_id"), []).append({**item, "filhos": []})
+        for children in by_parent.values():
+            children.sort(key=lambda row: (row.get("ordem", 0), row.get("nome", "")))
+        def attach(nodes):
+            for node in nodes:
+                node["filhos"] = attach(by_parent.get(node["id"], []))
+            return nodes
+        return attach(by_parent.get(None, []))
 
     @safe_route
     def read_supervisors(self, token_data):
@@ -158,8 +172,19 @@ class StructureService:
             ).first()
             if duplicate:
                 return jsonify("Este local já está cadastrado no contrato."), 409
+            parent_id = body.get("parent_id") or None
+            if parent_id:
+                try:
+                    parent_id = int(parent_id)
+                except (TypeError, ValueError):
+                    return jsonify("Estrutura pai invÃ¡lida."), 400
+                parent = db.session.get(StructureLocation, parent_id)
+                if not parent or parent.centro_custo_id != center_id:
+                    return jsonify("A estrutura pai nÃ£o pertence a este contrato."), 400
             item = StructureLocation(
                 centro_custo_id=center_id,
+                parent_id=parent_id,
+                ordem=int(body.get("ordem") or 0),
                 nome=name.upper(),
                 descricao=description,
             )
@@ -219,3 +244,40 @@ class StructureService:
         db.session.delete(item)
         db.session.commit()
         return jsonify("Registro excluído com sucesso."), 200
+    @safe_route
+    def update_location(self, location_id, token_data):
+        location = db.session.get(StructureLocation, location_id)
+        if not location:
+            return jsonify("Local nÃ£o encontrado."), 404
+        if not can_access_cost_center(token_data, location.centro_custo_id):
+            return jsonify("VocÃª nÃ£o possui acesso Ã  filial deste local."), 403
+        body = request.get_json(silent=True) or {}
+        parent_id = body.get("parent_id") or None
+        if parent_id:
+            try:
+                parent_id = int(parent_id)
+            except (TypeError, ValueError):
+                return jsonify("Estrutura pai invÃ¡lida."), 400
+            if parent_id == location.id:
+                return jsonify("Uma estrutura nÃ£o pode ser pai dela mesma."), 400
+            parent = db.session.get(StructureLocation, parent_id)
+            if not parent or parent.centro_custo_id != location.centro_custo_id:
+                return jsonify("A estrutura pai nÃ£o pertence ao mesmo contrato."), 400
+            descendants = {location.id}
+            pending = [location.id]
+            while pending:
+                child_ids = [row.id for row in StructureLocation.query.filter(StructureLocation.parent_id.in_(pending)).all()]
+                descendants.update(child_ids)
+                pending = child_ids
+            if parent_id in descendants:
+                return jsonify("NÃ£o Ã© possÃ­vel criar ciclo na hierarquia."), 400
+        location.parent_id = parent_id
+        if "ordem" in body:
+            try:
+                location.ordem = int(body.get("ordem"))
+            except (TypeError, ValueError):
+                return jsonify("Ordem invÃ¡lida."), 400
+        if body.get("nome"):
+            location.nome = _text(body.get("nome")).upper()
+        db.session.commit()
+        return jsonify({"message": "Estrutura atualizada com sucesso.", "item": location.to_dict()})

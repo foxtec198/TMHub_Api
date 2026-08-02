@@ -1,31 +1,21 @@
-from flask import jsonify, request as rq
+from flask import jsonify
 
 from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
 from models.filiais import Branch,filial_centros_custo,filial_departamentos,filial_usuarios
 
 
-from utils.filial_scope import is_admin
+from utils.filial_scope import (
+    allowed_cost_center_ids,
+    can_select_branches,
+    requested_branch_ids,
+)
 from utils.safe_route import safe_route
 
 
 SITUACOES_ATIVAS = {1, 9, 18}
 SITUACAO_DEMITIDO = 8
 META_PCD = 5
-
-
-def _parse_branch_ids(raw_value):
-    if not raw_value:
-        return set()
-
-    try:
-        return {
-            int(value)
-            for value in str(raw_value).split(",")
-            if str(value).strip()
-        }
-    except (TypeError, ValueError):
-        return None
 
 
 def _empty_pcd_dashboard(branches):
@@ -51,7 +41,7 @@ class PcdDashboardService:
     @safe_route
     def read(self, token_data):
         branch_query = Branch.query.filter(Branch.ativa.is_(True))
-        if not is_admin(token_data):
+        if not can_select_branches(token_data):
             branch_query = (
                 branch_query
                 .join(
@@ -71,13 +61,23 @@ class PcdDashboardService:
         )
         available_ids = {branch.id for branch in available_branches}
 
-        requested_ids = _parse_branch_ids(rq.args.get("filiais"))
+        # The MainLayout selector is the sole source of branch filtering.
+        global_branch_ids = (
+            requested_branch_ids()
+            if can_select_branches(token_data)
+            else None
+        )
+        if global_branch_ids is not None and global_branch_ids - available_ids:
+            return jsonify("Filiais selecionadas sem permissao."), 403
+        requested_ids = (
+            available_ids if global_branch_ids is None else global_branch_ids
+        )
         if requested_ids is None:
             return jsonify("Informe filiais válidas."), 400
         if requested_ids - available_ids:
             return jsonify("Você não possui acesso a uma ou mais filiais selecionadas."), 403
 
-        selected_ids = requested_ids or available_ids
+        selected_ids = requested_ids
         selected_branches = [
             branch
             for branch in available_branches
@@ -123,9 +123,10 @@ class PcdDashboardService:
         for branch_id, center_id in department_rows:
             branch_centers[branch_id].add(center_id)
 
-        selected_center_ids = set().union(
-            *branch_centers.values(),
-        )
+        selected_center_ids = set().union(*branch_centers.values())
+        scoped_center_ids = allowed_cost_center_ids(token_data)
+        if scoped_center_ids is not None:
+            selected_center_ids &= scoped_center_ids
         if not selected_center_ids:
             return jsonify(
                 _empty_pcd_dashboard(available_branches),
