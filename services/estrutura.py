@@ -2,7 +2,10 @@ from flask import current_app, jsonify, request
 
 from models.centros_de_custo import CostCenters
 from models.estrutura import StructureAsset, StructureLocation
+from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
+from models.schedular_tarefas import SchedularTask
 from models.supervisores import Supervisors
+from services.schedular import SchedularService
 from utils.db import db
 from utils.filial_scope import (
     apply_cost_center_scope,
@@ -240,6 +243,39 @@ class StructureService:
             return jsonify("Registro não encontrado."), 404
         if not can_access_cost_center(token_data, item.centro_custo_id):
             return jsonify("Você não possui acesso à filial deste contrato."), 403
+
+        if kind == "local":
+            now = SchedularService._now()
+            routines = SchedularRoutine.query.filter_by(local_id=item.id).all()
+            handled_ids = set()
+            for routine in routines:
+                related = [routine]
+                if not routine.rotina_pai_id:
+                    related.extend(
+                        SchedularRoutine.query.filter_by(
+                            rotina_pai_id=routine.id,
+                        ).all(),
+                    )
+                for current in related:
+                    if current.id in handled_ids:
+                        continue
+                    SchedularService._remove_routine_operationally(current, now)
+                    handled_ids.add(current.id)
+
+            # A routine may also be linked to this local as an additional
+            # structure. Cancel its pending tasks and detach that link only.
+            links = SchedularRoutineStructure.query.filter_by(
+                estrutura_id=item.id,
+            ).all()
+            for link in links:
+                SchedularService._cancel_unfinished_tasks(
+                    SchedularTask.query.filter(
+                        SchedularTask.rotina_estrutura_id == link.id,
+                    ),
+                    now,
+                )
+                link.ativo = False
+                link.estrutura_id = None
 
         db.session.delete(item)
         db.session.commit()

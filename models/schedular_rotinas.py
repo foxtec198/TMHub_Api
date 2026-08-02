@@ -14,7 +14,11 @@ class SchedularRoutine(BaseModel):
         index=True,
     )
     centro_custo_id = db.Column(db.Integer, db.ForeignKey("centro_de_custo.id", ondelete="CASCADE"), nullable=False, index=True)
-    local_id = db.Column(db.Integer, db.ForeignKey("estrutura_locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    local_id = db.Column(
+        db.Integer,
+        db.ForeignKey("estrutura_locais.id", ondelete="SET NULL"),
+        index=True,
+    )
     nome = db.Column(db.String(160), nullable=False)
     descricao = db.Column(db.Text)
     recorrencia = db.Column(db.String(20), nullable=False, default="semanal")
@@ -39,7 +43,11 @@ class SchedularRoutineStructure(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
     rotina_id = db.Column(db.Integer, db.ForeignKey("schedular_rotinas.id", ondelete="CASCADE"), nullable=False, index=True)
-    estrutura_id = db.Column(db.Integer, db.ForeignKey("estrutura_locais.id", ondelete="RESTRICT"), nullable=False, index=True)
+    estrutura_id = db.Column(
+        db.Integer,
+        db.ForeignKey("estrutura_locais.id", ondelete="SET NULL"),
+        index=True,
+    )
     origem = db.Column(db.String(30), nullable=False, default="rotina")
     ativo = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)

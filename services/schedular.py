@@ -31,6 +31,13 @@ SCHEDULAR_EVIDENCE_DIR = Path(
 MAX_SCHEDULAR_EVIDENCE_SIZE = 10 * 1024 * 1024
 IMAGE_EVIDENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 EVIDENCE_TYPES = {"camera", "image", "barcode", "qrcode", "signature"}
+UNFINISHED_TASK_STATUSES = (
+    "aberta",
+    "pendente",
+    "em_andamento",
+    "pausada",
+    "atrasada",
+)
 
 
 class SchedularService:
@@ -178,6 +185,42 @@ class SchedularService:
     def _sync_linked_instances(cls, parent):
         for child in SchedularRoutine.query.filter_by(rotina_pai_id=parent.id).all():
             cls._copy_parent_settings(parent, child)
+
+    @staticmethod
+    def _cancel_unfinished_tasks(query, now):
+        return query.filter(
+            SchedularTask.status.in_(UNFINISHED_TASK_STATUSES),
+        ).update(
+            {"status": "cancelada", "cancelada_em": now},
+            synchronize_session=False,
+        )
+
+    @classmethod
+    def _remove_routine_operationally(cls, routine, now):
+        """Detach a routine without deleting completed task history."""
+        cls._cancel_unfinished_tasks(
+            SchedularTask.query.filter(SchedularTask.rotina_id == routine.id),
+            now,
+        )
+        links = SchedularRoutineStructure.query.filter_by(
+            rotina_id=routine.id,
+        ).all()
+        for link in links:
+            cls._cancel_unfinished_tasks(
+                SchedularTask.query.filter(
+                    SchedularTask.rotina_estrutura_id == link.id,
+                ),
+                now,
+            )
+            link.ativo = False
+            # Historical tasks retain the link id; clearing this FK releases
+            # the location and avoids a removed instance blocking Structure.
+            link.estrutura_id = None
+
+        routine.ativa = False
+        routine.proxima_execucao = None
+        routine.rotina_pai_id = None
+        routine.local_id = None
     def login(self):
         body = request.get_json(silent=True) or {}
         matricula = str(body.get("matricula") or "").strip()
@@ -356,7 +399,13 @@ class SchedularService:
         _, error = tmhub_admin_session()
         if error:
             return error
-        return jsonify([self._routine_payload(row) for row in SchedularRoutine.query.order_by(SchedularRoutine.created_at.desc()).all()])
+        rows = (
+            SchedularRoutine.query
+            .filter(SchedularRoutine.local_id.isnot(None))
+            .order_by(SchedularRoutine.created_at.desc())
+            .all()
+        )
+        return jsonify([self._routine_payload(row) for row in rows])
 
     def update_routine(self, routine_id):
         user, error = tmhub_admin_session()
@@ -433,15 +482,15 @@ class SchedularService:
         if not routine:
             return jsonify("Rotina nÃ£o encontrada."), 404
         now = self._now()
-        # Preserve auditable execution history. A deleted routine is deactivated,
-        # while only unfinished work is cancelled.
-        SchedularTask.query.filter(
-            SchedularTask.rotina_id == routine.id,
-            SchedularTask.status.in_(("aberta", "pendente", "em_andamento", "pausada", "atrasada")),
-        ).update({"status": "cancelada", "cancelada_em": now}, synchronize_session=False)
-        routine.ativa = False
-        routine.proxima_execucao = None
-        SchedularRoutineStructure.query.filter_by(rotina_id=routine.id).update({"ativo": False}, synchronize_session=False)
+        # Deleting a parent also retires every linked instance. Completed tasks
+        # are never deleted: only unfinished work is cancelled.
+        routines = [routine]
+        if not routine.rotina_pai_id:
+            routines.extend(
+                SchedularRoutine.query.filter_by(rotina_pai_id=routine.id).all(),
+            )
+        for current in routines:
+            self._remove_routine_operationally(current, now)
         db.session.commit()
         return jsonify("Rotina excluÃ­da com sucesso.")
 
@@ -532,12 +581,23 @@ class SchedularService:
         _, error = tmhub_admin_session()
         if error:
             return error
+        routine = db.session.get(SchedularRoutine, routine_id)
+        if not routine:
+            return jsonify("Rotina não encontrada."), 404
         link = SchedularRoutineStructure.query.filter_by(id=link_id, rotina_id=routine_id).first()
         if not link:
             return jsonify("Vínculo não encontrado."), 404
         now = self._now()
-        SchedularTask.query.filter(SchedularTask.rotina_estrutura_id == link.id, SchedularTask.status.in_(("aberta", "pausada", "atrasada"))).update({"status": "cancelada", "cancelada_em": now}, synchronize_session=False)
+        if routine.local_id == link.estrutura_id:
+            self._remove_routine_operationally(routine, now)
+            db.session.commit()
+            return jsonify("Rotina removida e tarefas em aberto canceladas; histórico preservado.")
+        self._cancel_unfinished_tasks(
+            SchedularTask.query.filter(SchedularTask.rotina_estrutura_id == link.id),
+            now,
+        )
         link.ativo = False
+        link.estrutura_id = None
         db.session.commit()
         return jsonify("Vínculo removido; histórico preservado.")
 
