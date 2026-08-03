@@ -20,6 +20,7 @@ from models.schedular_tarefas import (
     SchedularTask,
     SchedularTaskCollaborator,
     SchedularTaskEvidence,
+    SchedularTaskGeolocation,
     SchedularTaskHistory,
     SchedularTaskResponse,
 )
@@ -256,6 +257,35 @@ class SchedularService:
         ))
 
     @staticmethod
+    def _add_task_geolocation(task_id, collaborator_id, location, event_type):
+        """Stores only valid browser-provided coordinates for task auditing."""
+        if not location:
+            return False
+        if not isinstance(location, dict):
+            raise ValueError("Localização inválida.")
+        try:
+            latitude = float(location.get("latitude"))
+            longitude = float(location.get("longitude"))
+            accuracy = location.get("accuracy")
+            accuracy = float(accuracy) if accuracy not in (None, "") else None
+        except (TypeError, ValueError) as error:
+            raise ValueError("Localização inválida.") from error
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            raise ValueError("Coordenadas de localização inválidas.")
+        if accuracy is not None and accuracy < 0:
+            raise ValueError("Precisão de localização inválida.")
+        db.session.add(SchedularTaskGeolocation(
+            tarefa_id=task_id,
+            colaborador_id=collaborator_id,
+            tipo=event_type,
+            latitude=latitude,
+            longitude=longitude,
+            precisao_metros=accuracy,
+            capturada_em=SchedularService._now(),
+        ))
+        return True
+
+    @staticmethod
     def _cancel_unfinished_tasks(query, now):
         return query.filter(
             SchedularTask.status.in_(UNFINISHED_TASK_STATUSES),
@@ -263,6 +293,92 @@ class SchedularService:
             {"status": "cancelada", "cancelada_em": now},
             synchronize_session=False,
         )
+
+    @classmethod
+    def _reprogram_unfinished_tasks(cls, routine):
+        """Moves operational tasks to the routine's new schedule.
+
+        The task itself is preserved so its checklist answers, evidences and
+        executor history remain attached to the same record. Completed and
+        cancelled work is intentionally excluded.
+        """
+        if not routine.ativa or not routine.proxima_execucao:
+            return 0
+
+        tasks = (
+            SchedularTask.query
+            .filter(
+                SchedularTask.rotina_id == routine.id,
+                SchedularTask.status.in_(UNFINISHED_TASK_STATUSES),
+            )
+            .with_for_update()
+            .order_by(
+                SchedularTask.rotina_estrutura_id,
+                SchedularTask.ocorrencia_em,
+                SchedularTask.id,
+            )
+            .all()
+        )
+        if not tasks:
+            return 0
+
+        step = cls._step(routine)
+        tasks_by_link = {}
+        for task in tasks:
+            tasks_by_link.setdefault(task.rotina_estrutura_id, []).append(task)
+
+        reprogrammed = 0
+        estimate = int(routine.estimativa_minutos or 15)
+        for link_id, linked_tasks in tasks_by_link.items():
+            next_occurrence = routine.proxima_execucao
+            for index, task in enumerate(linked_tasks):
+                # A one-off routine has only one valid occurrence. In the
+                # unlikely event of legacy duplicate open tasks, retain the
+                # additional records rather than risking their history.
+                if index and not step:
+                    continue
+
+                while (
+                    SchedularTask.query
+                    .filter(
+                        SchedularTask.rotina_estrutura_id == link_id,
+                        SchedularTask.ocorrencia_em == next_occurrence,
+                        SchedularTask.id != task.id,
+                    )
+                    .first()
+                ):
+                    if not step:
+                        break
+                    next_occurrence += step
+
+                if not step and SchedularTask.query.filter(
+                    SchedularTask.rotina_estrutura_id == link_id,
+                    SchedularTask.ocorrencia_em == next_occurrence,
+                    SchedularTask.id != task.id,
+                ).first():
+                    continue
+
+                changed = (
+                    task.ocorrencia_em != next_occurrence
+                    or task.agendada_para != next_occurrence
+                    or task.prazo_em != next_occurrence + timedelta(minutes=estimate)
+                    or task.estimativa_minutos != estimate
+                )
+                task.ocorrencia_em = next_occurrence
+                task.agendada_para = next_occurrence
+                task.prazo_em = next_occurrence + timedelta(minutes=estimate)
+                task.estimativa_minutos = estimate
+                if changed:
+                    # The original task keeps every answer and evidence. The
+                    # history records that its schedule was changed by the
+                    # administrative routine configuration.
+                    cls._add_task_history(task.id, None, "reprogramada")
+                    reprogrammed += 1
+
+                if step:
+                    next_occurrence += step
+
+        return reprogrammed
 
     @classmethod
     def _remove_routine_operationally(cls, routine, now):
@@ -488,7 +604,12 @@ class SchedularService:
         user, error = tmhub_admin_session()
         if error:
             return error
-        routine = db.session.get(SchedularRoutine, routine_id)
+        routine = (
+            SchedularRoutine.query
+            .filter_by(id=routine_id)
+            .with_for_update()
+            .first()
+        )
         if not routine:
             return jsonify("Rotina nÃ£o encontrada."), 404
         body = request.get_json(silent=True) or {}
@@ -525,6 +646,7 @@ class SchedularService:
                 return jsonify("Checklist nÃ£o encontrado."), 404
             routine.checklist_id = checklist.id if checklist else None
         recurrence_changed = any(key in body for key in ("recorrencia", "recorrencia_tipo", "intervalo_horas", "configuracao", "proxima_execucao"))
+        schedule_changed = recurrence_changed or "estimativa_minutos" in body
         if "proxima_execucao" in body:
             anchor = self._parse_datetime(body.get("proxima_execucao"))
             if not anchor:
@@ -556,8 +678,15 @@ class SchedularService:
             routine.ativa = bool(body.get("ativa"))
         if "executar_apenas_um" in body:
             routine.executar_apenas_um = bool(body.get("executar_apenas_um"))
+        routines_to_reprogram = [routine]
         if not routine.rotina_pai_id:
             self._sync_linked_instances(routine)
+            routines_to_reprogram.extend(
+                SchedularRoutine.query.filter_by(rotina_pai_id=routine.id).all(),
+            )
+        if schedule_changed:
+            for scheduled_routine in routines_to_reprogram:
+                self._reprogram_unfinished_tasks(scheduled_routine)
         db.session.commit()
         return jsonify({"message": "Rotina atualizada com sucesso.", "rotina": self._routine_payload(routine)})
 
@@ -772,6 +901,12 @@ class SchedularService:
             SchedularTaskHistory.created_at.asc(),
             SchedularTaskHistory.id.asc(),
         ).all()
+        geolocation_rows = SchedularTaskGeolocation.query.filter_by(
+            tarefa_id=task.id,
+        ).order_by(
+            SchedularTaskGeolocation.capturada_em.asc(),
+            SchedularTaskGeolocation.id.asc(),
+        ).all()
         history_employee_ids = [row.colaborador_id for row in history_rows if row.colaborador_id]
         history_employees = {
             row.id: row.nome
@@ -807,9 +942,27 @@ class SchedularService:
                 "executor": executor.nome if executor else None,
                 "historico": [
                     {"acao": row.acao, "colaborador_id": row.colaborador_id,
-                     "colaborador": history_employees.get(row.colaborador_id, "Colaborador removido"),
+                     "colaborador": (
+                         history_employees.get(row.colaborador_id, "Colaborador removido")
+                         if row.colaborador_id
+                         else "Sistema"
+                     ),
                      "created_at": row.created_at.isoformat() if row.created_at else None}
                     for row in history_rows
+                ],
+                "geolocalizacoes": [
+                    {
+                        "id": row.id,
+                        "tipo": row.tipo,
+                        "colaborador_id": row.colaborador_id,
+                        "latitude": row.latitude,
+                        "longitude": row.longitude,
+                        "precisao_metros": row.precisao_metros,
+                        "capturada_em": row.capturada_em.isoformat()
+                        if row.capturada_em
+                        else None,
+                    }
+                    for row in geolocation_rows
                 ],
                 "local": local.nome if local else None,
                 "checklist": checklist.nome if checklist else None, "itens": [{**item.to_dict(), "resposta": response_payload(item), "evidencias_configuradas": SchedularService._configured_evidences(item)} for item in items], "atrasada": is_late}
@@ -845,7 +998,8 @@ class SchedularService:
         task = SchedularTask.query.filter_by(id=task_id).with_for_update().first()
         if not task or not self._can_execute_task(task, employee.id):
             return jsonify("Tarefa não encontrada para este executor."), 404
-        action = str((request.get_json(silent=True) or {}).get("acao") or "").lower()
+        body = request.get_json(silent=True) or {}
+        action = str(body.get("acao") or "").lower()
         now = self._now()
         transitions = {
             "iniciar": ("aberta", "em_andamento"),
@@ -883,9 +1037,45 @@ class SchedularService:
         if action == "iniciar": task.iniciada_em = now
         if action == "pausar": task.pausada_em = now
         if action == "finalizar": task.concluida_em = now
+        location_event = {
+            "iniciar": "inicio",
+            "finalizar": "finalizacao",
+        }.get(action)
+        if location_event:
+            try:
+                self._add_task_geolocation(
+                    task.id,
+                    employee.id,
+                    body.get("geolocalizacao"),
+                    location_event,
+                )
+            except ValueError as error:
+                return jsonify(str(error)), 400
         self._add_task_history(task.id, employee.id, action)
         db.session.commit()
         return jsonify({"message": "Tarefa atualizada.", "tarefa": self._task_payload(task)})
+
+    @schedular_route
+    def save_task_geolocation(self, task_id, schedular_session):
+        employee = schedular_session["employee"]
+        task = SchedularTask.query.filter_by(id=task_id).with_for_update().first()
+        if not task or not self._can_execute_task(task, employee.id):
+            return jsonify("Tarefa não encontrada para este executor."), 404
+        if task.executar_apenas_um and task.executor_colaborador_id != employee.id:
+            return jsonify("Esta tarefa está bloqueada para o executor responsável."), 409
+        if task.status != "em_andamento":
+            return jsonify("A localização só pode ser registrada durante a execução."), 409
+        try:
+            self._add_task_geolocation(
+                task.id,
+                employee.id,
+                (request.get_json(silent=True) or {}).get("geolocalizacao"),
+                "execucao",
+            )
+        except ValueError as error:
+            return jsonify(str(error)), 400
+        db.session.commit()
+        return jsonify({"message": "Localização registrada."}), 201
 
     @schedular_route
     def save_task_answers(self, task_id, schedular_session):
