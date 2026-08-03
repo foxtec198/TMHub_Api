@@ -65,6 +65,34 @@ class SchedularTaskHistory(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, index=True)
 
 
+class SchedularTaskGeolocation(BaseModel):
+    __tablename__ = "schedular_tarefa_geolocalizacoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tarefa_id = db.Column(
+        db.Integer,
+        db.ForeignKey("schedular_tarefas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        index=True,
+    )
+    tipo = db.Column(db.String(30), nullable=False, index=True)
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    precisao_metros = db.Column(db.Float)
+    capturada_em = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=dt.now,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
+
+
 class SchedularTaskEvidence(BaseModel):
     __tablename__ = "schedular_tarefa_evidencias"
 

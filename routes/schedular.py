@@ -62,6 +62,11 @@ def task_action(task_id):
     return service.action_task(task_id)
 
 
+@schedular_bp.post("/tarefas/<int:task_id>/geolocalizacoes")
+def task_geolocations(task_id):
+    return service.save_task_geolocation(task_id)
+
+
 @schedular_bp.post("/tarefas/<int:task_id>/respostas")
 def task_answers(task_id):
     return service.save_task_answers(task_id)
