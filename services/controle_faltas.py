@@ -182,22 +182,30 @@ class AbsenceControlService:
             "contratos": sorted({row.contrato for row in rows if row.contrato}),
             "colaboradores": sorted({row.colaborador for row in rows if row.colaborador}),
         }
-        department = request.args.get("departamento")
-        supervisor = request.args.get("supervisor")
-        reason = request.args.get("motivo")
-        contract = request.args.get("contrato")
-        collaborator = request.args.get("colaborador")
-        status = request.args.get("status")
-        classification = request.args.get("classificacao")
+        def selected_values(name):
+            return {
+                value.strip()
+                for raw in request.args.getlist(name)
+                for value in str(raw).split(",")
+                if value.strip() and value.strip() != "__all__"
+            }
+
+        department = selected_values("departamento")
+        supervisor = selected_values("supervisor")
+        reason = selected_values("motivo")
+        contract = selected_values("contrato")
+        collaborator = selected_values("colaborador")
+        status = selected_values("status")
+        classification = selected_values("classificacao")
         rows = [
             row for row in rows
-            if (not department or str(row.departamento) == department)
-            and (not supervisor or row.supervisor == supervisor)
-            and (not reason or row.motivo == reason)
-            and (not contract or row.contrato == contract)
-            and (not collaborator or row.colaborador == collaborator)
-            and (not status or row.status == status)
-            and (not classification or row.classificacao == classification)
+            if (not department or str(row.departamento) in department)
+            and (not supervisor or row.supervisor in supervisor)
+            and (not reason or row.motivo in reason)
+            and (not contract or row.contrato in contract)
+            and (not collaborator or row.colaborador in collaborator)
+            and (not status or row.status in status)
+            and (not classification or row.classificacao in classification)
         ]
         return jsonify([row._asdict() for row in rows]), 200
 
@@ -465,23 +473,44 @@ class AbsenceControlService:
         }
 
         # Aplica filtros adicionais (os filter_options são calculados antes para manter os dropdowns completos)
-        department = request.args.get("departamento")
-        supervisor = request.args.get("supervisor")
-        reason = request.args.get("motivo")
-        contract = request.args.get("contrato")
-        collaborator = request.args.get("colaborador")
-        status = request.args.get("status")
-        classification = request.args.get("classificacao")
+        def selected_values(name):
+            return {
+                value.strip()
+                for raw in request.args.getlist(name)
+                for value in str(raw).split(",")
+                if value.strip() and value.strip() != "__all__"
+            }
+
+        department = selected_values("departamento")
+        supervisor = selected_values("supervisor")
+        reason = selected_values("motivo")
+        contract = selected_values("contrato")
+        collaborator = selected_values("colaborador")
+        status = selected_values("status")
+        classification = selected_values("classificacao")
         rows = [
             row for row in rows
-            if (not department or str(row.departamento) == department)
-            and (not supervisor or row.supervisor == supervisor)
-            and (not reason or row.motivo == reason)
-            and (not contract or row.contrato == contract)
-            and (not collaborator or row.colaborador == collaborator)
-            and (not status or row.status == status)
-            and (not classification or row.classificacao == classification)
+            if (not department or str(row.departamento) in department)
+            and (not supervisor or row.supervisor in supervisor)
+            and (not reason or row.motivo in reason)
+            and (not contract or row.contrato in contract)
+            and (not collaborator or row.colaborador in collaborator)
+            and (not status or row.status in status)
+            and (not classification or row.classificacao in classification)
         ]
+
+        # Opções procedurais: uma escolha reduz imediatamente as alternativas
+        # disponíveis no próximo filtro, evitando combinações sem registros.
+        filter_options = {
+            "departamentos": sorted(
+                {str(row.departamento) for row in rows if row.departamento is not None},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "supervisores": sorted({row.supervisor for row in rows if row.supervisor}),
+            "motivos": sorted({row.motivo for row in rows if row.motivo}),
+            "contratos": sorted({row.contrato for row in rows if row.contrato}),
+            "colaboradores": sorted({row.colaborador for row in rows if row.colaborador}),
+        }
 
         def rank(field):
             counts = {}

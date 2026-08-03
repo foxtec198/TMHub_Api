@@ -3,9 +3,10 @@ from dateutils import relativedelta
 from os import getenv
 from datetime import datetime
 
-def create_token(dados:dict):
+def create_token(dados:dict, expires=True):
     payload = dict(dados)
-    payload["exp"] = datetime.now() + relativedelta(hours=8)
+    if expires:
+        payload["exp"] = datetime.now() + relativedelta(hours=8)
     token = str(encode(payload, getenv("SECRET"), algorithm="HS256"))
     return token
 

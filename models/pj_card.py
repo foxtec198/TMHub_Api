@@ -1,4 +1,5 @@
 from utils.db import db
+from datetime import datetime as dt
 
 class ProjectCard(db.Model):
     __tablename__ = 'pj_card'
@@ -9,3 +10,8 @@ class ProjectCard(db.Model):
     descricao = db.Column(db.Text)
     etiqueta = db.Column(db.String(50))
     ordem = db.Column(db.Integer)
+    data_inicio = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, index=True)
+    data_fim = db.Column(db.DateTime(timezone=True), index=True)
+    concluida_em = db.Column(db.DateTime(timezone=True), index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, index=True)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, onupdate=dt.now)

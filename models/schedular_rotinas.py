@@ -28,6 +28,7 @@ class SchedularRoutine(BaseModel):
     recorrencia_tipo = db.Column(db.String(20), nullable=False, default="semanal")
     intervalo_horas = db.Column(db.Integer)
     estimativa_minutos = db.Column(db.Integer, nullable=False, default=15)
+    executar_apenas_um = db.Column(db.Boolean, nullable=False, default=False)
     # Anchor chosen by the operator. It never drifts with the worker execution time.
     inicio_recorrencia = db.Column(db.DateTime(timezone=True), index=True)
     proxima_execucao = db.Column(db.DateTime(timezone=True), index=True)
@@ -50,4 +51,16 @@ class SchedularRoutineStructure(BaseModel):
     )
     origem = db.Column(db.String(30), nullable=False, default="rotina")
     ativo = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
+
+
+class SchedularRoutineCollaborator(BaseModel):
+    __tablename__ = "schedular_rotina_colaboradores"
+    __table_args__ = (
+        db.UniqueConstraint("rotina_id", "colaborador_id", name="uq_schedular_rotina_colaborador"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    rotina_id = db.Column(db.Integer, db.ForeignKey("schedular_rotinas.id", ondelete="CASCADE"), nullable=False, index=True)
+    colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="RESTRICT"), nullable=False, index=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)

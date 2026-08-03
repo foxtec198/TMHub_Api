@@ -5,13 +5,24 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request, send_from_directory
+from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
 from models.colaboradores import Employees
 from models.schedular import SchedularAccess
-from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
+from models.schedular_rotinas import (
+    SchedularRoutine,
+    SchedularRoutineCollaborator,
+    SchedularRoutineStructure,
+)
 from models.schedular_checklists import SchedularChecklist, SchedularChecklistItem
-from models.schedular_tarefas import SchedularTask, SchedularTaskEvidence, SchedularTaskResponse
+from models.schedular_tarefas import (
+    SchedularTask,
+    SchedularTaskCollaborator,
+    SchedularTaskEvidence,
+    SchedularTaskHistory,
+    SchedularTaskResponse,
+)
 from models.centros_de_custo import CostCenters
 from models.estrutura import StructureLocation
 from utils.db import db
@@ -143,6 +154,9 @@ class SchedularService:
     @staticmethod
     def _routine_payload(routine):
         employee = db.session.get(Employees, routine.colaborador_responsavel_id) if routine.colaborador_responsavel_id else None
+        collaborator_rows = SchedularRoutineCollaborator.query.filter_by(rotina_id=routine.id).all()
+        collaborator_ids = [row.colaborador_id for row in collaborator_rows] or ([routine.colaborador_responsavel_id] if routine.colaborador_responsavel_id else [])
+        collaborators = Employees.query.filter(Employees.id.in_(collaborator_ids)).order_by(Employees.nome).all() if collaborator_ids else []
         local = db.session.get(StructureLocation, routine.local_id)
         center = db.session.get(CostCenters, routine.centro_custo_id)
         checklist = db.session.get(SchedularChecklist, routine.checklist_id) if routine.checklist_id else None
@@ -152,6 +166,11 @@ class SchedularService:
             **routine.to_dict(),
             "colaborador": employee.nome if employee else None,
             "colaborador_matricula": employee.matricula if employee else None,
+            "colaborador_ids": collaborator_ids,
+            "colaboradores": [
+                {"id": collaborator.id, "nome": collaborator.nome, "matricula": collaborator.matricula}
+                for collaborator in collaborators
+            ],
             "checklist": checklist.nome if checklist else None,
             "local": local.nome if local else None,
             "contrato": center.local if center else None,
@@ -172,6 +191,7 @@ class SchedularService:
             "recorrencia_tipo",
             "intervalo_horas",
             "estimativa_minutos",
+            "executar_apenas_um",
             "inicio_recorrencia",
             "proxima_execucao",
             "colaborador_responsavel_id",
@@ -185,6 +205,55 @@ class SchedularService:
     def _sync_linked_instances(cls, parent):
         for child in SchedularRoutine.query.filter_by(rotina_pai_id=parent.id).all():
             cls._copy_parent_settings(parent, child)
+            cls._sync_routine_collaborators(
+                child.id,
+                cls._routine_collaborator_ids(parent),
+            )
+
+    @staticmethod
+    def _routine_collaborator_ids(routine):
+        ids = [
+            row.colaborador_id
+            for row in SchedularRoutineCollaborator.query.filter_by(
+                rotina_id=routine.id,
+            ).all()
+        ]
+        return ids or ([routine.colaborador_responsavel_id] if routine.colaborador_responsavel_id else [])
+
+    @staticmethod
+    def _sync_routine_collaborators(routine_id, collaborator_ids):
+        ids = sorted({int(item) for item in collaborator_ids if item})
+        SchedularRoutineCollaborator.query.filter_by(rotina_id=routine_id).delete()
+        for collaborator_id in ids:
+            db.session.add(SchedularRoutineCollaborator(
+                rotina_id=routine_id,
+                colaborador_id=collaborator_id,
+            ))
+
+    @staticmethod
+    def _sync_task_collaborators(task_id, collaborator_ids):
+        ids = sorted({int(item) for item in collaborator_ids if item})
+        SchedularTaskCollaborator.query.filter_by(tarefa_id=task_id).delete()
+        for collaborator_id in ids:
+            db.session.add(SchedularTaskCollaborator(
+                tarefa_id=task_id,
+                colaborador_id=collaborator_id,
+            ))
+
+    @staticmethod
+    def _can_execute_task(task, collaborator_id):
+        return SchedularTaskCollaborator.query.filter_by(
+            tarefa_id=task.id,
+            colaborador_id=collaborator_id,
+        ).first() is not None or task.colaborador_id == collaborator_id
+
+    @staticmethod
+    def _add_task_history(task_id, collaborator_id, action):
+        db.session.add(SchedularTaskHistory(
+            tarefa_id=task_id,
+            colaborador_id=collaborator_id,
+            acao=action,
+        ))
 
     @staticmethod
     def _cancel_unfinished_tasks(query, now):
@@ -335,11 +404,17 @@ class SchedularService:
             return jsonify("Contrato nÃ£o encontrado."), 404
         if not local or local.centro_custo_id != center.id:
             return jsonify("O local nÃ£o pertence ao contrato informado."), 400
-        responsible_id = body.get("colaborador_responsavel_id")
-        if responsible_id in (None, ""):
+        requested_collaborators = body.get("colaborador_ids")
+        if not isinstance(requested_collaborators, list):
+            requested_collaborators = [body.get("colaborador_responsavel_id")]
+        try:
+            collaborator_ids = sorted({int(item) for item in requested_collaborators if item not in (None, "")})
+        except (TypeError, ValueError):
+            return jsonify("Informe colaboradores válidos."), 400
+        if not collaborator_ids:
             return jsonify("Selecione o colaborador responsÃ¡vel."), 400
-        responsible = db.session.get(Employees, int(responsible_id))
-        if not responsible or responsible.situacao != 1:
+        collaborators = Employees.query.filter(Employees.id.in_(collaborator_ids), Employees.situacao == 1).all()
+        if len(collaborators) != len(collaborator_ids):
             return jsonify("Colaborador responsÃ¡vel nÃ£o encontrado ou inativo."), 400
         checklist_id = body.get("checklist_id") or None
         checklist = db.session.get(SchedularChecklist, int(checklist_id)) if checklist_id else None
@@ -381,13 +456,15 @@ class SchedularService:
             # If the configured start is in the past, the first pending run is
             # calculated from that same anchor, never from the save timestamp.
             proxima_execucao=self._next_from_anchor(next_run, type("Schedule", (), {"recorrencia_tipo": recorrencia, "recorrencia": recorrencia, "intervalo_horas": interval, "configuracao": body.get("configuracao") if isinstance(body.get("configuracao"), dict) else {}})()),
-            colaborador_responsavel_id=responsible.id,
+            colaborador_responsavel_id=collaborator_ids[0],
             checklist_id=checklist.id if checklist else None,
             configuracao=body.get("configuracao") if isinstance(body.get("configuracao"), dict) else {},
+            executar_apenas_um=bool(body.get("executar_apenas_um")),
             criado_por_usuario_id=user.id,
         )
         db.session.add(routine)
         db.session.flush()
+        self._sync_routine_collaborators(routine.id, collaborator_ids)
         db.session.add(SchedularRoutineStructure(rotina_id=routine.id, estrutura_id=local.id, origem="principal"))
         db.session.commit()
         return jsonify({
@@ -429,11 +506,19 @@ class SchedularService:
             routine.rotina_pai_id = None
         if "nome" in body and not str(body.get("nome") or "").strip():
             return jsonify("Informe o nome da rotina."), 400
-        if "colaborador_responsavel_id" in body:
-            employee = db.session.get(Employees, body.get("colaborador_responsavel_id"))
-            if not employee or employee.situacao != 1:
+        if "colaborador_ids" in body or "colaborador_responsavel_id" in body:
+            requested_collaborators = body.get("colaborador_ids")
+            if not isinstance(requested_collaborators, list):
+                requested_collaborators = [body.get("colaborador_responsavel_id")]
+            try:
+                collaborator_ids = sorted({int(item) for item in requested_collaborators if item not in (None, "")})
+            except (TypeError, ValueError):
+                return jsonify("Informe colaboradores válidos."), 400
+            collaborators = Employees.query.filter(Employees.id.in_(collaborator_ids), Employees.situacao == 1).all() if collaborator_ids else []
+            if not collaborator_ids or len(collaborators) != len(collaborator_ids):
                 return jsonify("Colaborador responsÃ¡vel nÃ£o encontrado ou inativo."), 400
-            routine.colaborador_responsavel_id = employee.id
+            routine.colaborador_responsavel_id = collaborator_ids[0]
+            self._sync_routine_collaborators(routine.id, collaborator_ids)
         if "checklist_id" in body:
             checklist = db.session.get(SchedularChecklist, body.get("checklist_id")) if body.get("checklist_id") else None
             if body.get("checklist_id") and not checklist:
@@ -469,6 +554,8 @@ class SchedularService:
             routine.proxima_execucao = self._next_from_anchor(anchor, routine)
         if "ativa" in body:
             routine.ativa = bool(body.get("ativa"))
+        if "executar_apenas_um" in body:
+            routine.executar_apenas_um = bool(body.get("executar_apenas_um"))
         if not routine.rotina_pai_id:
             self._sync_linked_instances(routine)
         db.session.commit()
@@ -544,6 +631,10 @@ class SchedularService:
                 self._copy_parent_settings(parent, instance)
                 db.session.add(instance)
                 db.session.flush()
+                self._sync_routine_collaborators(
+                    instance.id,
+                    self._routine_collaborator_ids(parent),
+                )
                 db.session.add(
                     SchedularRoutineStructure(
                         rotina_id=instance.id,
@@ -615,7 +706,7 @@ class SchedularService:
                     continue
                 exists = SchedularTask.query.filter_by(rotina_estrutura_id=link.id, ocorrencia_em=occurrence).first()
                 if not exists:
-                    db.session.add(SchedularTask(
+                    task = SchedularTask(
                         rotina_id=routine.id,
                         rotina_estrutura_id=link.id,
                         origem="rotina",
@@ -626,8 +717,15 @@ class SchedularService:
                         agendada_para=occurrence,
                         prazo_em=occurrence + timedelta(minutes=int(routine.estimativa_minutos or 15)),
                         estimativa_minutos=int(routine.estimativa_minutos or 15),
+                        executar_apenas_um=bool(routine.executar_apenas_um),
                         ocorrencia_em=occurrence,
-                    ))
+                    )
+                    db.session.add(task)
+                    db.session.flush()
+                    SchedularService._sync_task_collaborators(
+                        task.id,
+                        SchedularService._routine_collaborator_ids(routine),
+                    )
                     processed += 1
             if (routine.recorrencia_tipo or routine.recorrencia) == "data":
                 routine.ativa = False
@@ -648,6 +746,10 @@ class SchedularService:
     def _task_payload(task):
         routine = db.session.get(SchedularRoutine, task.rotina_id)
         employee = db.session.get(Employees, task.colaborador_id)
+        executor = db.session.get(Employees, task.executor_colaborador_id) if task.executor_colaborador_id else None
+        collaborator_rows = SchedularTaskCollaborator.query.filter_by(tarefa_id=task.id).all()
+        collaborator_ids = [row.colaborador_id for row in collaborator_rows] or [task.colaborador_id]
+        collaborators = Employees.query.filter(Employees.id.in_(collaborator_ids)).order_by(Employees.nome).all() if collaborator_ids else []
         local = db.session.get(StructureLocation, task.local_id)
         checklist = db.session.get(SchedularChecklist, task.checklist_id) if task.checklist_id else None
         items = SchedularChecklistItem.query.filter_by(checklist_id=task.checklist_id).order_by(SchedularChecklistItem.ordem).all() if task.checklist_id else []
@@ -666,6 +768,15 @@ class SchedularService:
             evidence_by_response.setdefault(evidence.resposta_id, []).append(
                 SchedularService._evidence_payload(evidence)
             )
+        history_rows = SchedularTaskHistory.query.filter_by(tarefa_id=task.id).order_by(
+            SchedularTaskHistory.created_at.asc(),
+            SchedularTaskHistory.id.asc(),
+        ).all()
+        history_employee_ids = [row.colaborador_id for row in history_rows if row.colaborador_id]
+        history_employees = {
+            row.id: row.nome
+            for row in Employees.query.filter(Employees.id.in_(history_employee_ids or [-1])).all()
+        }
 
         def response_payload(item):
             response = response_map.get(item.id)
@@ -690,7 +801,17 @@ class SchedularService:
             and task.status in {"aberta", "em_andamento", "pausada"}
         )
         return {**task.to_dict(), "origem": task.origem or "rotina", "tarefa": routine.nome if routine else "Rotina removida", "rotina": routine.nome if routine else None,
-                "colaborador": employee.nome if employee else None, "local": local.nome if local else None,
+                "colaborador": employee.nome if employee else None,
+                "colaborador_ids": collaborator_ids,
+                "colaboradores": [{"id": row.id, "nome": row.nome, "matricula": row.matricula} for row in collaborators],
+                "executor": executor.nome if executor else None,
+                "historico": [
+                    {"acao": row.acao, "colaborador_id": row.colaborador_id,
+                     "colaborador": history_employees.get(row.colaborador_id, "Colaborador removido"),
+                     "created_at": row.created_at.isoformat() if row.created_at else None}
+                    for row in history_rows
+                ],
+                "local": local.nome if local else None,
                 "checklist": checklist.nome if checklist else None, "itens": [{**item.to_dict(), "resposta": response_payload(item), "evidencias_configuradas": SchedularService._configured_evidences(item)} for item in items], "atrasada": is_late}
 
     def read_tasks(self):
@@ -706,17 +827,23 @@ class SchedularService:
     @schedular_route
     def read_my_tasks(self, schedular_session):
         employee = schedular_session["employee"]
-        rows = SchedularTask.query.filter(
-            SchedularTask.colaborador_id == employee.id,
+        rows = SchedularTask.query.outerjoin(
+            SchedularTaskCollaborator,
+            SchedularTaskCollaborator.tarefa_id == SchedularTask.id,
+        ).filter(
+            or_(
+                SchedularTask.colaborador_id == employee.id,
+                SchedularTaskCollaborator.colaborador_id == employee.id,
+            ),
             SchedularTask.status.in_(("aberta", "em_andamento", "pausada")),
-        ).order_by(SchedularTask.agendada_para.asc()).all()
+        ).distinct().order_by(SchedularTask.agendada_para.asc()).all()
         return jsonify([self._task_payload(task) for task in rows])
 
     @schedular_route
     def action_task(self, task_id, schedular_session):
-        task = db.session.get(SchedularTask, task_id)
         employee = schedular_session["employee"]
-        if not task or task.colaborador_id != employee.id:
+        task = SchedularTask.query.filter_by(id=task_id).with_for_update().first()
+        if not task or not self._can_execute_task(task, employee.id):
             return jsonify("Tarefa não encontrada para este executor."), 404
         action = str((request.get_json(silent=True) or {}).get("acao") or "").lower()
         now = self._now()
@@ -747,10 +874,16 @@ class SchedularService:
                 return jsonify("Responda todos os itens obrigatórios antes de finalizar."), 409
         if action not in transitions or task.status != transitions[action][0]:
             return jsonify("Ação não permitida para o status atual da tarefa."), 409
+        if task.executar_apenas_um:
+            if task.executor_colaborador_id and task.executor_colaborador_id != employee.id:
+                return jsonify("Esta tarefa já está sendo executada por outro colaborador."), 409
+            if action == "iniciar" and not task.executor_colaborador_id:
+                task.executor_colaborador_id = employee.id
         task.status = transitions[action][1]
         if action == "iniciar": task.iniciada_em = now
         if action == "pausar": task.pausada_em = now
         if action == "finalizar": task.concluida_em = now
+        self._add_task_history(task.id, employee.id, action)
         db.session.commit()
         return jsonify({"message": "Tarefa atualizada.", "tarefa": self._task_payload(task)})
 
@@ -758,8 +891,10 @@ class SchedularService:
     def save_task_answers(self, task_id, schedular_session):
         task = db.session.get(SchedularTask, task_id)
         employee = schedular_session["employee"]
-        if not task or task.colaborador_id != employee.id:
+        if not task or not self._can_execute_task(task, employee.id):
             return jsonify("Tarefa não encontrada para este executor."), 404
+        if task.executar_apenas_um and task.executor_colaborador_id and task.executor_colaborador_id != employee.id:
+            return jsonify("Esta tarefa está bloqueada para o executor responsável."), 409
         if task.status not in {"em_andamento", "pausada"}:
             return jsonify("Inicie a tarefa antes de responder o checklist."), 409
         body = request.get_json(silent=True) or {}
@@ -781,8 +916,10 @@ class SchedularService:
     def save_task_evidence(self, task_id, item_id, schedular_session):
         task = db.session.get(SchedularTask, task_id)
         employee = schedular_session["employee"]
-        if not task or task.colaborador_id != employee.id:
+        if not task or not self._can_execute_task(task, employee.id):
             return jsonify("Tarefa não encontrada para este executor."), 404
+        if task.executar_apenas_um and task.executor_colaborador_id and task.executor_colaborador_id != employee.id:
+            return jsonify("Esta tarefa está bloqueada para o executor responsável."), 409
         if task.status not in {"em_andamento", "pausada"}:
             return jsonify("Inicie a tarefa antes de registrar evidências."), 409
         item = db.session.get(SchedularChecklistItem, item_id)

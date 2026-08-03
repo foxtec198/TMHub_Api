@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, datetime as dt
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -54,6 +55,43 @@ def _money(value):
     return f"R$ {float(value or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 class DisallowanceService:
+    @safe_route
+    def dashboard(self, token_data):
+        if not has_permission(token_data, "dashboard_glosas", "view"):
+            return jsonify("Você não possui acesso ao Dashboard de Glosas."), 403
+        try:
+            records, summary, filters = self._records_and_summary(token_data)
+        except ValueError as error:
+            return jsonify(str(error)), 400
+        by_contract = defaultdict(lambda: {"quantidade": 0, "valor": 0.0})
+        by_reason = defaultdict(lambda: {"quantidade": 0, "valor": 0.0})
+        by_employee = defaultdict(lambda: {"quantidade": 0, "valor": 0.0})
+        by_month = defaultdict(lambda: {"quantidade": 0, "valor": 0.0})
+        by_status = defaultdict(int)
+        for item in records:
+            value = float(item.get("valor_total") or 0)
+            by_contract[item.get("contrato") or "Não informado"]["quantidade"] += 1
+            by_contract[item.get("contrato") or "Não informado"]["valor"] += value
+            reason = item.get("justificativa") or "Não informado"
+            by_reason[reason]["quantidade"] += 1
+            by_reason[reason]["valor"] += value
+            employee = item.get("colaborador") or item.get("colaborador_nome") or "Não identificado"
+            by_employee[employee]["quantidade"] += 1
+            by_employee[employee]["valor"] += value
+            month = str(item.get("competencia") or "")[:7] or "Sem competência"
+            by_month[month]["quantidade"] += 1
+            by_month[month]["valor"] += value
+            by_status[item.get("cobertura") or "em_analise"] += 1
+        as_rows = lambda data, key: [
+            {key: name, **values, "valor": round(values["valor"], 2)}
+            for name, values in sorted(data.items(), key=lambda item: item[1]["valor"], reverse=True)
+        ]
+        return jsonify({
+            "resumo": summary, "filtros": filters, "status": dict(by_status),
+            "por_contrato": as_rows(by_contract, "contrato"), "por_motivo": as_rows(by_reason, "motivo"),
+            "por_colaborador": as_rows(by_employee, "colaborador"),
+            "evolucao_mensal": as_rows(by_month, "competencia"),
+        })
     @classmethod
     def ensure_for_absence(cls, absence, user_id=None):
         """Cria a glosa preventiva de uma falta tratada, sem duplicar o vínculo."""
@@ -239,21 +277,29 @@ class DisallowanceService:
             ),
         }
 
-        coverage = request.args.get("cobertura")
-        department = request.args.get("departamento")
-        contract = request.args.get("contrato")
-        employee = request.args.get("colaborador")
+        def selected_values(name):
+            return {
+                value.strip()
+                for raw in request.args.getlist(name)
+                for value in str(raw).split(",")
+                if value.strip() and value.strip() != "__all__"
+            }
+
+        coverage = selected_values("cobertura")
+        department = selected_values("departamento")
+        contract = selected_values("contrato")
+        employee = selected_values("colaborador")
         search = str(request.args.get("busca") or "").strip().casefold()
 
         records = []
         for item in scoped_records:
-            if coverage and coverage != "__all__" and item["cobertura"] != coverage:
+            if coverage and item["cobertura"] not in coverage:
                 continue
-            if department and department != "__all__" and str(item["departamento"]) != str(department):
+            if department and str(item["departamento"]) not in department:
                 continue
-            if contract and contract != "__all__" and str(item["centro_custo_id"]) != str(contract):
+            if contract and str(item["centro_custo_id"]) not in contract:
                 continue
-            if employee and employee != "__all__" and str(item["colaborador_id"]) != str(employee):
+            if employee and str(item["colaborador_id"]) not in employee:
                 continue
             if search and not any(
                 search in str(value or "").casefold()
@@ -267,6 +313,27 @@ class DisallowanceService:
             ):
                 continue
             records.append(item)
+
+        # As listas dos filtros acompanham o recorte atual, evitando escolhas
+        # que levariam a uma tabela e indicadores zerados.
+        filter_options = {
+            "departamentos": sorted(
+                {str(item["departamento"]) for item in records if item["departamento"] not in (None, "")},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "contratos": sorted(
+                [{"label": item["contrato"], "value": item["centro_custo_id"]} for item in {
+                    record["centro_custo_id"]: record for record in records if record["centro_custo_id"]
+                }.values()],
+                key=lambda item: (item["label"] or "").casefold(),
+            ),
+            "colaboradores": sorted(
+                [{"label": item["colaborador"], "value": item["colaborador_id"], "matricula": item["matricula"]} for item in {
+                    record["colaborador_id"]: record for record in records if record["colaborador_id"] and record["colaborador"]
+                }.values()],
+                key=lambda item: item["label"].casefold(),
+            ),
+        }
 
         summary = {
             "total_registros": len(records),

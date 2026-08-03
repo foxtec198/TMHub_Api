@@ -42,6 +42,9 @@ def enforce_auth_state():
     if int(token_data.get("ver", 0)) != int(user.token_version or 0):
         return jsonify("Esta sessão foi invalidada. Entre novamente."), 401
 
+    if token_data.get("sessao_persistente") and not bool(user.token_sem_expiracao):
+        return jsonify("Esta sessão contínua foi desativada. Entre novamente."), 401
+
     requirements = auth_requirements(user)
     if requirements["interacao_pendente"] and normalized_path not in ONBOARDING_PATHS:
         return jsonify({
