@@ -24,6 +24,9 @@ class Users(BaseModel):
     foto_pendente = db.Column(db.Boolean, nullable=False, default=True)
     troca_senha_obrigatoria = db.Column(db.Boolean, nullable=False, default=False)
     senha_padrao = db.Column(db.Boolean, nullable=False, default=False)
+    # Destinado apenas a telas de exibição contínua (ODS/KDS). Esta flag é
+    # administrada diretamente no banco e não é exposta nas configurações.
+    token_sem_expiracao = db.Column(db.Boolean, nullable=False, default=False)
     token_version = db.Column(db.Integer, nullable=False, default=0)
     senha_alterada_em = db.Column(db.DateTime)
     filiais = db.relationship("Branch", secondary="filial_usuarios", back_populates="usuarios")

@@ -40,6 +40,16 @@ class UserServices:
     def _normalize_cpf(value):
         return normalize_cpf(value)
 
+    @staticmethod
+    def _issue_token(user):
+        persistent = bool(user.token_sem_expiracao)
+        return create_token({
+            "id": user.id,
+            "perm": user.role,
+            "ver": int(user.token_version or 0),
+            "sessao_persistente": persistent,
+        }, expires=not persistent)
+
     @safe_route
     def read(self, token_data):
         detailed = rq.args.get("detail") == "1"
@@ -403,7 +413,7 @@ class UserServices:
         db.session.commit()
         response = self._serialize(user)
         if nova_senha is not None:
-            response["access_token"] = create_token({"id": user.id, "perm": user.role, "ver": user.token_version})
+            response["access_token"] = self._issue_token(user)
         return jsonify(response)
 
     @safe_route
@@ -510,7 +520,7 @@ class UserServices:
         user.token_version = int(user.token_version or 0) + 1
         user.senha_alterada_em = dt.now()
         db.session.commit()
-        token = create_token({"id": user.id, "perm": user.role, "ver": user.token_version})
+        token = self._issue_token(user)
         return jsonify({
             "access_token": token,
             "requirements": auth_requirements(user),

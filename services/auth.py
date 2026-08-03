@@ -16,11 +16,13 @@ from utils.user_requirements import auth_requirements, normalize_cpf, refresh_us
 
 
 def issue_user_token(user):
+    persistent = bool(user.token_sem_expiracao)
     return create_token({
         "id": user.id,
         "perm": user.role,
         "ver": int(user.token_version or 0),
-    })
+        "sessao_persistente": persistent,
+    }, expires=not persistent)
 
 
 class AuthService:

@@ -8,6 +8,11 @@ disallowance_files_bp = Blueprint("Evidências de Glosas", __name__)
 service = DisallowanceService()
 
 
+@disallowance_bp.get("/dashboard")
+def dashboard():
+    return service.dashboard()
+
+
 @disallowance_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:

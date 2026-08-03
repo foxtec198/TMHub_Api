@@ -19,6 +19,8 @@ class SchedularTask(BaseModel):
     agendada_para = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
     prazo_em = db.Column(db.DateTime(timezone=True), index=True)
     estimativa_minutos = db.Column(db.Integer)
+    executar_apenas_um = db.Column(db.Boolean, nullable=False, default=False)
+    executor_colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="SET NULL"), index=True)
     ocorrencia_em = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
     iniciada_em = db.Column(db.DateTime(timezone=True))
     pausada_em = db.Column(db.DateTime(timezone=True))
@@ -39,6 +41,28 @@ class SchedularTaskResponse(BaseModel):
     valor = db.Column(db.JSON, nullable=False, default=dict)
     respondido_por_colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="SET NULL"), nullable=True)
     respondido_em = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
+
+
+class SchedularTaskCollaborator(BaseModel):
+    __tablename__ = "schedular_tarefa_colaboradores"
+    __table_args__ = (
+        db.UniqueConstraint("tarefa_id", "colaborador_id", name="uq_schedular_tarefa_colaborador"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tarefa_id = db.Column(db.Integer, db.ForeignKey("schedular_tarefas.id", ondelete="CASCADE"), nullable=False, index=True)
+    colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
+
+
+class SchedularTaskHistory(BaseModel):
+    __tablename__ = "schedular_tarefa_historico"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tarefa_id = db.Column(db.Integer, db.ForeignKey("schedular_tarefas.id", ondelete="CASCADE"), nullable=False, index=True)
+    colaborador_id = db.Column(db.Integer, db.ForeignKey("colaboradores.id", ondelete="SET NULL"), index=True)
+    acao = db.Column(db.String(30), nullable=False, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, index=True)
 
 
 class SchedularTaskEvidence(BaseModel):

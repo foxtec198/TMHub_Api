@@ -388,21 +388,29 @@ class VacancyService:
                 if value
             }),
         }
-        department_filter = rq.args.get("departamento")
-        status_filter = rq.args.get("status")
-        contract_filter = rq.args.get("contrato")
-        responsible_filter = rq.args.get("responsavel")
-        collaborator_filter = rq.args.get("colaborador")
+        def selected_values(name):
+            return {
+                value.strip()
+                for raw in rq.args.getlist(name)
+                for value in str(raw).split(",")
+                if value.strip() and value.strip() != "__all__"
+            }
+
+        department_filter = selected_values("departamento")
+        status_filter = selected_values("status")
+        contract_filter = selected_values("contrato")
+        responsible_filter = selected_values("responsavel")
+        collaborator_filter = selected_values("colaborador")
         records = [
             record for record in records
-            if (not department_filter or str(record["departamento"]) == department_filter)
-            and (not status_filter or record["status"] == status_filter)
-            and (not contract_filter or record["contrato"] == contract_filter)
-            and (not responsible_filter or record["responsavel"] == responsible_filter)
+            if (not department_filter or str(record["departamento"]) in department_filter)
+            and (not status_filter or record["status"] in status_filter)
+            and (not contract_filter or record["contrato"] in contract_filter)
+            and (not responsible_filter or record["responsavel"] in responsible_filter)
             and (
                 not collaborator_filter
-                or record.get("colaborador_saida") == collaborator_filter
-                or record.get("candidato") == collaborator_filter
+                or record.get("colaborador_saida") in collaborator_filter
+                or record.get("candidato") in collaborator_filter
             )
         ]
 

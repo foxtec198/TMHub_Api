@@ -319,13 +319,25 @@ class MovementService:
             end = _date(rq.args.get("fim"), end=True)
         except ValueError as error:
             return jsonify(str(error)), 400
-        product_id = rq.args.get("produto_id", type=int)
-        movement_type = str(rq.args.get("tipo") or "").strip().lower() or None
-        employee_id = rq.args.get("colaborador_id", type=int)
-        center_id = rq.args.get("centro_custo_id", type=int)
-        if movement_type and movement_type not in {"entrada", "saida"}:
+        def selected_values(name, cast=str):
+            values = []
+            for raw in rq.args.getlist(name):
+                for value in str(raw).split(","):
+                    try:
+                        parsed = cast(value.strip())
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed not in values:
+                        values.append(parsed)
+            return values
+
+        product_ids = selected_values("produto_id", int)
+        movement_types = selected_values("tipo", lambda value: value.lower())
+        employee_ids = selected_values("colaborador_id", int)
+        center_ids = selected_values("centro_custo_id", int)
+        if movement_types and not set(movement_types).issubset({"entrada", "saida"}):
             return jsonify("Tipo de movimentação inválido."), 400
-        if center_id and not can_access_cost_center(token_data, center_id):
+        if any(not can_access_cost_center(token_data, center_id) for center_id in center_ids):
             return jsonify("Você não possui acesso a este contrato."), 403
 
         query = Movement.query.options(selectinload(Movement.destinatarios))
@@ -333,10 +345,10 @@ class MovementService:
             query = query.filter(Movement.data_hora >= start)
         if end:
             query = query.filter(Movement.data_hora < end)
-        if product_id:
-            query = query.filter(Movement.item_id == product_id)
-        if movement_type:
-            query = query.filter(Movement.tipo == movement_type)
+        if product_ids:
+            query = query.filter(Movement.item_id.in_(product_ids))
+        if movement_types:
+            query = query.filter(Movement.tipo.in_(movement_types))
         movements = query.order_by(Movement.data_hora.desc()).all()
 
         allowed_ids = allowed_cost_center_ids(token_data)
@@ -347,26 +359,26 @@ class MovementService:
                 recipients = [r for r in recipients if r.centro_custo_id in allowed_ids]
                 if not recipients:
                     continue
-            if employee_id:
-                recipients = [r for r in recipients if r.colaborador_id == employee_id]
+            if employee_ids:
+                recipients = [r for r in recipients if r.colaborador_id in employee_ids]
                 if not recipients:
                     continue
-            if center_id:
-                recipients = [r for r in recipients if r.centro_custo_id == center_id]
+            if center_ids:
+                recipients = [r for r in recipients if r.centro_custo_id in center_ids]
                 if not recipients:
                     continue
             visible_quantity = (
                 sum(recipient.quantidade for recipient in recipients)
                 if movement.destinatarios and (
-                    employee_id or center_id or allowed_ids is not None
+                    employee_ids or center_ids or allowed_ids is not None
                 )
                 else movement.quantidade
             )
             filtered.append((movement, recipients, visible_quantity))
 
         products_query = Product.query
-        if product_id:
-            products_query = products_query.filter(Product.id == product_id)
+        if product_ids:
+            products_query = products_query.filter(Product.id.in_(product_ids))
         products = products_query.order_by(Product.nome).all()
         category_map = {
             category.id: str(category.nome or "").strip().upper()
