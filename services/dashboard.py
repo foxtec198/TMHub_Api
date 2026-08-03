@@ -42,7 +42,7 @@ class DashboardService:
             .join(Cargos, Cargos.id == Employees.cargo)
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .outerjoin(Cities, Cities.id == CostCenters.cidade_id)
-            .filter(Employees.situacao.in_([1, 8]), CostCenters.departamento.notin_([0, 10, 24]))
+            .filter(CostCenters.departamento.notin_([0, 10, 24]))
         )
         
 
