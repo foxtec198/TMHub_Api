@@ -31,6 +31,8 @@ def _data_channel(path, method):
         return "dashboard.logistica" if path.endswith("/dashboard") else "estoque.movimentos"
     if path.startswith("/admissao/vagas"):
         return "admissao"
+    if path.startswith("/rescisoes"):
+        return "rescisoes"
     if path == "/controle-faltas":
         return "controle_faltas"
     if path.startswith("/glosas"):
