@@ -18,6 +18,7 @@ from routes.movimentos import movimentos_bp
 from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
 from routes.pcd import pcd_bp
+from routes.rescisoes import termination_bp
 from routes.filiais import branch_bp
 from routes.controle_faltas import absence_control_bp
 from routes.glosas import disallowance_bp, disallowance_files_bp
@@ -57,6 +58,9 @@ blueprints = {
 
     #Admissão
     admissao_bp: "/admissao/vagas",
+
+    #Rescisões
+    termination_bp: "/rescisoes",
 
     #Indicadores
     pcd_bp: "/pcd",
