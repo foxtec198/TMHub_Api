@@ -13,6 +13,9 @@ class Employees(BaseModel):
     data_admissao = db.Column(db.DateTime, default=dt.now())
     cargo = db.Column(db.Integer)
     carga_horaria  =  db.Column(db.Integer)
+    # A coluna ja e preenchida pela importacao de colaboradores e e usada
+    # somente como base da provisao no Controle de Rescisoes.
+    salario = db.Column(db.Numeric(14, 2))
 
     # Controle de PCD (Pessoa com Deficiência)
     pcd = db.Column(db.Boolean, nullable=False, default=False)
