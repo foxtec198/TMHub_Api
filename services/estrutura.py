@@ -5,7 +5,7 @@ from models.estrutura import StructureAsset, StructureLocation
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
 from models.supervisores import Supervisors
-from services.schedular import SchedularService
+from services.tm_ops import TMOpsService
 from utils.db import db
 from utils.filial_scope import (
     apply_cost_center_scope,
@@ -245,7 +245,7 @@ class StructureService:
             return jsonify("Você não possui acesso à filial deste contrato."), 403
 
         if kind == "local":
-            now = SchedularService._now()
+            now = TMOpsService._now()
             routines = SchedularRoutine.query.filter_by(local_id=item.id).all()
             handled_ids = set()
             for routine in routines:
@@ -259,7 +259,7 @@ class StructureService:
                 for current in related:
                     if current.id in handled_ids:
                         continue
-                    SchedularService._remove_routine_operationally(current, now)
+                    TMOpsService._remove_routine_operationally(current, now)
                     handled_ids.add(current.id)
 
             # A routine may also be linked to this local as an additional
@@ -268,7 +268,7 @@ class StructureService:
                 estrutura_id=item.id,
             ).all()
             for link in links:
-                SchedularService._cancel_unfinished_tasks(
+                TMOpsService._cancel_unfinished_tasks(
                     SchedularTask.query.filter(
                         SchedularTask.rotina_estrutura_id == link.id,
                     ),
