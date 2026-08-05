@@ -606,8 +606,8 @@ class TerminationService:
             days_worked = int(
                 body.get("dias_saldo")
                 if body.get("dias_saldo") not in (None, "")
-                else calculation_date.day
-            )
+                else min(calculation_date.day, 30)
+)
             thirteenth_months = int(
                 body.get("avos_decimo_terceiro")
                 if body.get("avos_decimo_terceiro") not in (None, "")
