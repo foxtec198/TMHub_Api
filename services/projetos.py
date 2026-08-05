@@ -121,10 +121,40 @@ class ProjectService:
             for card, _ in completed
             if card.concluida_em and (card.data_inicio or card.created_at)
         ]
-        employees = {
-            employee.id: employee.nome
-            for employee in Users.query.filter(Users.id.in_([member for card, _ in filtered for member in card_members[card.id]])).all()
+        projects_query = Project.query.filter(Project.id.in_(project_ids or [0]))
+        if project_filter:
+            projects_query = projects_query.filter(Project.id.in_(project_filter))
+        projects = projects_query.order_by(Project.nome.asc()).all()
+        project_map = {project.id: project for project in projects}
+        project_member_rows = ProjectMember.query.filter(
+            ProjectMember.project_id.in_(project_map or [0])
+        ).all()
+        participant_ids = {
+            row.employee_id for row in project_member_rows if row.employee_id
         }
+        assigned_ids = {
+            member
+            for card, _ in filtered
+            for member in card_members[card.id]
+        }
+        employee_rows = Users.query.filter(
+            Users.id.in_(participant_ids | assigned_ids or {0})
+        ).all()
+        employees = {employee.id: employee.nome for employee in employee_rows}
+        project_members = defaultdict(list)
+        for row in project_member_rows:
+            employee = next(
+                (item for item in employee_rows if item.id == row.employee_id),
+                None,
+            )
+            if not employee:
+                continue
+            project_members[row.project_id].append({
+                "id": employee.id,
+                "nome": employee.nome,
+                "iniciais": self._initials(employee.nome),
+                "avatarColor": self._color(employee.id),
+            })
         by_employee = defaultdict(lambda: {"cards": 0, "concluidos": 0, "horas_execucao": []})
         for card, done in filtered:
             hours = None
@@ -135,7 +165,6 @@ class ProjectService:
                 by_employee[member_id]["concluidos"] += int(done)
                 if hours is not None:
                     by_employee[member_id]["horas_execucao"].append(hours)
-        projects = Project.query.filter(Project.id.in_(project_ids or [0])).all()
         project_cards = defaultdict(list)
         for card, done in filtered:
             project_cards[column_project[card.column_id]].append((card, done))
@@ -145,9 +174,58 @@ class ProjectService:
             project_rows.append({
                 "id": project.id,
                 "nome": project.nome,
+                "cor": project.cor,
                 "cards": len(rows),
+                "participantes": len(project_members[project.id]),
                 "atrasado": any(not done and card.data_fim and card.data_fim < now for card, done in rows),
             })
+        status_counts = {"abertas": 0, "andamento": 0, "concluidas": 0}
+        within_deadline = 0
+        outside_deadline = 0
+        timeline_rows = []
+        for card, done in filtered:
+            status = column_status.get(card.column_id, "")
+            if done:
+                status_key = "concluida"
+                status_counts["concluidas"] += 1
+            elif "andamento" in status or "progresso" in status:
+                status_key = "andamento"
+                status_counts["andamento"] += 1
+            else:
+                status_key = "aberta"
+                status_counts["abertas"] += 1
+
+            is_outside = bool(
+                card.data_fim
+                and (
+                    (done and card.concluida_em and card.concluida_em > card.data_fim)
+                    or (not done and card.data_fim < now)
+                )
+            )
+            outside_deadline += int(is_outside)
+            within_deadline += int(not is_outside)
+            project = project_map.get(column_project.get(card.column_id))
+            timeline_rows.append({
+                "id": card.id,
+                "titulo": card.titulo,
+                "projeto": project.nome if project else "Projeto removido",
+                "status": status_key,
+                "data_inicio": card.data_inicio.isoformat() if card.data_inicio else None,
+                "data_fim": card.data_fim.isoformat() if card.data_fim else None,
+                "concluida_em": card.concluida_em.isoformat() if card.concluida_em else None,
+                "membros": [
+                    {
+                        "id": member_id,
+                        "nome": employees.get(member_id, "Colaborador removido"),
+                        "iniciais": self._initials(employees.get(member_id, "?")),
+                        "avatarColor": self._color(member_id),
+                    }
+                    for member_id in card_members[card.id]
+                ],
+            })
+        timeline_rows.sort(
+            key=lambda row: row["data_inicio"] or row["data_fim"] or "9999"
+        )
         return jsonify({
             "resumo": {
                 "projetos": len(project_rows), "cards": total, "abertos": total - len(completed),
@@ -157,6 +235,14 @@ class ProjectService:
                 "projetos_no_prazo": sum(1 for row in project_rows if not row["atrasado"]),
                 "percentual_conclusao": round((len(completed) / total * 100) if total else 0, 1),
                 "tempo_medio_horas": round(sum(duration_rows) / len(duration_rows), 2) if duration_rows else None,
+                "participantes": len(participant_ids),
+                "status_abertas": status_counts["abertas"],
+                "status_andamento": status_counts["andamento"],
+                "status_concluidas": status_counts["concluidas"],
+                "dentro_prazo": within_deadline,
+                "fora_prazo": outside_deadline,
+                "percentual_dentro_prazo": round((within_deadline / total * 100) if total else 0, 1),
+                "percentual_fora_prazo": round((outside_deadline / total * 100) if total else 0, 1),
             },
             "performance_colaboradores": [
                 {"colaborador_id": member_id, "colaborador": employees.get(member_id, "Colaborador removido"),
@@ -165,14 +251,27 @@ class ProjectService:
                 for member_id, data in by_employee.items()
             ],
             "cards": [
-                {"id": card.id, "titulo": card.titulo, "projeto": next((project.nome for project in projects if project.id == column_project[card.column_id]), None),
-                 "data_inicio": card.data_inicio, "data_fim": card.data_fim, "concluida_em": card.concluida_em,
+                {"id": card.id, "titulo": card.titulo, "projeto": project_map.get(column_project[card.column_id]).nome if project_map.get(column_project[card.column_id]) else None,
+                 "data_inicio": card.data_inicio.isoformat() if card.data_inicio else None,
+                 "data_fim": card.data_fim.isoformat() if card.data_fim else None,
+                 "concluida_em": card.concluida_em.isoformat() if card.concluida_em else None,
                  "atrasado": (card, done) in overdue,
                  "atraso_horas": round((now - card.data_fim).total_seconds() / 3600, 2) if not done and card.data_fim and card.data_fim < now else 0,
                  "tempo_execucao_horas": round((card.concluida_em - (card.data_inicio or card.created_at)).total_seconds() / 3600, 2) if card.concluida_em and (card.data_inicio or card.created_at) else None}
                 for card, done in filtered
             ],
             "projetos": project_rows,
+            "participantes_por_projeto": [
+                {
+                    "projeto_id": project.id,
+                    "projeto": project.nome,
+                    "cor": project.cor,
+                    "membros": project_members[project.id],
+                }
+                for project in projects
+                if project_members[project.id]
+            ],
+            "timeline": timeline_rows,
             "filtros": {
                 "projetos": [
                     {"label": project["nome"], "value": project["id"]}

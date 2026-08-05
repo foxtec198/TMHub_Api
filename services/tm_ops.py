@@ -1,11 +1,12 @@
 from datetime import datetime as dt, timedelta
+from math import asin, cos, radians, sin, sqrt
 from os import getenv
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request, send_from_directory
-from sqlalchemy import func, or_
+from sqlalchemy import and_, case, func, or_
 from werkzeug.utils import secure_filename
 
 from models.colaboradores import Employees
@@ -109,6 +110,76 @@ class TMOpsService:
     @staticmethod
     def _now():
         return dt.now(SYSTEM_TZ)
+
+    @staticmethod
+    def _with_system_timezone(value):
+        if not value:
+            return None
+        return (
+            value.replace(tzinfo=SYSTEM_TZ)
+            if value.tzinfo is None
+            else value.astimezone(SYSTEM_TZ)
+        )
+
+    @classmethod
+    def _task_execution_metrics(cls, task, history_rows, geolocation_rows):
+        """Calculates operational metrics from persisted task audit data."""
+        now = cls._now()
+        started_at = cls._with_system_timezone(task.iniciada_em)
+        ended_at = cls._with_system_timezone(
+            task.concluida_em or task.cancelada_em
+        ) or now
+        elapsed_seconds = (
+            max(0, round((ended_at - started_at).total_seconds()))
+            if started_at
+            else 0
+        )
+
+        paused_seconds = 0
+        pause_started_at = None
+        for entry in history_rows:
+            action_at = cls._with_system_timezone(entry.created_at)
+            if entry.acao == "pausar" and action_at and pause_started_at is None:
+                pause_started_at = action_at
+            elif (
+                entry.acao in {"continuar", "finalizar", "cancelar"}
+                and action_at
+                and pause_started_at
+            ):
+                paused_seconds += max(
+                    0, round((action_at - pause_started_at).total_seconds())
+                )
+                pause_started_at = None
+
+        if task.status == "pausada":
+            pause_started_at = pause_started_at or cls._with_system_timezone(
+                task.pausada_em
+            )
+            if pause_started_at:
+                paused_seconds += max(
+                    0, round((now - pause_started_at).total_seconds())
+                )
+
+        distance_meters = 0.0
+        for previous, current in zip(geolocation_rows, geolocation_rows[1:]):
+            latitude_delta = radians(current.latitude - previous.latitude)
+            longitude_delta = radians(current.longitude - previous.longitude)
+            latitude_a = radians(previous.latitude)
+            latitude_b = radians(current.latitude)
+            haversine = (
+                sin(latitude_delta / 2) ** 2
+                + cos(latitude_a)
+                * cos(latitude_b)
+                * sin(longitude_delta / 2) ** 2
+            )
+            distance_meters += 2 * 6_371_000 * asin(min(1, sqrt(haversine)))
+
+        return {
+            "distancia_percorrida_metros": round(distance_meters, 1),
+            "tempo_decorrido_segundos": elapsed_seconds,
+            "tempo_pausado_segundos": paused_seconds,
+            "metricas_calculadas_em": now.isoformat(),
+        }
 
     @staticmethod
     def _step(routine):
@@ -988,7 +1059,12 @@ class TMOpsService:
             and deadline < TMOpsService._now()
             and task.status in {"aberta", "em_andamento", "pausada"}
         )
-        return {**task.to_dict(), "origem": task.origem or "rotina", "tarefa": routine.nome if routine else "Rotina removida", "rotina": routine.nome if routine else None,
+        execution_metrics = TMOpsService._task_execution_metrics(
+            task,
+            history_rows,
+            geolocation_rows,
+        )
+        return {**task.to_dict(), **execution_metrics, "origem": task.origem or "rotina", "tarefa": routine.nome if routine else "Rotina removida", "rotina": routine.nome if routine else None,
                 "colaborador": employee.nome if employee else None,
                 "colaborador_ids": collaborator_ids,
                 "colaboradores": [{"id": row.id, "nome": row.nome, "matricula": row.matricula} for row in collaborators],
@@ -1020,15 +1096,110 @@ class TMOpsService:
                 "local": local.nome if local else None,
                 "checklist": checklist.nome if checklist else None, "itens": [{**item.to_dict(), "resposta": response_payload(item), "evidencias_configuradas": TMOpsService._configured_evidences(item)} for item in items], "atrasada": is_late}
 
+    @staticmethod
+    def _task_summary_payload(task, routine_name, employee_name, local_name):
+        deadline = task.prazo_em or (
+            task.agendada_para
+            + timedelta(minutes=int(task.estimativa_minutos or 15))
+            if task.agendada_para
+            else None
+        )
+        is_late = bool(
+            deadline
+            and deadline < TMOpsService._now()
+            and task.status in {"aberta", "em_andamento", "pausada"}
+        )
+        return {
+            **task.to_dict(),
+            "origem": task.origem or "rotina",
+            "tarefa": routine_name or "Rotina removida",
+            "rotina": routine_name,
+            "colaborador": employee_name,
+            "local": local_name,
+            "atrasada": is_late,
+        }
+
     def read_tasks(self):
         _, error = tmhub_admin_session()
         if error:
             return error
-        query = SchedularTask.query
+        query = db.session.query(
+            SchedularTask,
+            SchedularRoutine.nome.label("routine_name"),
+            Employees.nome.label("employee_name"),
+            StructureLocation.nome.label("local_name"),
+        ).outerjoin(
+            SchedularRoutine,
+            SchedularRoutine.id == SchedularTask.rotina_id,
+        ).outerjoin(
+            Employees,
+            Employees.id == SchedularTask.colaborador_id,
+        ).outerjoin(
+            StructureLocation,
+            StructureLocation.id == SchedularTask.local_id,
+        )
         status = request.args.get("status")
         if status:
-            query = query.filter_by(status=status)
-        return jsonify([self._task_payload(task) for task in query.order_by(SchedularTask.agendada_para.desc()).all()])
+            query = query.filter(SchedularTask.status == status)
+        search = str(request.args.get("q") or "").strip()
+        if search:
+            search_filter = f"%{search}%"
+            query = query.filter(or_(
+                SchedularRoutine.nome.ilike(search_filter),
+                Employees.nome.ilike(search_filter),
+                StructureLocation.nome.ilike(search_filter),
+            ))
+
+        paginated = "page" in request.args or "limit" in request.args
+        if not paginated:
+            rows = query.order_by(SchedularTask.agendada_para.desc()).all()
+            return jsonify([
+                self._task_summary_payload(task, routine_name, employee_name, local_name)
+                for task, routine_name, employee_name, local_name in rows
+            ])
+
+        page = max(1, request.args.get("page", default=1, type=int) or 1)
+        limit = min(50, max(5, request.args.get("limit", default=10, type=int) or 10))
+        filtered_total = query.count()
+        rows = query.order_by(SchedularTask.agendada_para.desc()).offset(
+            (page - 1) * limit
+        ).limit(limit).all()
+        now = self._now()
+        stats = db.session.query(
+            func.count(SchedularTask.id),
+            func.count(case((SchedularTask.status == "aberta", 1))),
+            func.count(case((SchedularTask.status == "pausada", 1))),
+            func.count(case((SchedularTask.status == "concluida", 1))),
+            func.count(case((and_(
+                SchedularTask.status.in_(("aberta", "em_andamento", "pausada")),
+                func.coalesce(SchedularTask.prazo_em, SchedularTask.agendada_para) < now,
+            ), 1))),
+        ).one()
+        return jsonify({
+            "items": [
+                self._task_summary_payload(task, routine_name, employee_name, local_name)
+                for task, routine_name, employee_name, local_name in rows
+            ],
+            "total": filtered_total,
+            "page": page,
+            "limit": limit,
+            "stats": {
+                "total": stats[0] or 0,
+                "abertas": stats[1] or 0,
+                "pausadas": stats[2] or 0,
+                "concluidas": stats[3] or 0,
+                "atrasadas": stats[4] or 0,
+            },
+        })
+
+    def read_task(self, task_id):
+        _, error = tmhub_admin_session()
+        if error:
+            return error
+        task = db.session.get(SchedularTask, task_id)
+        if not task:
+            return jsonify("Tarefa não encontrada."), 404
+        return jsonify(self._task_payload(task))
 
     @tm_ops_route
     def read_my_tasks(self, tm_ops_session):
@@ -1128,7 +1299,26 @@ class TMOpsService:
         except ValueError as error:
             return jsonify(str(error)), 400
         db.session.commit()
-        return jsonify({"message": "Localização registrada."}), 201
+        history_rows = SchedularTaskHistory.query.filter_by(
+            tarefa_id=task.id,
+        ).order_by(
+            SchedularTaskHistory.created_at.asc(),
+            SchedularTaskHistory.id.asc(),
+        ).all()
+        geolocation_rows = SchedularTaskGeolocation.query.filter_by(
+            tarefa_id=task.id,
+        ).order_by(
+            SchedularTaskGeolocation.capturada_em.asc(),
+            SchedularTaskGeolocation.id.asc(),
+        ).all()
+        return jsonify({
+            "message": "Localização registrada.",
+            "metricas": self._task_execution_metrics(
+                task,
+                history_rows,
+                geolocation_rows,
+            ),
+        }), 201
 
     @tm_ops_route
     def save_task_answers(self, task_id, tm_ops_session):
