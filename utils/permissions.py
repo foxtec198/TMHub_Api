@@ -29,6 +29,7 @@ PERMISSION_CATALOG = [
     {"key": "estrutura", "label": "Estrutura", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "schedular", "label": "TM Schedular", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "dashboard_pcd", "label": "Dashboard PCD", "group": "Dashboards", "actions": ["view"]},
+    {"key": "dashboard_rescisoes","label": "Dashboard de Rescisões","group": "Dashboards","actions": ["view"],},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
@@ -161,6 +162,7 @@ def request_permission(path, method):
         ("/projetos", "projetos", {"GET": "view", "POST": "create", "PATCH": "edit", "PUT": "edit", "DELETE": "edit"}),
         ("/estrutura", "estrutura", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/pcd", "dashboard_pcd", {"GET": "view"}),
+        ("/dash/rescisoes", "dashboard_rescisoes", {"GET": "view"}),
     ]
     for prefix, screen, actions in rules:
         if path == prefix or path.startswith(f"{prefix}/"):
