@@ -1,10 +1,10 @@
 from flask import Blueprint, request
 
-from services.schedular import SchedularService
+from services.tm_ops import TMOpsService
 
 
 schedular_bp = Blueprint("Schedular", __name__)
-service = SchedularService()
+service = TMOpsService()
 
 
 @schedular_bp.post("/login")
@@ -20,6 +20,11 @@ def session():
 @schedular_bp.route("/acessos", methods=["GET", "POST"])
 def provision_access():
     return service.read_accesses() if request.method == "GET" else service.provision_access()
+
+
+@schedular_bp.get("/acessos/<int:employee_id>")
+def access_detail(employee_id):
+    return service.read_access_detail(employee_id)
 
 
 @schedular_bp.route("/rotinas", methods=["GET", "POST"])
