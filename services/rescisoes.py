@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date, datetime as dt
+from datetime import date, datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from unicodedata import normalize
@@ -27,6 +27,11 @@ from utils.socket import socketio
 
 
 MONEY = Decimal("0.01")
+FGTS_RATE = Decimal("0.08")
+EXPERIENCE_DAYS = 90
+NOTICE_REDUCTION_DAYS = 7
+EXPERIENCE_REASONS = {"pedido_demissao", "termino_contrato"}
+FGTS_BALANCE_DISABLED_REASONS = {"pedido_demissao", "justa_causa"}
 VALID_REASONS = {
     "sem_justa_causa": "Dispensa sem justa causa",
     "pedido_demissao": "Pedido de demissao",
@@ -176,6 +181,17 @@ def _vacation_months(admission, dismissal):
     if (dismissal - remainder_start).days + 1 >= 15:
         months += 1
     return min(12, months)
+
+
+def _worked_months(admission, dismissal):
+    """Estima meses trabalhados; fração final de 15 dias conta como um mês."""
+    months = max(0, (dismissal.year - admission.year) * 12 + dismissal.month - admission.month)
+    while months and _add_months(admission, months) > dismissal:
+        months -= 1
+    remainder_start = _add_months(admission, months)
+    if remainder_start <= dismissal and (dismissal - remainder_start).days + 1 >= 15:
+        months += 1
+    return months
 
 
 def _branch_names(center_ids):
@@ -556,23 +572,86 @@ class TerminationService:
         notice_type = str(body.get("tipo_aviso") or "indenizado").strip()
         if reason not in VALID_REASONS:
             return jsonify("Motivo de rescisao invalido."), 400
+
+        experience_end = admission + timedelta(days=EXPERIENCE_DAYS - 1)
+        in_experience_period = dismissal <= experience_end
+        if in_experience_period and reason not in EXPERIENCE_REASONS:
+            return jsonify(
+                "Durante o periodo de experiencia, use Pedido de demissao ou Termino de contrato."
+            ), 400
+        if in_experience_period:
+            notice_type = "nao_aplicavel"
         if notice_type not in VALID_NOTICE:
             return jsonify("Tipo de aviso previo invalido."), 400
 
+        notice_days = min(90, 30 + 3 * _complete_years(admission, dismissal))
+        worked_notice_end = None
+        worked_notice_days = 0
+        calculation_date = dismissal
+        if (
+            notice_type == "trabalhado"
+            and reason in {"sem_justa_causa", "acordo"}
+            and not in_experience_period
+        ):
+            worked_notice_days = max(0, notice_days - NOTICE_REDUCTION_DAYS)
+            worked_notice_end = dismissal + timedelta(days=worked_notice_days)
+            calculation_date = worked_notice_end
+
         try:
             salary = _money(salary_value, "Salario")
-            fgts_balance = _money(body.get("saldo_fgts"), "Saldo FGTS")
             other_earnings = _money(body.get("outras_verbas"), "Outras verbas")
             manual_discounts = _money(body.get("descontos"), "Descontos")
             full_vacations = max(0, int(body.get("ferias_integrais") or 0))
             double_vacations = max(0, int(body.get("ferias_em_dobro") or 0))
-            days_worked = int(body.get("dias_saldo") if body.get("dias_saldo") not in (None, "") else dismissal.day)
-            thirteenth_months = int(body.get("avos_decimo_terceiro") if body.get("avos_decimo_terceiro") not in (None, "") else _thirteenth_months(admission, dismissal))
-            vacation_months = int(body.get("avos_ferias") if body.get("avos_ferias") not in (None, "") else _vacation_months(admission, dismissal))
+            days_worked = int(
+                body.get("dias_saldo")
+                if body.get("dias_saldo") not in (None, "")
+                else min(calculation_date.day, 30)
+)
+            thirteenth_months = int(
+                body.get("avos_decimo_terceiro")
+                if body.get("avos_decimo_terceiro") not in (None, "")
+                else _thirteenth_months(admission, calculation_date)
+            )
+            vacation_months = int(
+                body.get("avos_ferias")
+                if body.get("avos_ferias") not in (None, "")
+                else _vacation_months(admission, calculation_date)
+            )
         except (TypeError, ValueError) as error:
             return jsonify(str(error) or "Parametros de calculo invalidos."), 400
         if not 0 <= days_worked <= 30 or not 0 <= thirteenth_months <= 12 or not 0 <= vacation_months <= 12:
             return jsonify("Dias de saldo devem estar entre 0 e 30 e os avos entre 0 e 12."), 400
+
+        months_worked = _worked_months(admission, calculation_date)
+        estimated_monthly_fgts = (salary * FGTS_RATE).quantize(MONEY)
+        estimated_regular_balance = (
+            estimated_monthly_fgts * Decimal(months_worked)
+        ).quantize(MONEY)
+        estimated_thirteenth_balance = (
+            estimated_monthly_fgts * Decimal(months_worked) / Decimal("12")
+        ).quantize(MONEY)
+        estimated_fgts_balance = (
+            estimated_regular_balance + estimated_thirteenth_balance
+        ).quantize(MONEY)
+
+        fgts_balance_disabled = reason in FGTS_BALANCE_DISABLED_REASONS
+        raw_fgts_balance = body.get("saldo_fgts")
+        has_manual_fgts_balance = (
+            not fgts_balance_disabled and raw_fgts_balance not in (None, "")
+        )
+        try:
+            if fgts_balance_disabled:
+                fgts_balance = Decimal("0")
+                fgts_balance_source = "desabilitado"
+            elif has_manual_fgts_balance:
+                fgts_balance = _money(raw_fgts_balance, "Saldo FGTS")
+                fgts_balance_source = "informado"
+            else:
+                fgts_balance = estimated_fgts_balance
+                fgts_balance_source = "estimado"
+        except (TypeError, ValueError) as error:
+            return jsonify(str(error) or "Saldo FGTS invalido."), 400
 
         salary_balance = (salary / Decimal("30") * days_worked).quantize(MONEY)
         has_proportional_rights = reason != "justa_causa"
@@ -584,7 +663,6 @@ class TerminationService:
         double_vacation_base = (salary * Decimal("2") * double_vacations).quantize(MONEY)
         double_vacation_third = (double_vacation_base / Decimal("3")).quantize(MONEY)
 
-        notice_days = min(90, 30 + 3 * _complete_years(admission, dismissal))
         notice_earnings = Decimal("0")
         notice_discount = Decimal("0")
         if notice_type == "indenizado" and reason in {"sem_justa_causa", "acordo"}:
@@ -606,10 +684,20 @@ class TerminationService:
             "outras_verbas": other_earnings,
         }
         earnings = sum(components.values(), Decimal("0")).quantize(MONEY)
-        discounts = (manual_discounts + notice_discount).quantize(MONEY)
+        fgts_termination_base = salary_balance + notice_earnings
+        fgts_on_termination = (fgts_termination_base * FGTS_RATE).quantize(MONEY)
+        fgts_on_thirteenth = (thirteenth * FGTS_RATE).quantize(MONEY)
+        fgts_termination = (fgts_on_termination + fgts_on_thirteenth).quantize(MONEY)
+
+        discount_components = {
+            "descontos_informados": manual_discounts,
+            "desconto_aviso_previo": notice_discount,
+            "fgts_sobre_rescisao": fgts_on_termination,
+            "fgts_sobre_decimo_terceiro": fgts_on_thirteenth,
+        }
+        discounts = sum(discount_components.values(), Decimal("0")).quantize(MONEY)
         liquid = (earnings - discounts).quantize(MONEY)
-        fgts_base = salary_balance + thirteenth + notice_earnings
-        fgts_termination = (fgts_base * Decimal("0.08")).quantize(MONEY)
+
         fine_rate = Decimal("0.40") if reason == "sem_justa_causa" else Decimal("0.20") if reason == "acordo" else Decimal("0")
         fgts_fine = ((fgts_balance + fgts_termination) * fine_rate).quantize(MONEY)
         company_cost = (earnings + fgts_termination + fgts_fine).quantize(MONEY)
@@ -621,23 +709,48 @@ class TerminationService:
                 "nome": employee.nome,
                 "salario": float(salary),
                 "data_admissao": admission.isoformat(),
-                "data_demissao": dismissal.isoformat(),
+                "data_informada": dismissal.isoformat(),
+                "data_demissao": calculation_date.isoformat(),
             },
             "parametros": {
                 "motivo": reason,
                 "motivo_label": VALID_REASONS[reason],
                 "tipo_aviso": notice_type,
-                "dias_aviso": notice_days if notice_earnings else 0,
+                "periodo_experiencia": in_experience_period,
+                "dias_periodo_experiencia": EXPERIENCE_DAYS,
+                "data_fim_experiencia": experience_end.isoformat(),
+                "dias_aviso": notice_days if notice_type in {"indenizado", "trabalhado"} else 0,
+                "dias_reducao_aviso": NOTICE_REDUCTION_DAYS if worked_notice_end else 0,
+                "dias_aviso_trabalhado": worked_notice_days,
+                "data_inicio_aviso_trabalhado": dismissal.isoformat() if worked_notice_end else None,
+                "data_termino_aviso_trabalhado": worked_notice_end.isoformat() if worked_notice_end else None,
+                "data_base_calculo": calculation_date.isoformat(),
                 "dias_saldo": days_worked,
                 "avos_decimo_terceiro": thirteenth_months if has_proportional_rights else 0,
                 "avos_ferias": vacation_months if has_proportional_rights else 0,
                 "percentual_multa_fgts": float(fine_rate * 100),
             },
             "verbas": {key: float(value) for key, value in components.items()},
+            "descontos_detalhados": {
+                key: float(value) for key, value in discount_components.items()
+            },
             "desconto_aviso": float(notice_discount),
             "descontos": float(discounts),
             "proventos": float(earnings),
             "liquido_estimado": float(liquid),
+            "fgts": {
+                "percentual": float(FGTS_RATE * 100),
+                "meses_trabalhados_estimados": months_worked,
+                "deposito_mensal_estimado": float(estimated_monthly_fgts),
+                "saldo_mensal_estimado": float(estimated_regular_balance),
+                "fgts_decimo_terceiro_historico_estimado": float(estimated_thirteenth_balance),
+                "saldo_estimado": float(estimated_fgts_balance),
+                "saldo_utilizado": float(fgts_balance),
+                "saldo_origem": fgts_balance_source,
+                "saldo_desabilitado": fgts_balance_disabled,
+                "fgts_sobre_rescisao": float(fgts_on_termination),
+                "fgts_sobre_decimo_terceiro": float(fgts_on_thirteenth),
+            },
             "fgts_rescisorio_estimado": float(fgts_termination),
             "multa_fgts_estimada": float(fgts_fine),
             "custo_empresa_estimado": float(company_cost),
@@ -645,8 +758,8 @@ class TerminationService:
                 "Provisao estimada; valide o calculo final no sistema de folha/eSocial.",
                 "INSS, IRRF, medias variaveis, convencao coletiva e eventos ja pagos nao foram calculados.",
                 "Os avos de ferias usam a ultima data de aniversario da admissao e devem ser ajustados se houver historico de ferias diferente.",
-                "O FGTS estimado usa 8% sobre saldo de salario, 13o proporcional e aviso indenizado.",
-            ],
+                "O saldo estimado do FGTS usa o salario atual, 8% por mes estimado e uma parcela anual proporcional referente ao 13o.",
+                ],
         }), 200
 
     @safe_route
