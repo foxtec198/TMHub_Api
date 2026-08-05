@@ -37,19 +37,19 @@ with app.app_context():
     seed_default_news()
 
 
-def _schedular_worker():
+def _tm_ops_worker():
     """Reprograma rotinas vencidas sem depender de uma tela aberta."""
-    from services.schedular import SchedularService
+    from services.tm_ops import TMOpsService
     while True:
         socketio.sleep(60)
         try:
             with app.app_context():
-                SchedularService._process_due_routines()
+                TMOpsService._process_due_routines()
         except Exception as error:
-            app.logger.exception("Falha ao processar rotinas do Schedular: %s", error)
+            app.logger.exception("Falha ao processar rotinas do TM Ops: %s", error)
 
 
-socketio.start_background_task(_schedular_worker)
+socketio.start_background_task(_tm_ops_worker)
 
 @app.route("/")
 @app.route("/docs")

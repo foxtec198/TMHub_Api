@@ -22,7 +22,7 @@ def enforce_auth_state():
     normalized_path = request.path.rstrip("/") or "/"
     # O Schedular possui autenticaÃ§Ã£o e sessÃ£o prÃ³prias, validadas pelas
     # rotas desse mÃ³dulo. Nunca tente interpretar seu token como usuÃ¡rio TMHub.
-    if normalized_path == "/schedular" or normalized_path.startswith("/schedular/"):
+    if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")):
         return None
     if normalized_path in PUBLIC_PATHS or normalized_path.startswith(PUBLIC_PREFIXES):
         return None
