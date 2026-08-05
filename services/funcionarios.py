@@ -68,7 +68,8 @@ class EmployeesService:
         if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))
         if public_lookup:
-            emp = emp.filter(or_(Employees.situacao.is_(None), Employees.situacao != 8))
+            # O modo publico alimenta seletores globais de colaboradores e deve
+            # abranger todas as situacoes, inclusive colaboradores demitidos.
             emp = emp.limit(min(int(limit or 50), 50))
         elif limit:
             emp = emp.limit(int(limit))

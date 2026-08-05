@@ -49,6 +49,10 @@ def process_routines(): return service.process_routines()
 def tasks(): return service.read_tasks()
 
 
+@tm_ops_bp.get("/tarefas/<int:task_id>")
+def task_detail(task_id): return service.read_task(task_id)
+
+
 @tm_ops_bp.get("/tarefas/minhas")
 def my_tasks(): return service.read_my_tasks()
 
