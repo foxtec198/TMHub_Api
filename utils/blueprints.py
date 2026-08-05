@@ -27,6 +27,7 @@ from routes.importacao_colaboradores import collaborator_import_bp
 from routes.updates import updates_bp
 from routes.dashboard_pcd import dashboard_pcd_bp
 from routes.schedular import schedular_bp
+from routes.tm_ops import tm_ops_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -68,4 +69,5 @@ blueprints = {
     #Dashboards PCD
     dashboard_pcd_bp: "/dash/pcd",
     schedular_bp: "/schedular",
+    tm_ops_bp: "/tm-ops",
 }

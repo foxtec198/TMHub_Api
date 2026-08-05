@@ -5,10 +5,11 @@ from models.usuarios import Users
 from utils.db import db
 from utils.filial_scope import is_admin, is_matrix_user
 from utils.safe_route import safe_route
+from sqlalchemy.orm import selectinload
 
 class BranchService:
     @staticmethod
-    def _serialize(branch, detailed=False):
+    def _serialize(branch, detailed=False, departments=None):
         payload = {"id": branch.id, "nome": branch.nome, "ativa": branch.ativa}
         if detailed:
             payload.update(
@@ -18,10 +19,12 @@ class BranchService:
                         center.id for center in branch.centros_custo
                     ),
                     "departamentos": sorted(
-                        row[0]
-                        for row in db.session.query(filial_departamentos.c.departamento)
-                        .filter(filial_departamentos.c.filial_id == branch.id)
-                        .all()
+                        departments.get(branch.id, []) if departments is not None else (
+                            row[0]
+                            for row in db.session.query(filial_departamentos.c.departamento)
+                            .filter(filial_departamentos.c.filial_id == branch.id)
+                            .all()
+                        )
                     ),
                 }
             )
@@ -31,9 +34,22 @@ class BranchService:
     def read(self, token_data):
         if is_admin(token_data) or is_matrix_user(token_data):
             branches = (
-                Branch.query.filter(Branch.ativa.is_(True)).order_by(Branch.nome).all()
+                Branch.query.options(
+                    selectinload(Branch.usuarios),
+                    selectinload(Branch.centros_custo),
+                ).filter(Branch.ativa.is_(True)).order_by(Branch.nome).all()
             )
-            return jsonify([self._serialize(item) for item in branches]), 200
+            department_map = {branch.id: [] for branch in branches}
+            branch_ids = list(department_map)
+            if branch_ids:
+                for branch_id, department in db.session.query(
+                    filial_departamentos.c.filial_id,
+                    filial_departamentos.c.departamento,
+                ).filter(filial_departamentos.c.filial_id.in_(branch_ids)).all():
+                    department_map[branch_id].append(department)
+            return jsonify([
+                self._serialize(item, True, department_map) for item in branches
+            ]), 200
 
         user = db.session.get(Users, token_data.get("id"))
         branches = sorted(
@@ -140,10 +156,12 @@ class BranchService:
     def options(self, token_data):
         if not is_admin(token_data):
             return jsonify("Apenas administradores podem configurar filiais."), 403
-        centers = CostCenters.query.order_by(
-            CostCenters.departamento, CostCenters.local
-        ).all()
-        users = Users.query.order_by(Users.nome).all()
+        centers = db.session.query(
+            CostCenters.id, CostCenters.local, CostCenters.departamento
+        ).order_by(CostCenters.departamento, CostCenters.local).all()
+        users = db.session.query(
+            Users.id, Users.nome, Users.role
+        ).order_by(Users.nome).all()
         return (
             jsonify(
                 {

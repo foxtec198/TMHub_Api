@@ -3,16 +3,19 @@ from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.situacoes import Situations
 from utils.safe_route import safe_route
-from sqlalchemy import String, or_, cast
+from sqlalchemy import String, func, or_, cast
 from models.colaboradores import Employees, db
 from utils.filial_scope import apply_cost_center_scope
 from utils.token import decode_token
 
 class EmployeesService:
     def read(self):
+        if str(rq.args.get("fields") or "").strip().lower() == "tm_ops":
+            return self._read_tm_ops_lookup()
         search_fields = [
             Employees.nome,
             cast(Employees.matricula, String),
+            Employees.cpf,
             Cargos.nome,
             Situations.tipo,
             CostCenters.local,
@@ -65,12 +68,68 @@ class EmployeesService:
         if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))
         if public_lookup:
+            emp = emp.filter(or_(Employees.situacao.is_(None), Employees.situacao != 8))
             emp = emp.limit(min(int(limit or 50), 50))
         elif limit:
             emp = emp.limit(int(limit))
             
         emp = emp.all()  # Obtem tudo
         return jsonify([e._asdict() for e in emp]), 200
+
+    def _read_tm_ops_lookup(self):
+        """Busca leve e paginada usada pelos seletores do TM Ops."""
+        try:
+            page = max(int(rq.args.get("page", 1)), 1)
+            per_page = min(max(int(rq.args.get("per_page", 20)), 1), 50)
+        except (TypeError, ValueError):
+            return jsonify("Paginação inválida."), 400
+
+        query = db.session.query(
+            Employees.id,
+            Employees.matricula,
+            Employees.nome,
+        ).filter(Employees.situacao == 1)
+
+        access_token = rq.headers.get("Access-Token")
+        if not access_token:
+            return jsonify("Token de acesso obrigatório."), 401
+        query = apply_cost_center_scope(
+            query, Employees.centro_id, decode_token(access_token)
+        )
+
+        requested_ids = []
+        for value in str(rq.args.get("ids") or "").split(","):
+            if value.strip().isdigit():
+                requested_ids.append(int(value.strip()))
+        if requested_ids:
+            query = query.filter(Employees.id.in_(set(requested_ids)))
+        else:
+            search = str(rq.args.get("search") or "").strip()
+            if search:
+                pattern = f"{search}%"
+                filters = [Employees.nome.ilike(pattern)]
+                digits = "".join(character for character in search if character.isdigit())
+                if digits:
+                    if search.isdigit():
+                        filters.append(Employees.matricula == int(search))
+                    normalized_cpf = func.replace(
+                        func.replace(func.replace(Employees.cpf, ".", ""), "-", ""),
+                        " ",
+                        "",
+                    )
+                    filters.append(normalized_cpf.like(f"{digits}%"))
+                query = query.filter(or_(*filters))
+
+        pagination = query.order_by(Employees.nome.asc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        return jsonify({
+            "items": [row._asdict() for row in pagination.items],
+            "page": pagination.page,
+            "per_page": pagination.per_page,
+            "total": pagination.total,
+            "pages": pagination.pages,
+        }), 200
 
     @safe_route
     def create(self): ...

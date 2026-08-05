@@ -48,6 +48,7 @@ eventos Socket.IO para os módulos operacionais do
 | `/estoque/*` | Categorias, produtos e movimentações |
 | `/dash/*` | Indicadores e Ponto 48h |
 | `/projetos` | Projetos e atividades |
+| `/tm-ops` | Rotinas, checklists, tarefas e Executor do TM Ops |
 | `/rpa` | Comunicação com agentes RPA |
 
 ## Recursos principais
@@ -149,7 +150,16 @@ SMTP_STARTTLS=true
 
 # Opcional: diretório persistente para evidências
 GLOSA_EVIDENCE_DIR=
+TM_OPS_EVIDENCE_DIR=
 ```
+
+Antes de iniciar esta versão sobre uma base existente, execute
+`migrations/20260805_tm_ops_colaboradores.sql`. A migration audita acessos sem
+colaborador e duplicidades em `tm_ops_migration_audit`, migra as credenciais
+para `colaboradores` e preserva a tabela anterior como
+`schedular_acessos_legacy` para conferência e rollback operacional. Durante a
+transição, uma view gravável chamada `schedular_acessos` e um trigger mantêm
+compatibilidade com instâncias antigas da API até a publicação do novo backend.
 
 Inicie a API:
 

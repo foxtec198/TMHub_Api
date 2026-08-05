@@ -27,7 +27,7 @@ PERMISSION_CATALOG = [
     {"key": "projetos", "label": "Meus Projetos", "group": "Outros", "actions": ["view", "create", "edit"]},
     {"key": "indicador_pcd", "label": "Indicador PCD", "group": "Indicadores", "actions": ["view", "edit"]},
     {"key": "estrutura", "label": "Estrutura", "group": "Operação", "actions": ["view", "create", "edit"]},
-    {"key": "schedular", "label": "TM Schedular", "group": "Operação", "actions": ["view", "create", "edit"]},
+    {"key": "tm_ops", "label": "TM Ops", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "dashboard_pcd", "label": "Dashboard PCD", "group": "Dashboards", "actions": ["view"]},
 ]
 
@@ -56,6 +56,8 @@ def serialize_permissions(user):
     result = []
     for item in PERMISSION_CATALOG:
         row = explicit.get(item["key"])
+        if item["key"] == "tm_ops" and not row:
+            row = explicit.get("schedular")
         permissions = {}
         for action, column in ACTION_COLUMNS.items():
             if action not in item["actions"]:
@@ -73,6 +75,8 @@ def serialize_permissions(user):
 
 
 def has_permission(token_data, screen, action="view"):
+    if screen == "schedular":
+        screen = "tm_ops"
     if action not in ACTION_COLUMNS or screen not in CATALOG_BY_KEY:
         return False
     user = db.session.get(Users, (token_data or {}).get("id"))
@@ -95,6 +99,8 @@ def replace_permissions(user, payload):
         if not isinstance(item, dict):
             return "Uma ou mais permissões são inválidas."
         screen = str(item.get("screen") or "").strip()
+        if screen == "schedular":
+            screen = "tm_ops"
         if screen not in CATALOG_BY_KEY:
             return f"A tela '{screen}' não existe no catálogo de permissões."
         allowed_actions = CATALOG_BY_KEY[screen]["actions"]
