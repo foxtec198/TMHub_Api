@@ -27,6 +27,7 @@ from routes.importacao_colaboradores import collaborator_import_bp
 from routes.updates import updates_bp
 from routes.dashboard_pcd import dashboard_pcd_bp
 from routes.schedular import schedular_bp
+from routes.dashboard_rescisoes import termination_dashboard_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -50,6 +51,7 @@ blueprints = {
     structure_bp: "/estrutura",
     collaborator_import_bp: "/importacao-colaboradores",
     updates_bp: "/updates",
+    termination_dashboard_bp: "/dash/rescisoes",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
