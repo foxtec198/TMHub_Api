@@ -227,6 +227,7 @@ class RequestService:
 
     def create(self):
         bd = request.get_json()
+        public_request = str(bd.get("publico", "")).strip().lower() in {"1", "true", "sim"}
 
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
@@ -269,12 +270,10 @@ class RequestService:
             token_data = decode_token(access_token)
             if not can_access_cost_center(token_data, centro_id):
                 return jsonify("Você não possui acesso à filial deste colaborador."), 403
-            if not can_access_supervisor(token_data, supervisor_id):
+            # A tela pública registra o supervisor que abriu a requisição, mas
+            # não limita o colaborador aos contratos desse supervisor.
+            if not public_request and not can_access_supervisor(token_data, supervisor_id):
                 return jsonify("Você não possui acesso à filial deste supervisor."), 403
-        if not access_token:
-            center = db.session.get(CostCenters, centro_id)
-            if not center or center.supervisor_id != supervisor_id:
-                return jsonify("O colaborador não pertence aos contratos deste supervisor."), 403
 
         if reserva_id not in (None, 0):
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
