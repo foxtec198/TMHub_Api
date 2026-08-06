@@ -22,6 +22,7 @@ from werkzeug.utils import secure_filename
 
 ROCADA_DEPARTMENT = 92
 ROCADA_TARGET = 72
+ROCADA_SUMMER_TARGET = 107
 ROCADA_IMPORT_TAG = "[DPTO-92-ROCADA]"
 ROCADA_SUMMER_MONTHS = {12, 1, 2, 3}
 
@@ -68,7 +69,7 @@ class RocadaDisallowanceService:
     def _contractual_target(month, contractual_average):
         if month.month not in ROCADA_SUMMER_MONTHS:
             return ROCADA_TARGET
-        return max(ROCADA_TARGET, contractual_average)
+        return ROCADA_SUMMER_TARGET
 
     @classmethod
     def _historical_rows(cls):
