@@ -1,9 +1,45 @@
 from flask import request as rq, jsonify
 from utils.safe_route import safe_route
-from models.centros_de_custo import CostCenters
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from models.centros_de_custo import CostCenters, DepartmentConfiguration
+from utils.db import db
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 
 class CostsCenterService():
+    @staticmethod
+    def _settings_payload():
+        centers = CostCenters.query.order_by(
+            CostCenters.departamento,
+            CostCenters.local,
+        ).all()
+        department_numbers = sorted({
+            center.departamento for center in centers if center.departamento is not None
+        })
+        configured = {
+            item.departamento: item
+            for item in DepartmentConfiguration.query.filter(
+                DepartmentConfiguration.departamento.in_(department_numbers)
+            ).all()
+        } if department_numbers else {}
+
+        return {
+            "centros_custo": [
+                {
+                    "id": center.id,
+                    "local": center.local,
+                    "departamento": center.departamento,
+                    "capacidade_pessoas": center.capacidade_pessoas,
+                }
+                for center in centers
+            ],
+            "departamentos": [
+                {
+                    "departamento": department,
+                    "ativo": configured.get(department).ativo if department in configured else True,
+                }
+                for department in department_numbers
+            ],
+        }
+
     @safe_route
     def read(self, token_data):
         id = rq.args.get("id")
@@ -32,3 +68,58 @@ class CostsCenterService():
     @safe_route
     def delete(self):
         ...
+
+    @safe_route
+    def settings(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem configurar departamentos e contratos."), 403
+
+        return jsonify(self._settings_payload()), 200
+
+    @safe_route
+    def update_settings(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem configurar departamentos e contratos."), 403
+
+        body = rq.get_json(silent=True) or {}
+        capacities = body.get("capacidades") or []
+        departments = body.get("departamentos") or []
+        if not isinstance(capacities, list) or not isinstance(departments, list):
+            return jsonify("Formato de configuração inválido."), 400
+
+        try:
+            for item in capacities:
+                center_id = int(item.get("centro_custo_id"))
+                capacity = item.get("capacidade_pessoas")
+                if capacity in (None, ""):
+                    normalized_capacity = None
+                else:
+                    normalized_capacity = int(capacity)
+                    if normalized_capacity < 0:
+                        raise ValueError
+                center = db.session.get(CostCenters, center_id)
+                if not center:
+                    return jsonify("Centro de custo não encontrado."), 404
+                center.capacidade_pessoas = normalized_capacity
+
+            valid_departments = {
+                value for value, in db.session.query(CostCenters.departamento)
+                .filter(CostCenters.departamento.isnot(None))
+                .distinct()
+                .all()
+            }
+            for item in departments:
+                department = int(item.get("departamento"))
+                if department not in valid_departments:
+                    return jsonify("Departamento não encontrado."), 404
+                configuration = db.session.get(DepartmentConfiguration, department)
+                if not configuration:
+                    configuration = DepartmentConfiguration(departamento=department)
+                    db.session.add(configuration)
+                configuration.ativo = bool(item.get("ativo", True))
+            db.session.commit()
+        except (TypeError, ValueError):
+            db.session.rollback()
+            return jsonify("Informe capacidades inteiras iguais ou maiores que zero."), 400
+
+        return jsonify(self._settings_payload()), 200

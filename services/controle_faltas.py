@@ -23,6 +23,7 @@ from utils.socket import socketio
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 JUSTIFIED_REASON_TERMS = ("ATESTADO", "AFASTAMENTO", "DECLARAÇÃO", "DECLARAÃ‡ÃƒO")
+NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FÉRIAS", "FERIAS", "POSTO VAGO")
 
 
 class AbsenceControlService:
@@ -64,6 +65,11 @@ class AbsenceControlService:
         return "em_analise"
 
     @staticmethod
+    def _is_absence_reason(reason):
+        normalized = str(reason or "").strip().upper()
+        return not any(term in normalized for term in NON_ABSENCE_REASON_TERMS)
+
+    @staticmethod
     def _deadline(req):
         if not AbsenceControlService._requires_document_deadline(req.motivo):
             return None
@@ -78,6 +84,14 @@ class AbsenceControlService:
 
     @classmethod
     def ensure_for_request(cls, req):
+        # Férias, remanejamento e posto vago não representam uma falta. A
+        # requisição operacional continua existindo, sem criar tratativa.
+        if not cls._is_absence_reason(req.motivo):
+            absence = AbsenceControl.query.filter_by(requisicao_id=req.id).first()
+            if absence:
+                db.session.delete(absence)
+            return None
+
         with db.session.no_autoflush:
             absence = AbsenceControl.query.filter_by(requisicao_id=req.id).first()
             employee = db.session.get(Employees, req.ausente_id)
@@ -164,6 +178,7 @@ class AbsenceControlService:
             .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
+            .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .order_by(
                 case((AbsenceControl.status == "pendente", 0), else_=1),
                 AbsenceControl.prazo_atestado.asc().nullslast(),
@@ -236,6 +251,8 @@ class AbsenceControlService:
         reason = str(body.get("motivo") or "").strip().upper()
         if not reason:
             return jsonify("Informe o motivo da falta."), 400
+        if not self._is_absence_reason(reason):
+            return jsonify("Remanejamento não deve ser lançado como falta."), 400
 
         absence_type = str(body.get("tipo_ausencia") or "").strip().lower()
         if absence_type not in {"integral", "parcial"}:
@@ -335,6 +352,8 @@ class AbsenceControlService:
             reason = str(body.get("motivo") or "").strip().upper()
             if not reason:
                 return jsonify("Informe o motivo."), 400
+            if not self._is_absence_reason(reason):
+                return jsonify("Remanejamento não é uma falta. Altere a requisição diretamente."), 400
             previous_reason = absence.motivo
             absence.motivo = reason
             req = db.session.get(Requisicao, absence.requisicao_id)
@@ -457,6 +476,7 @@ class AbsenceControlService:
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
             .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
             .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .filter(AbsenceControl.data_falta.between(start, end))
         )
         rows = apply_cost_center_scope(query, AbsenceControl.centro_custo_id, token_data).all()

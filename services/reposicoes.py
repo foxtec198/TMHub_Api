@@ -54,7 +54,7 @@ def _can_access_employee(token_data, employee_id, allow_uncovered=False):
 
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
-    REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA", "OUTROS"}
+    REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA", "OUTROS"}
 
     @staticmethod
     def _parse_datetime(value):
