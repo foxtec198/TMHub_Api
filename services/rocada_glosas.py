@@ -8,7 +8,7 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.pt48 import Ponto48Espelho, Ponto48EspelhoImport
 from models.rp_requisicao import Requisicao
-from models.situacoes import Situations
+from models.rescisoes import Termination
 from services.ponto48 import Ponto48Service
 from sqlalchemy import func
 from utils.db import db
@@ -81,33 +81,66 @@ class RocadaDisallowanceService:
         return grouped
 
     @staticmethod
-    def _active_roster():
+    def _roster():
         rows = (
-            db.session.query(Employees.id, Employees.nome, Employees.matricula)
+            db.session.query(
+                Employees.id,
+                Employees.nome,
+                Employees.matricula,
+                Employees.data_admissao,
+                Employees.situacao,
+                Termination.data_demissao,
+            )
             .join(CostCenters, CostCenters.id == Employees.centro_id)
-            .outerjoin(Situations, Situations.id == Employees.situacao)
+            .outerjoin(Termination, Termination.matricula == Employees.matricula)
             .filter(
                 CostCenters.departamento == ROCADA_DEPARTMENT,
-                Employees.situacao == 1,
             )
             .order_by(Employees.nome.asc())
             .all()
         )
-        return {
-            row.id: {"id": row.id, "nome": row.nome, "matricula": row.matricula}
-            for row in rows
-        }
+        roster = {}
+        for row in rows:
+            entry = roster.setdefault(row.id, {
+                "id": row.id,
+                "nome": row.nome,
+                "matricula": row.matricula,
+                "admissao": row.data_admissao.date() if hasattr(row.data_admissao, "date") else row.data_admissao,
+                "situacao": row.situacao,
+                "demissoes": [],
+            })
+            if row.data_demissao:
+                entry["demissoes"].append(row.data_demissao)
+        return roster
 
     @staticmethod
-    def _requisitions_by_day(active_ids):
-        """Ausências e coberturas registradas em Reposições, de hoje em diante."""
-        today = date.today()
+    def _roster_for_day(roster, day):
+        active = {}
+        for employee_id, employee in roster.items():
+            admission = employee.get("admissao")
+            if admission and admission > day:
+                continue
+            dismissed = any(
+                dismissal < day and (not admission or dismissal >= admission)
+                for dismissal in employee.get("demissoes", [])
+            )
+            if dismissed:
+                continue
+            if not employee.get("demissoes") and employee.get("situacao") != 1:
+                continue
+            active[employee_id] = employee
+        return active
+
+    @staticmethod
+    def _requisitions_by_day():
+        """Ausências e coberturas de toda a competência atual em Reposições."""
+        current_month = date.today().replace(day=1)
         requests = (
             db.session.query(Requisicao)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
             .filter(
                 CostCenters.departamento == ROCADA_DEPARTMENT,
-                func.date(Requisicao.created_at) >= today,
+                func.date(Requisicao.created_at) >= current_month,
                 Requisicao.status.in_(["pending", "updated", "approved"]),
             )
             .all()
@@ -120,18 +153,20 @@ class RocadaDisallowanceService:
         days = defaultdict(lambda: {"ausentes": set(), "coberturas": {}})
         for item in requests:
             request_day = item.created_at.date()
-            if item.ausente_id in active_ids:
+            if item.ausente_id:
                 days[request_day]["ausentes"].add(item.ausente_id)
             # Reserva que já pertence ao quadro ativo não é somada de novo.
-            if item.reserva_id and item.reserva_id > 0 and item.reserva_id not in active_ids:
+            if item.reserva_id and item.reserva_id > 0:
                 reserve = reserve_names.get(item.reserva_id)
                 if reserve:
                     days[request_day]["coberturas"][item.reserva_id] = reserve
         return days
 
     @classmethod
-    def _day_metric(cls, day, historical, active_roster, requisitions):
-        if day < date.today():
+    def _day_metric(cls, day, historical, roster, requisitions):
+        # O CSV representa somente competências fechadas antes do mês atual.
+        # No mês vigente, inclusive em lançamentos retroativos, Reposições é a fonte oficial.
+        if day < date.today().replace(day=1):
             records = historical.get(day, {})
             operational = day.weekday() < 5 and any(cls._worked(row) for row in records.values())
             if not operational:
@@ -148,9 +183,11 @@ class RocadaDisallowanceService:
         if day.weekday() >= 5:
             return {"data": day.isoformat(), "operacional": False, "fonte": "reposicoes"}
         allocation = requisitions.get(day, {"ausentes": set(), "coberturas": {}})
-        absent_ids = allocation["ausentes"]
-        coverage_count = len(allocation["coberturas"])
-        roster_count = len(active_roster)
+        daily_roster = cls._roster_for_day(roster, day)
+        daily_ids = set(daily_roster)
+        absent_ids = allocation["ausentes"] & daily_ids
+        coverage_count = len(set(allocation["coberturas"]) - daily_ids)
+        roster_count = len(daily_roster)
         return {
             "data": day.isoformat(), "operacional": True, "fonte": "reposicoes",
             "trabalhados": max(0, roster_count - len(absent_ids)) + coverage_count,
@@ -160,7 +197,7 @@ class RocadaDisallowanceService:
         }
 
     @classmethod
-    def _month_payload(cls, month, historical, active_roster, requisitions):
+    def _month_payload(cls, month, historical, roster, requisitions):
         current_month = date.today().replace(day=1)
         if month > current_month:
             return {
@@ -171,7 +208,7 @@ class RocadaDisallowanceService:
                 "situacao": "NÃO DEFINIDO AINDA", "dias": [],
             }
         month_days = [date(month.year, month.month, day) for day in range(1, calendar.monthrange(month.year, month.month)[1] + 1)]
-        day_rows = [cls._day_metric(day, historical, active_roster, requisitions) for day in month_days]
+        day_rows = [cls._day_metric(day, historical, roster, requisitions) for day in month_days]
         daily = [item for item in day_rows if item["operacional"]]
         has_data = bool(daily)
         average = round(sum(item["trabalhados"] for item in daily) / len(daily), 2) if daily else 0
@@ -193,20 +230,20 @@ class RocadaDisallowanceService:
         }
 
     @classmethod
-    def _all_months(cls, historical, active_roster, requisitions):
+    def _all_months(cls, historical, roster, requisitions):
         years = {date.today().year}
         years.update(day.year for day in historical)
         months = []
         for year in sorted(years, reverse=True):
             for month_number in range(1, 13):
                 months.append(cls._month_payload(
-                    date(year, month_number, 1), historical, active_roster, requisitions
+                    date(year, month_number, 1), historical, roster, requisitions
                 ))
         return months
 
     @classmethod
-    def _detail(cls, month, historical, active_roster, requisitions):
-        payload = cls._month_payload(month, historical, active_roster, requisitions)
+    def _detail(cls, month, historical, roster, requisitions):
+        payload = cls._month_payload(month, historical, roster, requisitions)
         month_days = [date(month.year, month.month, day) for day in range(1, calendar.monthrange(month.year, month.month)[1] + 1)]
         people = {}
         cells = defaultdict(dict)
@@ -214,7 +251,7 @@ class RocadaDisallowanceService:
         for day in month_days:
             if month > date.today().replace(day=1):
                 continue
-            if day < date.today():
+            if day < date.today().replace(day=1):
                 for normalized_name, row in historical.get(day, {}).items():
                     key = f"history:{normalized_name}"
                     people[key] = {"nome": row.nome_colaborador, "tipo": "histórico"}
@@ -224,7 +261,8 @@ class RocadaDisallowanceService:
             if day.weekday() >= 5:
                 continue
             allocation = requisitions.get(day, {"ausentes": set(), "coberturas": {}})
-            for employee_id, employee in active_roster.items():
+            daily_roster = cls._roster_for_day(roster, day)
+            for employee_id, employee in daily_roster.items():
                 key = f"employee:{employee_id}"
                 people[key] = {"nome": employee["nome"], "tipo": "quadro"}
                 cells[key][day] = {
@@ -232,6 +270,8 @@ class RocadaDisallowanceService:
                     "motivo": "Ausência registrada em Reposições" if employee_id in allocation["ausentes"] else None,
                 }
             for reserve_id, reserve in allocation["coberturas"].items():
+                if reserve_id in daily_roster:
+                    continue
                 key = f"coverage:{reserve_id}"
                 people[key] = {"nome": f"{reserve['nome']} (cobertura)", "tipo": "cobertura"}
                 cells[key][day] = {"trabalhou": True, "motivo": "Cobertura de Reposições"}
@@ -258,11 +298,11 @@ class RocadaDisallowanceService:
         if denied:
             return denied
         historical = self._historical_rows()
-        active_roster = self._active_roster()
-        requisitions = self._requisitions_by_day(set(active_roster))
+        roster = self._roster()
+        requisitions = self._requisitions_by_day()
         return jsonify({
             "departamento": ROCADA_DEPARTMENT, "meta": ROCADA_TARGET,
-            "meses": self._all_months(historical, active_roster, requisitions),
+            "meses": self._all_months(historical, roster, requisitions),
         })
 
     @safe_route
@@ -275,9 +315,9 @@ class RocadaDisallowanceService:
         except ValueError as error:
             return jsonify(str(error)), 400
         historical = self._historical_rows()
-        active_roster = self._active_roster()
-        requisitions = self._requisitions_by_day(set(active_roster))
-        return jsonify(self._detail(month, historical, active_roster, requisitions))
+        roster = self._roster()
+        requisitions = self._requisitions_by_day()
+        return jsonify(self._detail(month, historical, roster, requisitions))
 
     @safe_route
     def dashboard(self, token_data):
@@ -285,11 +325,11 @@ class RocadaDisallowanceService:
         if denied:
             return denied
         historical = self._historical_rows()
-        active_roster = self._active_roster()
-        requisitions = self._requisitions_by_day(set(active_roster))
+        roster = self._roster()
+        requisitions = self._requisitions_by_day()
         return jsonify({
             "departamento": ROCADA_DEPARTMENT, "meta": ROCADA_TARGET,
-            "meses": self._all_months(historical, active_roster, requisitions),
+            "meses": self._all_months(historical, roster, requisitions),
         })
 
     @safe_route
@@ -302,9 +342,9 @@ class RocadaDisallowanceService:
         except ValueError as error:
             return jsonify(str(error)), 400
         historical = self._historical_rows()
-        active_roster = self._active_roster()
-        requisitions = self._requisitions_by_day(set(active_roster))
-        return jsonify(self._detail(month, historical, active_roster, requisitions))
+        roster = self._roster()
+        requisitions = self._requisitions_by_day()
+        return jsonify(self._detail(month, historical, roster, requisitions))
 
     @safe_route
     def import_mirror(self, token_data):

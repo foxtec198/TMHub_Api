@@ -1,19 +1,15 @@
 name: Atualização na API - TM Hub
 on: # Call event
   push: # This is a PUSH event listener
-    branches: [ "main" ] # Is a main branch
-  
-  pull_request: # This is a PRs event listiner
-    types: [ closed ] # Is a condition - CLOSED!
-    branches: [ "main" ] # Is a main branch
+    branches: [ "main" ] 
 
 jobs: # Jobs will run
   deploy: # This a deploy 
-    if: | # Its a condition for CLOSE, PUSH and MERGED (Is obrigatory)
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
-    
-    runs-on: ubuntu-latest # This is a RUN on Ubuntu (LINUX)
+    if: 
+      github.event_name == 'push' 
+
+    runs-on: 
+      ubuntu-latest # This is a RUN on Ubuntu (LINUX)
 
     steps: # And this is steps for Deploy!
       - name: Checkout code
@@ -29,4 +25,5 @@ jobs: # Jobs will run
             set -e
             cd /home/guibs/api_tmhub
             sudo git pull origin main
+            sudo venv/bin/pip install -r requirements.txt --upgrade
             sudo systemctl restart api_tmhub
