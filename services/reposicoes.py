@@ -27,7 +27,6 @@ from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, 
 from utils.token import decode_token
 from services.controle_faltas import AbsenceControlService
 
-
 def _emit_kds_update(action, request_id=None, status=None):
     """Notify TV dashboards without exposing requisition data over the socket."""
     socketio.emit("kds_update", {
@@ -36,7 +35,6 @@ def _emit_kds_update(action, request_id=None, status=None):
         "status": status,
         "emitted_at": dt.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
     })
-
 
 def _can_access_employee(token_data, employee_id, allow_uncovered=False):
     if allow_uncovered and employee_id in (None, 0, "0"):
@@ -51,10 +49,10 @@ def _can_access_employee(token_data, employee_id, allow_uncovered=False):
         and can_access_cost_center(token_data, employee.centro_id)
     )
 
-
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
-    REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA", "OUTROS"}
+    REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA"}
+    ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO"]
 
     @staticmethod
     def _parse_datetime(value):
@@ -306,7 +304,7 @@ class RequestService:
         if obs: new_rq.obs = str(obs).strip().upper()
         db.session.add(new_rq)
         db.session.flush()
-        AbsenceControlService.ensure_for_request(new_rq)
+        if motivo not in self.ISNOTFAULT: AbsenceControlService.ensure_for_request(new_rq)
         db.session.commit()
 
         TimelineService().create_event(

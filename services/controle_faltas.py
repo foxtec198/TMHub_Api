@@ -20,7 +20,6 @@ from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
-
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 JUSTIFIED_REASON_TERMS = ("ATESTADO", "AFASTAMENTO", "DECLARAÇÃO", "DECLARAÃ‡ÃƒO")
 NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FÉRIAS", "FERIAS", "POSTO VAGO")
