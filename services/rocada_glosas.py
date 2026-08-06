@@ -7,6 +7,7 @@ from flask import jsonify, request
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.pt48 import Ponto48Espelho, Ponto48EspelhoImport
+from models.rp_historico import History
 from models.rp_requisicao import Requisicao
 from models.rescisoes import Termination
 from services.ponto48 import Ponto48Service
@@ -22,6 +23,7 @@ from werkzeug.utils import secure_filename
 ROCADA_DEPARTMENT = 92
 ROCADA_TARGET = 72
 ROCADA_IMPORT_TAG = "[DPTO-92-ROCADA]"
+ROCADA_SUMMER_MONTHS = {12, 1, 2, 3}
 
 
 class RocadaDisallowanceService:
@@ -61,6 +63,12 @@ class RocadaDisallowanceService:
     @staticmethod
     def _worked(row):
         return bool(row and row.quantidade_batidas and row.quantidade_batidas > 0)
+
+    @staticmethod
+    def _contractual_target(month, contractual_average):
+        if month.month not in ROCADA_SUMMER_MONTHS:
+            return ROCADA_TARGET
+        return max(ROCADA_TARGET, contractual_average)
 
     @classmethod
     def _historical_rows(cls):
@@ -138,20 +146,32 @@ class RocadaDisallowanceService:
         requests = (
             db.session.query(Requisicao)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .outerjoin(History, History.requisicao_id == Requisicao.id)
             .filter(
                 CostCenters.departamento == ROCADA_DEPARTMENT,
                 func.date(Requisicao.created_at) >= current_month,
+                History.id.is_(None),
                 Requisicao.status.in_(["pending", "updated", "approved"]),
             )
             .all()
         )
-        reserve_ids = {item.reserva_id for item in requests if item.reserva_id and item.reserva_id > 0}
+        history = (
+            db.session.query(History)
+            .join(CostCenters, CostCenters.id == History.cc)
+            .filter(
+                CostCenters.departamento == ROCADA_DEPARTMENT,
+                func.date(History.created_at) >= current_month,
+            )
+            .all()
+        )
+        records = [*requests, *history]
+        reserve_ids = {item.reserva_id for item in records if item.reserva_id and item.reserva_id > 0}
         reserve_names = {
             employee.id: {"id": employee.id, "nome": employee.nome, "matricula": employee.matricula}
             for employee in Employees.query.filter(Employees.id.in_(reserve_ids or {0})).all()
         }
         days = defaultdict(lambda: {"ausentes": set(), "coberturas": {}})
-        for item in requests:
+        for item in records:
             request_day = item.created_at.date()
             if item.ausente_id:
                 days[request_day]["ausentes"].add(item.ausente_id)
@@ -202,7 +222,7 @@ class RocadaDisallowanceService:
         if month > current_month:
             return {
                 "competencia": month.isoformat(), "mes": month.strftime("%m/%Y"),
-                "meta": ROCADA_TARGET, "tem_dados": False, "futuro": True,
+                "meta": ROCADA_TARGET, "meta_padrao": ROCADA_TARGET, "tem_dados": False, "futuro": True,
                 "dias_operacionais": 0, "media_trabalhados": 0, "media_faltantes": 0,
                 "media_quadro": 0, "coberturas": 0, "presencas": 0, "glosado": None,
                 "situacao": "NÃO DEFINIDO AINDA", "dias": [],
@@ -212,16 +232,21 @@ class RocadaDisallowanceService:
         daily = [item for item in day_rows if item["operacional"]]
         has_data = bool(daily)
         average = round(sum(item["trabalhados"] for item in daily) / len(daily), 2) if daily else 0
-        glosado = average < ROCADA_TARGET if has_data else None
+        contractual_average = round(sum(item["quadro"] for item in daily) / len(daily), 2) if daily else ROCADA_TARGET
+        # A cláusula sazonal se aplica somente no verão. Nos demais meses,
+        # a média contratual permanece fixa em 72, mesmo que o quadro varie.
+        contractual_target = cls._contractual_target(month, contractual_average)
+        glosado = average < contractual_target if has_data else None
         return {
             "competencia": month.isoformat(),
             "mes": month.strftime("%m/%Y"),
-            "meta": ROCADA_TARGET,
+            "meta": contractual_target,
+            "meta_padrao": ROCADA_TARGET,
             "tem_dados": has_data, "futuro": False,
             "dias_operacionais": len(daily),
             "media_trabalhados": average,
             "media_faltantes": round(sum(item["faltantes"] for item in daily) / len(daily), 2) if daily else 0,
-            "media_quadro": round(sum(item["quadro"] for item in daily) / len(daily), 2) if daily else 0,
+            "media_quadro": contractual_average if has_data else 0,
             "coberturas": sum(item["coberturas"] for item in daily),
             "presencas": sum(item["trabalhados"] for item in daily),
             "glosado": glosado,
