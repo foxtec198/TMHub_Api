@@ -14,6 +14,7 @@ from routes.projects import project_bp
 from routes.categorias import categorias_bp
 from routes.produtos import produtos_bp
 from routes.movimentos import movimentos_bp
+from routes.movimentacoes_ativos import asset_movements_bp
 
 from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
@@ -58,6 +59,7 @@ blueprints = {
     categorias_bp: "/estoque/categorias",
     produtos_bp: "/estoque/produtos",
     movimentos_bp: "/estoque/movimentos",
+    asset_movements_bp: "/estoque/movimentos/ativos",
 
     #Admissão
     admissao_bp: "/admissao/vagas",
