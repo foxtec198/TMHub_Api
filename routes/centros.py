@@ -12,3 +12,10 @@ def root():
         case "PATCH": response = service.update()
         case "DELETE": response = service.delete()
     return response
+
+
+@center_bp.route("/configuracoes", methods=["GET", "PATCH"])
+def settings():
+    if request.method == "GET":
+        return service.settings()
+    return service.update_settings()

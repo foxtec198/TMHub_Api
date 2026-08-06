@@ -37,6 +37,42 @@ def _repository_label(repository):
     return "Frontend" if repository.endswith("/tmhub") else "API"
 
 
+def _pull_request_author(repository, sha):
+    """Retorna o criador da PR que gerou um commit já integrado à branch padrão."""
+    try:
+        response = requests.get(
+            f"{GITHUB_API}/repos/{repository}/commits/{sha}/pulls",
+            headers=_headers(),
+            timeout=(2, 4),
+        )
+        response.raise_for_status()
+        merged_pull_requests = [
+            pull_request
+            for pull_request in response.json()
+            if pull_request.get("merged_at")
+        ]
+        if not merged_pull_requests:
+            return None
+
+        pull_request = max(
+            merged_pull_requests,
+            key=lambda item: item.get("merged_at") or "",
+        )
+        author = pull_request.get("user") or {}
+        author_name = author.get("login") or author.get("name")
+        if not author_name:
+            return None
+        return {
+            "name": author_name,
+            "number": pull_request.get("number"),
+            "url": pull_request.get("html_url"),
+        }
+    except (requests.RequestException, ValueError):
+        # A atualização do login continua disponível mesmo se a associação da
+        # PR não puder ser consultada por limite do GitHub ou instabilidade.
+        return None
+
+
 def _fetch_repository_commits(repository):
     response = requests.get(
         f"{GITHUB_API}/repos/{repository}/commits",
@@ -47,19 +83,33 @@ def _fetch_repository_commits(repository):
     )
     response.raise_for_status()
 
+    raw_commits = response.json()
+    pull_request_authors = {}
+    with ThreadPoolExecutor(max_workers=min(len(raw_commits), 3) or 1) as executor:
+        pending = {
+            executor.submit(_pull_request_author, repository, item.get("sha")): item.get("sha")
+            for item in raw_commits
+            if item.get("sha")
+        }
+        for future in as_completed(pending):
+            pull_request_authors[pending[future]] = future.result()
+
     commits = []
-    for item in response.json():
+    for item in raw_commits:
         commit = item.get("commit") or {}
         author = commit.get("author") or {}
+        pull_request = pull_request_authors.get(item.get("sha"))
         message = str(commit.get("message") or "").splitlines()[0].strip()
         commits.append({
             "sha": str(item.get("sha") or "")[:7],
             "message": message,
-            "author": author.get("name") or (item.get("author") or {}).get("login") or "Equipe TM Hub",
+            "author": (pull_request or {}).get("name") or author.get("name") or (item.get("author") or {}).get("login") or "Equipe TM Hub",
             "date": author.get("date"),
             "url": item.get("html_url"),
             "repository": repository,
             "repository_label": _repository_label(repository),
+            "pull_request_number": (pull_request or {}).get("number"),
+            "pull_request_url": (pull_request or {}).get("url"),
         })
     return commits
 
