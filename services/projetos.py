@@ -54,20 +54,36 @@ def _parse_datetime(value):
         raise ValueError("Informe uma data válida para o card.")
 
 class ProjectService:
+    @staticmethod
+    def _is_admin(user_id):
+        user = db.session.get(Users, user_id)
+        return bool(user and str(user.role or "").upper() == "ADMIN")
+
+    @staticmethod
+    def _visible_project_ids(user_id, is_admin=False):
+        if is_admin:
+            return [row[0] for row in db.session.query(Project.id).all()]
+
+        return [
+            row[0]
+            for row in db.session.query(Project.id).filter(
+                or_(
+                    Project.dono == user_id,
+                    Project.id.in_(
+                        db.session.query(ProjectMember.project_id).filter(
+                            ProjectMember.employee_id == user_id
+                        )
+                    ),
+                )
+            ).all()
+        ]
+
     @safe_route
     def dashboard(self, token_data):
         if not has_permission(token_data, "dashboard_projetos", "view"):
             return jsonify("Você não possui acesso ao Dashboard de Projetos."), 403
         user_id = _as_int(token_data.get("id"))
-        project_ids = [
-            row[0]
-            for row in db.session.query(Project.id).filter(
-                or_(
-                    Project.dono == user_id,
-                    Project.id.in_(db.session.query(ProjectMember.project_id).filter(ProjectMember.employee_id == user_id)),
-                )
-            ).all()
-        ]
+        project_ids = self._visible_project_ids(user_id, self._is_admin(user_id))
         project_filter = {_as_int(value) for value in _arg_values("projeto")} - {None}
         collaborator_filter = {_as_int(value) for value in _arg_values("colaborador")} - {None}
         card_filter = {_as_int(value) for value in _arg_values("card")} - {None}
@@ -291,70 +307,99 @@ class ProjectService:
                 "status": sorted({column_status.get(card.column_id, "") for card, _ in filtered}),
             },
         })
-    def _serialize(self, project):
-        members = (
-            db.session.query(Users.id, Users.nome)
-            .join(ProjectMember, ProjectMember.employee_id == Users.id)
-            .filter(ProjectMember.project_id == project.id)
+    def _serialize_many(self, projects):
+        """Serializa projetos em lote e evita consultas repetidas por card."""
+        projects = list(projects)
+        project_ids = [project.id for project in projects]
+        if not project_ids:
+            return []
+
+        project_members = defaultdict(list)
+        for project_id, employee_id, name in (
+            db.session.query(ProjectMember.project_id, Users.id, Users.nome)
+            .join(Users, Users.id == ProjectMember.employee_id)
+            .filter(ProjectMember.project_id.in_(project_ids))
             .all()
-        )
-        members = [
-            {
-                "id": item.id,
-                "nome": item.nome,
-                "iniciais": self._initials(item.nome),
-                "avatarColor": self._color(item.id),
-            }
-            for item in members
-        ]
+        ):
+            project_members[project_id].append({
+                "id": employee_id,
+                "nome": name,
+                "iniciais": self._initials(name),
+                "avatarColor": self._color(employee_id),
+            })
 
         columns = (
-            ProjectColumn.query.filter_by(project_id=project.id)
-            .order_by(ProjectColumn.ordem.asc())
+            ProjectColumn.query.filter(ProjectColumn.project_id.in_(project_ids))
+            .order_by(ProjectColumn.project_id.asc(), ProjectColumn.ordem.asc())
             .all()
         )
+        columns_by_project = defaultdict(list)
+        column_project_ids = {}
+        for column in columns:
+            columns_by_project[column.project_id].append(column)
+            column_project_ids[column.id] = column.project_id
+
         cards = (
-            ProjectCard.query.filter(ProjectCard.column_id.in_([column.id for column in columns] or [0]))
-            .order_by(ProjectCard.ordem.asc())
+            ProjectCard.query.filter(ProjectCard.column_id.in_(column_project_ids or [0]))
+            .order_by(ProjectCard.column_id.asc(), ProjectCard.ordem.asc())
             .all()
         )
-        card_members = (
+        card_ids = [card.id for card in cards]
+        card_members = defaultdict(list)
+        for card_id, employee_id, name in (
             db.session.query(ProjectCardMember.card_id, Users.id, Users.nome)
             .join(Users, Users.id == ProjectCardMember.employee_id)
-            .filter(ProjectCardMember.card_id.in_([card.id for card in cards] or [0]))
+            .filter(ProjectCardMember.card_id.in_(card_ids or [0]))
             .all()
-        )
+        ):
+            card_members[card_id].append({
+                "id": employee_id,
+                "nome": name,
+                "iniciais": self._initials(name),
+                "avatarColor": self._color(employee_id),
+            })
 
-        members_by_card = defaultdict(list)
-        for item in card_members:
-            members_by_card[item.card_id].append(
-                {
-                    "id": item.id,
-                    "nome": item.nome,
-                    "iniciais": self._initials(item.nome),
-                    "avatarColor": self._color(item.id),
-                }
-            )
+        comments_by_card = defaultdict(list)
+        for comment, author in (
+            db.session.query(ProjectCardComment, Users.nome)
+            .outerjoin(Users, Users.id == ProjectCardComment.autor_id)
+            .filter(ProjectCardComment.card_id.in_(card_ids or [0]))
+            .order_by(ProjectCardComment.card_id.asc(), ProjectCardComment.created_at.asc(), ProjectCardComment.id.asc())
+            .all()
+        ):
+            comments_by_card[comment.card_id].append({
+                "id": comment.id,
+                "autor_id": comment.autor_id,
+                "autor": author or "Usuário removido",
+                "conteudo": comment.conteudo,
+                "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+            })
+
+        files_by_card = defaultdict(list)
+        for file, uploader in (
+            db.session.query(ProjectCardFile, Users.nome)
+            .outerjoin(Users, Users.id == ProjectCardFile.enviado_por_usuario_id)
+            .filter(ProjectCardFile.card_id.in_(card_ids or [0]))
+            .order_by(ProjectCardFile.card_id.asc(), ProjectCardFile.created_at.desc())
+            .all()
+        ):
+            files_by_card[file.card_id].append({
+                "id": file.id,
+                "nome_original": file.nome_original,
+                "mime_type": file.mime_type,
+                "tamanho_bytes": file.tamanho_bytes,
+                "enviado_por_usuario_id": file.enviado_por_usuario_id,
+                "enviado_por": uploader or "Usuário removido",
+                "created_at": file.created_at.isoformat() if file.created_at else None,
+                "url": f"/projetos/cards/{file.card_id}/arquivos/{file.id}",
+            })
 
         card_ids_by_column = defaultdict(list)
-        cards_payload = {}
         cards_by_column = defaultdict(list)
-
+        cards_payload = defaultdict(dict)
         for card in cards:
-            comments = (
-                db.session.query(ProjectCardComment, Users.nome)
-                .outerjoin(Users, Users.id == ProjectCardComment.autor_id)
-                .filter(ProjectCardComment.card_id == card.id)
-                .order_by(ProjectCardComment.created_at.asc(), ProjectCardComment.id.asc())
-                .all()
-            )
-            files = (
-                db.session.query(ProjectCardFile, Users.nome)
-                .outerjoin(Users, Users.id == ProjectCardFile.enviado_por_usuario_id)
-                .filter(ProjectCardFile.card_id == card.id)
-                .order_by(ProjectCardFile.created_at.desc())
-                .all()
-            )
+            members = card_members[card.id]
             card_payload = {
                 "id": card.id,
                 "titulo": card.titulo,
@@ -364,55 +409,40 @@ class ProjectService:
                 "data_fim": card.data_fim.isoformat() if card.data_fim else None,
                 "concluida_em": card.concluida_em.isoformat() if card.concluida_em else None,
                 "created_at": card.created_at.isoformat() if card.created_at else None,
-                "memberIds": [member["id"] for member in members_by_card[card.id]],
-                "members": members_by_card[card.id],
-                "comentarios": [
-                    {
-                        "id": comment.id,
-                        "autor_id": comment.autor_id,
-                        "autor": author or "Usuário removido",
-                        "conteudo": comment.conteudo,
-                        "created_at": comment.created_at.isoformat() if comment.created_at else None,
-                        "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
-                    }
-                    for comment, author in comments
-                ],
-                "arquivos": [
-                    {
-                        "id": file.id,
-                        "nome_original": file.nome_original,
-                        "mime_type": file.mime_type,
-                        "tamanho_bytes": file.tamanho_bytes,
-                        "enviado_por_usuario_id": file.enviado_por_usuario_id,
-                        "enviado_por": uploader or "Usuário removido",
-                        "created_at": file.created_at.isoformat() if file.created_at else None,
-                        "url": f"/projetos/cards/{card.id}/arquivos/{file.id}",
-                    }
-                    for file, uploader in files
-                ],
+                "memberIds": [member["id"] for member in members],
+                "members": members,
+                "comentarios": comments_by_card[card.id],
+                "arquivos": files_by_card[card.id],
             }
+            project_id = column_project_ids[card.column_id]
             card_ids_by_column[card.column_id].append(card.id)
             cards_by_column[card.column_id].append(card_payload)
-            cards_payload[card.id] = card_payload
+            cards_payload[project_id][card.id] = card_payload
 
-        return {
-            "id": project.id,
-            "nome": project.nome,
-            "cor": project.cor,
-            "donoId": project.dono,
-            "memberIds": [member["id"] for member in members],
-            "members": members,
-            "columns": [
-                {
-                    "id": column.id,
-                    "titulo": column.titulo,
-                    "cardIds": card_ids_by_column[column.id],
-                    "cards": cards_by_column[column.id],
-                }
-                for column in columns
-            ],
-            "cards": cards_payload,
-        }
+        return [
+            {
+                "id": project.id,
+                "nome": project.nome,
+                "cor": project.cor,
+                "donoId": project.dono,
+                "memberIds": [member["id"] for member in project_members[project.id]],
+                "members": project_members[project.id],
+                "columns": [
+                    {
+                        "id": column.id,
+                        "titulo": column.titulo,
+                        "cardIds": card_ids_by_column[column.id],
+                        "cards": cards_by_column[column.id],
+                    }
+                    for column in columns_by_project[project.id]
+                ],
+                "cards": cards_payload[project.id],
+            }
+            for project in projects
+        ]
+
+    def _serialize(self, project):
+        return self._serialize_many([project])[0]
 
     def _initials(self, name):
         parts = (name or "").split()
@@ -488,19 +518,22 @@ class ProjectService:
     def read(self, token_data):
         project_id = rq.args.get("id")
         user_id = _as_int(token_data.get("id"))
-        member_project_ids = (
-            db.session.query(ProjectMember.project_id)
-            .filter(ProjectMember.employee_id == user_id)
-        )
-        query = Project.query.filter(
-            or_(Project.dono == user_id, Project.id.in_(member_project_ids))
-        )
+        if self._is_admin(user_id):
+            query = Project.query
+        else:
+            member_project_ids = (
+                db.session.query(ProjectMember.project_id)
+                .filter(ProjectMember.employee_id == user_id)
+            )
+            query = Project.query.filter(
+                or_(Project.dono == user_id, Project.id.in_(member_project_ids))
+            )
 
         if project_id:
             query = query.filter_by(id=project_id)
 
         projects = query.order_by(Project.id.desc()).all()
-        response = [self._serialize(project) for project in projects]
+        response = self._serialize_many(projects)
 
         if project_id:
             if not response:

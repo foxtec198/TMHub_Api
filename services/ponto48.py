@@ -155,20 +155,20 @@ class Ponto48Service:
             date_match = re.search(r"(\d{2}/\d{2}/\d{4})", str(row[0] or ""))
             if not date_match:
                 continue
-            row += [""] * (16 - len(row))
+            row += [""] * (18 - len(row))
             records.append({
                 "nome": employee_name,
                 "data": date_match.group(1),
                 "batidas": row[1:7],
-                "credito": row[7],
-                "debito": row[8],
-                "intervalo": row[9],
-                "horas_normais": row[10],
-                "horas_extras_1": row[11],
-                "horas_extras_2": row[12],
-                "adicional_noturno": row[13],
-                "saldo": row[14],
-                "motivo": str(row[15] or "").strip() or None,
+                "credito": row[9],
+                "debito": row[10],
+                "intervalo": row[11],
+                "horas_normais": row[12],
+                "horas_extras_1": row[13],
+                "horas_extras_2": row[14],
+                "adicional_noturno": row[15],
+                "saldo": row[16],
+                "motivo": str(row[17] or "").strip() or None,
             })
 
         period = (
