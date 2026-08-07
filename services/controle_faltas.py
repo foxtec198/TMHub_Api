@@ -2,8 +2,9 @@ from datetime import datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
+from dateutil import relativedelta
 from flask import jsonify, request
-from sqlalchemy import String, case, cast, or_
+from sqlalchemy import String, case, cast, or_, extract
 from sqlalchemy.orm import aliased
 
 from models.centros_de_custo import CostCenters
@@ -30,7 +31,7 @@ class AbsenceControlService:
     def _requires_document_deadline(reason):
         normalized = str(reason or "").strip().upper()
         return "ATESTADO" in normalized or "DECLARA" in normalized
-
+    
     @staticmethod
     def _is_historical(value):
         if not value:
@@ -140,6 +141,21 @@ class AbsenceControlService:
         if expired:
             db.session.commit()
 
+    # @safe_route
+    def total(self):
+        month = request.args.get("month")
+
+        if month == 'last': month = dt.now().month - 1
+        if not month: month = dt.now().month
+        year = dt.now().year
+
+        query = AbsenceControl.query.filter(
+            extract("month", AbsenceControl.created_at) == month,
+            extract("year", AbsenceControl.created_at) == year,
+        ).all()
+        
+        return jsonify(len([e for e in query]))
+    
     @safe_route
     def read(self, token_data):
         if not has_permission(token_data, "controle_faltas", "view"):
@@ -196,6 +212,7 @@ class AbsenceControlService:
             "contratos": sorted({row.contrato for row in rows if row.contrato}),
             "colaboradores": sorted({row.colaborador for row in rows if row.colaborador}),
         }
+        
         def selected_values(name):
             return {
                 value.strip()

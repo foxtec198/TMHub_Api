@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "queries": [
+    {
+      "Query": {
+        "Commands": [
+          {
+            "SemanticQueryDataShapeCommand": {
+              "Query": {},
+              "Binding": {},
+              "ExecutionMetricsKind": 1
+            }
+          }
+        ]
+      },
+      "QueryId": "",
+      "ApplicationContext": {
+        "DatasetId": "efbffb90-934a-432d-a1c3-e55b9342e112",
+        "Sources": [
+          {
+            "ReportId": "411b2ac2-8ffe-4566-a690-c74bb3433ee8",
+            "VisualId": "6fb40eb775506122a2ca"
+          }
+        ]
+      }
+    }
+  ],
+  "cancelQueries": [],
+  "modelId": 6843785
+}
