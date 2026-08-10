@@ -66,6 +66,22 @@ with app.app_context():
             if "modo_tema" not in refreshed_columns:
                 raise
 
+    user_columns = {column["name"] for column in inspect(db.engine).get_columns("usuarios")}
+    if "timo_ativo" not in user_columns:
+        # Migração aditiva: a preferência pertence ao perfil e começa desativada.
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE usuarios ADD COLUMN timo_ativo BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+        except SQLAlchemyError:
+            # Em múltiplos workers, outro processo pode concluir a alteração antes.
+            refreshed_columns = {
+                column["name"] for column in inspect(db.engine).get_columns("usuarios")
+            }
+            if "timo_ativo" not in refreshed_columns:
+                raise
+
 @app.route("/")
 @app.route("/docs")
 def index():
