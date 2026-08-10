@@ -377,6 +377,8 @@ class UserServices:
         modo_tema = body.get("modo_tema")
         senha_atual = body.get("senha_atual")
         nova_senha = body.get("nova_senha")
+        has_timo_update = "timo_ativo" in body
+        timo_ativo = body.get("timo_ativo")
 
         if nome is not None:
             nome = nome.strip()
@@ -406,6 +408,13 @@ class UserServices:
                 return jsonify("O modo deve ser light ou dark."), 400
             user.modo_tema = modo_tema
 
+        if has_timo_update:
+            if str(user.role or "").upper() != "ADMIN":
+                return jsonify("A ativação do Timo está disponível apenas para administradores."), 403
+            if not isinstance(timo_ativo, bool):
+                return jsonify("Informe um valor válido para ativar ou desativar o Timo."), 400
+            user.timo_ativo = timo_ativo
+
         if nova_senha is not None:
             valid_password, _, _ = verify_password(str(senha_atual or ""), user.hash)
             if not valid_password:
@@ -418,7 +427,7 @@ class UserServices:
             user.token_version = int(user.token_version or 0) + 1
             user.senha_alterada_em = dt.now()
 
-        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)):
+        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)) and not has_timo_update:
             return jsonify("Nenhuma alteração informada."), 400
 
         refresh_user_requirements(user)
@@ -562,6 +571,7 @@ class UserServices:
             "tema": user.tema or "tmhub",
             "modo_tema": user.modo_tema or "light",
             "role": user.role,
+            "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
             "permissions": serialize_permissions(user),

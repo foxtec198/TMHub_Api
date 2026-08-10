@@ -18,6 +18,7 @@ class Users(BaseModel):
     # e são migrados pelo frontend para TMHub + modo de luminosidade.
     tema = db.Column(db.String(10), default="tmhub")
     modo_tema = db.Column(db.String(5), default="light")
+    timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)
     email_codigo_hash = db.Column(db.String)
