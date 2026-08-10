@@ -5,7 +5,7 @@ from models.situacoes import Situations
 from utils.safe_route import safe_route
 from sqlalchemy import String, func, or_, cast
 from models.colaboradores import Employees, db
-from utils.filial_scope import apply_cost_center_scope
+from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope
 from utils.token import decode_token
 
 class EmployeesService:
@@ -49,6 +49,7 @@ class EmployeesService:
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
             .order_by(Employees.nome.asc())
         )
+        emp = apply_active_department_scope(emp, Employees.centro_id)
 
         access_token = rq.headers.get("Access-Token")
         if access_token and not public_lookup:

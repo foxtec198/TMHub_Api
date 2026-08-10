@@ -4,22 +4,20 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from utils.safe_route import safe_route
 from utils.check_field import check_field
-from utils.filial_scope import apply_cost_center_scope, is_admin
+from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope
 from utils.token import decode_token
 
 class ServiceSupervisors():
     def read(self):
-        query = Supervisors.query
+        query = Supervisors.query.join(
+            CostCenters, CostCenters.supervisor_id == Supervisors.id
+        ).distinct()
         access_token = rq.headers.get("Access-Token")
         if access_token:
             token_data = decode_token(access_token)
-            if not is_admin(token_data):
-                query = query.join(
-                    CostCenters, CostCenters.supervisor_id == Supervisors.id
-                ).distinct()
-                query = apply_cost_center_scope(
-                    query, CostCenters.id, token_data
-                )
+            query = apply_cost_center_scope(query, CostCenters.id, token_data)
+        else:
+            query = apply_active_department_scope(query, CostCenters.id)
         sups = query.order_by(Supervisors.nome).all()
         return jsonify([s.to_dict() for s in sups]), 200
     

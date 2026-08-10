@@ -49,7 +49,7 @@ def _data_channel(path, method):
         return "ponto48"
     if path.startswith("/updates/noticias"):
         return "configuracoes"
-    if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/supervisores", "/funcionarios"}:
+    if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/centro/configuracoes", "/supervisores", "/funcionarios"}:
         return "configuracoes"
     return None
 
