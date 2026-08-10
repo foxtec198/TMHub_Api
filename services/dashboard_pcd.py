@@ -1,21 +1,42 @@
-from flask import jsonify
+from json import JSONDecodeError, loads
+
+from flask import jsonify, request as rq
+from sqlalchemy import or_
 
 from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
 from models.filiais import Branch,filial_centros_custo,filial_departamentos,filial_usuarios
 
 
-from utils.filial_scope import (
-    allowed_cost_center_ids,
-    can_select_branches,
-    requested_branch_ids,
-)
+from utils.filial_scope import is_admin
 from utils.safe_route import safe_route
 
 
-SITUACOES_ATIVAS = {1, 9, 18}
+SITUACOES_ATIVAS = {1}
 SITUACAO_DEMITIDO = 8
 META_PCD = 5
+PCD_EXCLUDED_SCOPE_CODES = {306, 308, 312}
+
+
+def _parse_branch_ids(raw_value):
+    if not raw_value:
+        return set()
+
+    try:
+        raw_value = str(raw_value).strip()
+        values = (
+            loads(raw_value)
+            if raw_value.startswith("[")
+            else raw_value.split(",")
+        )
+        if not isinstance(values, list):
+            return None
+        return {
+            int(value)
+            for value in values
+        }
+    except (JSONDecodeError, TypeError, ValueError):
+        return None
 
 
 def _empty_pcd_dashboard(branches):
@@ -37,11 +58,42 @@ def _empty_pcd_dashboard(branches):
     }
 
 
+def _pcd_summary(employees):
+    """Calcula a base ativa e o quadro PCD do escopo selecionado."""
+    active_employees = [
+        employee
+        for employee in employees
+        if employee.situacao in SITUACOES_ATIVAS
+    ]
+    pcd_employees = [
+        employee
+        for employee in employees
+        if employee.pcd
+    ]
+    active_pcd = sum(
+        employee.situacao in SITUACOES_ATIVAS
+        for employee in pcd_employees
+    )
+    total_active_employees = len(active_employees)
+
+    return {
+        "total_colaboradores": total_active_employees,
+        "total_pcd": len(pcd_employees),
+        "pcd_ativos": active_pcd,
+        "pcd_afastados": len(pcd_employees) - active_pcd,
+        "percentual_pcd": (
+            round((len(pcd_employees) / total_active_employees) * 100, 2)
+            if total_active_employees
+            else 0
+        ),
+    }, pcd_employees
+
+
 class PcdDashboardService:
     @safe_route
     def read(self, token_data):
         branch_query = Branch.query.filter(Branch.ativa.is_(True))
-        if not can_select_branches(token_data):
+        if not is_admin(token_data):
             branch_query = (
                 branch_query
                 .join(
@@ -61,23 +113,15 @@ class PcdDashboardService:
         )
         available_ids = {branch.id for branch in available_branches}
 
-        # The MainLayout selector is the sole source of branch filtering.
-        global_branch_ids = (
-            requested_branch_ids()
-            if can_select_branches(token_data)
-            else None
-        )
-        if global_branch_ids is not None and global_branch_ids - available_ids:
-            return jsonify("Filiais selecionadas sem permissao."), 403
-        requested_ids = (
-            available_ids if global_branch_ids is None else global_branch_ids
+        requested_ids = _parse_branch_ids(
+            rq.headers.get("X-Filial-Ids") or rq.args.get("filiais"),
         )
         if requested_ids is None:
             return jsonify("Informe filiais válidas."), 400
         if requested_ids - available_ids:
             return jsonify("Você não possui acesso a uma ou mais filiais selecionadas."), 403
 
-        selected_ids = requested_ids
+        selected_ids = requested_ids or available_ids
         selected_branches = [
             branch
             for branch in available_branches
@@ -123,10 +167,26 @@ class PcdDashboardService:
         for branch_id, center_id in department_rows:
             branch_centers[branch_id].add(center_id)
 
-        selected_center_ids = set().union(*branch_centers.values())
-        scoped_center_ids = allowed_cost_center_ids(token_data)
-        if scoped_center_ids is not None:
-            selected_center_ids &= scoped_center_ids
+        # Regra exclusiva do Dashboard PCD: os códigos abaixo não compõem
+        # a base, mesmo quando vinculados à filial diretamente por contrato
+        # ou indiretamente por departamento.
+        excluded_center_ids = {
+            center_id
+            for center_id, in (
+                db.session.query(CostCenters.id)
+                .filter(or_(
+                    CostCenters.id.in_(PCD_EXCLUDED_SCOPE_CODES),
+                    CostCenters.departamento.in_(PCD_EXCLUDED_SCOPE_CODES),
+                ))
+                .all()
+            )
+        }
+        for center_ids in branch_centers.values():
+            center_ids.difference_update(excluded_center_ids)
+
+        selected_center_ids = set().union(
+            *branch_centers.values(),
+        )
         if not selected_center_ids:
             return jsonify(
                 _empty_pcd_dashboard(available_branches),
@@ -148,25 +208,7 @@ class PcdDashboardService:
             .all()
         )
 
-        total_employees = len(employees)
-        pcd_employees = [
-            employee
-            for employee in employees
-            if employee.pcd
-        ]
-        active_pcd = sum(
-            employee.situacao in SITUACOES_ATIVAS
-            for employee in pcd_employees
-        )
-        away_pcd = len(pcd_employees) - active_pcd
-        pcd_percentage = (
-            round(
-                (len(pcd_employees) / total_employees) * 100,
-                2,
-            )
-            if total_employees
-            else 0
-        )
+        summary, pcd_employees = _pcd_summary(employees)
 
         branch_data = []
         for branch in selected_branches:
@@ -207,11 +249,7 @@ class PcdDashboardService:
                 for branch in available_branches
             ],
             "resumo": {
-                "total_colaboradores": total_employees,
-                "total_pcd": len(pcd_employees),
-                "pcd_ativos": active_pcd,
-                "pcd_afastados": away_pcd,
-                "percentual_pcd": pcd_percentage,
+                **summary,
                 "meta_percentual": META_PCD,
             },
             "filiais": branch_data,
