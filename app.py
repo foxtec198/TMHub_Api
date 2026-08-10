@@ -4,6 +4,8 @@ from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 from os import getenv
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 from utils.blueprints import blueprints
 from utils.socket import socketio
 from utils.db import db
@@ -40,7 +42,29 @@ for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp])  # C
 
 db.init_app(app)  # Inicia o banco de dados
 
-with app.app_context(): db.create_all()  # Cria as tabelas
+with app.app_context():
+    db.create_all()  # Cria as tabelas
+    user_columns = {column["name"] for column in inspect(db.engine).get_columns("usuarios")}
+    if "modo_tema" not in user_columns:
+        # Migração aditiva para instalações existentes sem Alembic.
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE usuarios ADD COLUMN modo_tema VARCHAR(5) NOT NULL DEFAULT 'light'"
+                ))
+                connection.execute(text(
+                    "UPDATE usuarios SET modo_tema = CASE WHEN LOWER(tema) = 'dark' THEN 'dark' ELSE 'light' END"
+                ))
+                connection.execute(text(
+                    "UPDATE usuarios SET tema = 'tmhub' WHERE LOWER(tema) IN ('light', 'dark')"
+                ))
+        except SQLAlchemyError:
+            # Outro worker pode ter concluído a mesma migração em paralelo.
+            refreshed_columns = {
+                column["name"] for column in inspect(db.engine).get_columns("usuarios")
+            }
+            if "modo_tema" not in refreshed_columns:
+                raise
 
 @app.route("/")
 @app.route("/docs")
