@@ -17,6 +17,7 @@ PERMISSION_CATALOG = [
     {"key": "admissoes", "label": "Vagas e admissões", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "controle_rescisoes", "label": "Controle de Rescisões", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "controle_faltas", "label": "Controle de Faltas", "group": "Operação", "actions": ["view", "edit"]},
+    {"key": "controle_medidas_disciplinares", "label": "Controle de Medidas Disciplinares", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "controle_glosas", "label": "Controle de Glosas", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "reposicoes", "label": "Requisições de reposição", "group": "Reposições", "actions": ["view", "create", "edit"]},
     {"key": "historico_reposicoes", "label": "Histórico de reposições", "group": "Reposições", "actions": ["view", "edit"]},
@@ -38,7 +39,7 @@ ACTION_COLUMNS = {
     "create": "pode_criar",
     "edit": "pode_alterar",
 }
-LEGACY_RESTRICTED = {"controle_faltas", "controle_glosas", "dashboard_faltas"}
+LEGACY_RESTRICTED = {"controle_faltas", "controle_glosas", "dashboard_faltas","controle_medidas_disciplinares"}
 
 
 def _legacy_permission(user, screen, action):
@@ -139,6 +140,10 @@ def request_permission(path, method):
         return ("controle_glosas", action) if action else None
 
     rules = [
+        ("/medidas-disciplinares/todos", "controle_medidas_disciplinares", {"DELETE": "edit"}),
+        ("/medidas-disciplinares/importar", "controle_medidas_disciplinares", {"POST": "create"}),
+        ("/medidas-disciplinares/opcoes-filtros", "controle_medidas_disciplinares", {"GET": "view"}),
+        ("/medidas-disciplinares", "controle_medidas_disciplinares", {"GET": "view"}),
         ("/controle-faltas/dashboard", "dashboard_faltas", {"GET": "view"}),
         ("/controle-faltas", "controle_faltas", {"GET": "view", "POST": "edit", "PATCH": "edit"}),
         ("/glosas/dashboard", "dashboard_glosas", {"GET": "view"}),

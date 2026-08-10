@@ -9,6 +9,7 @@ from models.cargos import Cargos
 from models.usuarios import Users
 from models.reservas_tecnicas import Floaters
 from models.situacoes import Situations
+from models.medidas_disciplinares import DisciplinaryMeasure
 
 # Utils
 from datetime import date, datetime as dt, timedelta
@@ -26,6 +27,7 @@ from zoneinfo import ZoneInfo
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor
 from utils.token import decode_token
 from services.controle_faltas import AbsenceControlService
+from services.medidas_disciplinares import disciplinary_guidance
 
 def _emit_kds_update(action, request_id=None, status=None):
     """Notify TV dashboards without exposing requisition data over the socket."""
@@ -53,6 +55,29 @@ class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
     REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA"}
     ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO"]
+
+    @staticmethod
+    def _disciplinary_context(employee_id, reason, new_measure_informed):
+        """Retorna somente totais e orientações depois que a requisição foi validada."""
+        summary = (
+            db.session.query(
+                func.sum(case((DisciplinaryMeasure.tipo == "advertencia", 1), else_=0)).label("advertencias"),
+                func.sum(case((DisciplinaryMeasure.tipo == "suspensao", 1), else_=0)).label("suspensoes"),
+            )
+            .filter(DisciplinaryMeasure.colaborador_id == employee_id)
+            .one()
+        )
+        counts = {
+            "advertencias": int(summary.advertencias or 0),
+            "suspensoes": int(summary.suspensoes or 0),
+        }
+        reason_code = "falta_injustificada" if str(reason or "").strip().upper() == "INJUSTIFICADA" else None
+        warnings = disciplinary_guidance(
+            reason_code,
+            counts["advertencias"],
+            counts["suspensoes"],
+        ) if new_measure_informed else []
+        return {"contagens": counts, "avisos": warnings}
 
     @staticmethod
     def _parse_datetime(value):
@@ -307,6 +332,12 @@ class RequestService:
         if motivo not in self.ISNOTFAULT: AbsenceControlService.ensure_for_request(new_rq)
         db.session.commit()
 
+        disciplinary_context = self._disciplinary_context(
+            absent_employee.id,
+            motivo,
+            new_measure_informed=adv,
+        )
+
         TimelineService().create_event(
             req=new_rq,
             status=status,
@@ -317,7 +348,11 @@ class RequestService:
         
         socketio.emit("new_request")
         _emit_kds_update("created", new_rq.id, new_rq.status)
-        return jsonify("Requisição criada"), 201
+        return jsonify({
+            "message": "Requisição criada",
+            "resumo_disciplinar": disciplinary_context["contagens"],
+            "avisos": disciplinary_context["avisos"],
+        }), 201
 
     @safe_route
     def update(self, token_data):
