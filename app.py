@@ -1,4 +1,5 @@
-from gevent import monkey; monkey.patch_all() # Importante manter em primeira instancia
+from gevent import monkey; monkey.patch_all()  # Importante manter em primeira instancia
+
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -9,10 +10,16 @@ from utils.db import db
 from utils.permissions import enforce_request_permission
 from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
+
 load_dotenv()  # Carrega o dotenv
 
 # Variaveis de Instancia - SandBox()
-DEBUG = getenv("DEBUG")
+DEBUG = DEBUG = getenv("DEBUG", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 PORT = int(getenv("PORT", 8590))
 HOST = getenv("HOST")
 
@@ -29,34 +36,22 @@ app.config["SQLALCHEMY_DATABASE_URI"] = getenv("DB_URI")
 app.before_request(enforce_auth_state)
 app.before_request(enforce_request_permission)
 
-for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp]) # Carrega os BPS das Rotas
+for bp in blueprints: app.register_blueprint(bp, url_prefix=blueprints[bp])  # Carrega os BPS das Rotas
+
 db.init_app(app)  # Inicia o banco de dados
-with app.app_context():
-    db.create_all()  # Cria as tabelas
-    from services.noticias import seed_default_news
-    seed_default_news()
 
-
-def _tm_ops_worker():
-    """Reprograma rotinas vencidas sem depender de uma tela aberta."""
-    from services.tm_ops import TMOpsService
-    while True:
-        socketio.sleep(60)
-        try:
-            with app.app_context():
-                TMOpsService._process_due_routines()
-        except Exception as error:
-            app.logger.exception("Falha ao processar rotinas do TM Ops: %s", error)
-
-
-socketio.start_background_task(_tm_ops_worker)
+with app.app_context(): db.create_all()  # Cria as tabelas
 
 @app.route("/")
 @app.route("/docs")
-def index(): return render_template("index.html")
+def index():
+    return render_template("index.html")
+
 
 @app.get("/openapi.json")
-def openapi_spec(): return jsonify(build_openapi_spec(app))
+def openapi_spec():
+    return jsonify(build_openapi_spec(app))
+
 
 # Inicia o servidor
 if __name__ == "__main__": socketio.run(app, debug=DEBUG, port=PORT, host=HOST)

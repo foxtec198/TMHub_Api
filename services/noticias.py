@@ -5,42 +5,6 @@ from models.usuarios import Users
 from utils.db import db
 from utils.safe_route import safe_route
 
-
-DEFAULT_LOGIN_NEWS = (
-    {
-        "chamada": "Operação conectada",
-        "titulo": "Reposições acompanhadas em tempo real.",
-        "descricao": "Acompanhe solicitações, reservas e decisões sem precisar atualizar a página.",
-        "icone": "pi pi-sync",
-        "cor_destaque": "#64ea8a",
-        "ordem": 1,
-    },
-    {
-        "chamada": "Gestão centralizada",
-        "titulo": "Informações importantes em um único painel.",
-        "descricao": "Faltas, admissões, glosas, estoque e indicadores trabalhando de forma integrada.",
-        "icone": "pi pi-chart-line",
-        "cor_destaque": "#56d9bd",
-        "ordem": 2,
-    },
-    {
-        "chamada": "Precisa de ajuda?",
-        "titulo": "A nova central de suporte está disponível.",
-        "descricao": "Acesse orientações e a documentação técnica diretamente pela página inicial.",
-        "icone": "pi pi-headphones",
-        "cor_destaque": "#9ae765",
-        "ordem": 3,
-    },
-)
-
-
-def seed_default_news():
-    if LoginNews.query.first():
-        return
-    db.session.add_all(LoginNews(ativo=True, **item) for item in DEFAULT_LOGIN_NEWS)
-    db.session.commit()
-
-
 def _serialize(item):
     return {
         "id": item.id,
