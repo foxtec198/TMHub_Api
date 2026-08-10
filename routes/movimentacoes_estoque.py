@@ -1,5 +1,5 @@
 from flask import request, Blueprint
-from services.movimentos import MovementService
+from services.movimentacoes_estoque import MovementService
 
 movimentos_bp = Blueprint("Movimentações de Estoque", __name__)
 movement_service = MovementService()
