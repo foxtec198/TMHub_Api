@@ -30,6 +30,7 @@ from routes.dashboard_pcd import dashboard_pcd_bp
 from routes.schedular import schedular_bp
 from routes.dashboard_rescisoes import termination_dashboard_bp
 from routes.tm_ops import tm_ops_bp
+from routes.medidas_disciplinares import disciplinary_measures_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -74,4 +75,7 @@ blueprints = {
     dashboard_pcd_bp: "/dash/pcd",
     schedular_bp: "/schedular",
     tm_ops_bp: "/tm-ops",
+
+    #Medidas Disciplinares
+    disciplinary_measures_bp: "/medidas-disciplinares"
 }
