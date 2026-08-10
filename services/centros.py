@@ -1,6 +1,7 @@
 from flask import request as rq, jsonify
 from utils.safe_route import safe_route
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
+from models.colaboradores import Employees
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 
@@ -21,6 +22,16 @@ class CostsCenterService():
             ).all()
         } if department_numbers else {}
 
+        employee_counts = {
+            center_id: total
+            for center_id, total in (
+                db.session.query(Employees.centro_id, db.func.count(Employees.id))
+                .filter(Employees.centro_id.isnot(None))
+                .group_by(Employees.centro_id)
+                .all()
+            )
+        }
+
         return {
             "centros_custo": [
                 {
@@ -28,6 +39,7 @@ class CostsCenterService():
                     "local": center.local,
                     "departamento": center.departamento,
                     "capacidade_pessoas": center.capacidade_pessoas,
+                    "colaboradores_cadastrados": employee_counts.get(center.id, 0),
                 }
                 for center in centers
             ],
@@ -56,11 +68,11 @@ class CostsCenterService():
         )
         costs = costs_query.all()
         return jsonify([c.to_dict() for c in costs])
-        
+
     @safe_route
     def create(self):
         ...
-        
+
     @safe_route
     def update(self):
         ...
@@ -87,8 +99,12 @@ class CostsCenterService():
         if not isinstance(capacities, list) or not isinstance(departments, list):
             return jsonify("Formato de configuração inválido."), 400
 
+        changed_centers = []
+        changed_departments = []
         try:
             for item in capacities:
+                if not isinstance(item, dict):
+                    raise ValueError
                 center_id = int(item.get("centro_custo_id"))
                 capacity = item.get("capacidade_pessoas")
                 if capacity in (None, ""):
@@ -101,6 +117,7 @@ class CostsCenterService():
                 if not center:
                     return jsonify("Centro de custo não encontrado."), 404
                 center.capacidade_pessoas = normalized_capacity
+                changed_centers.append(center)
 
             valid_departments = {
                 value for value, in db.session.query(CostCenters.departamento)
@@ -109,6 +126,8 @@ class CostsCenterService():
                 .all()
             }
             for item in departments:
+                if not isinstance(item, dict):
+                    raise ValueError
                 department = int(item.get("departamento"))
                 if department not in valid_departments:
                     return jsonify("Departamento não encontrado."), 404
@@ -117,9 +136,27 @@ class CostsCenterService():
                     configuration = DepartmentConfiguration(departamento=department)
                     db.session.add(configuration)
                 configuration.ativo = bool(item.get("ativo", True))
+                changed_departments.append(configuration)
             db.session.commit()
         except (TypeError, ValueError):
             db.session.rollback()
             return jsonify("Informe capacidades inteiras iguais ou maiores que zero."), 400
 
-        return jsonify(self._settings_payload()), 200
+        serialized_departments = [
+            {
+                "departamento": configuration.departamento,
+                "ativo": configuration.ativo,
+            }
+            for configuration in changed_departments
+        ]
+
+        return jsonify({
+            "centros_custo": [
+                {
+                    "id": center.id,
+                    "capacidade_pessoas": center.capacidade_pessoas,
+                }
+                for center in changed_centers
+            ],
+            "departamentos": serialized_departments,
+        }), 200

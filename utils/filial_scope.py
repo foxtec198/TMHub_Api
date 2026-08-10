@@ -1,6 +1,7 @@
 import json
 from flask import g, has_request_context, request
-from models.centros_de_custo import CostCenters
+from sqlalchemy import or_
+from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.filiais import Branch, filial_centros_custo, filial_departamentos, filial_usuarios
 from models.usuarios import Users
 from utils.db import db
@@ -9,6 +10,28 @@ from utils.db import db
 def _get_user(token_data):
     user_id = (token_data or {}).get("id")
     return db.session.get(Users, user_id) if user_id else None
+
+
+def active_cost_center_ids_query():
+    """Centros de departamentos ativos ou ainda sem configuração explícita."""
+    return (
+        db.session.query(CostCenters.id)
+        .outerjoin(
+            DepartmentConfiguration,
+            DepartmentConfiguration.departamento == CostCenters.departamento,
+        )
+        .filter(
+            or_(
+                DepartmentConfiguration.departamento.is_(None),
+                DepartmentConfiguration.ativo.is_(True),
+            )
+        )
+    )
+
+
+def apply_active_department_scope(query, center_column):
+    """Oculta departamentos inativos independentemente da filial ou da role."""
+    return query.filter(center_column.in_(active_cost_center_ids_query()))
 
 
 def is_admin(token_data):
@@ -165,20 +188,28 @@ def allowed_cost_center_ids(token_data):
 
 
 def apply_cost_center_scope(query, column, token_data):
+    query = apply_active_department_scope(query, column)
     ids = allowed_cost_center_ids(token_data)
     return query if ids is None else query.filter(column.in_(ids))
 
 
 def can_access_cost_center(token_data, center_id):
+    try:
+        normalized_center_id = int(center_id)
+    except (TypeError, ValueError):
+        return False
+
+    if not active_cost_center_ids_query().filter(
+        CostCenters.id == normalized_center_id
+    ).first():
+        return False
+
     ids = allowed_cost_center_ids(token_data)
 
     if ids is None:
         return True
 
-    try:
-        return int(center_id) in ids
-    except (TypeError, ValueError):
-        return False
+    return normalized_center_id in ids
 
 
 def can_access_supervisor(token_data, supervisor_id):

@@ -24,7 +24,12 @@ from sqlalchemy.orm import aliased
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from zoneinfo import ZoneInfo
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor
+from utils.filial_scope import (
+    apply_active_department_scope,
+    apply_cost_center_scope,
+    can_access_cost_center,
+    can_access_supervisor,
+)
 from utils.token import decode_token
 from services.controle_faltas import AbsenceControlService
 from services.medidas_disciplinares import disciplinary_guidance
@@ -682,6 +687,9 @@ class RequestService:
                 last_usage.c.ordem == 1,
             ))
             .order_by(Employees.nome)
+        )
+        reservation_query = apply_active_department_scope(
+            reservation_query, Employees.centro_id
         )
         access_token = request.headers.get("Access-Token")
         public_lookup = str(request.args.get("publico", "")).strip().lower() in {"1", "true", "sim"}

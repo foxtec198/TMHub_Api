@@ -109,7 +109,12 @@ def create_cost_centers(connection, employees):
         INSERT INTO centro_de_custo (id, local, departamento, cidade_id)
         VALUES (:id, :local, :dpto, :cidade_id)
         ON CONFLICT (id) DO UPDATE
-        SET local = EXCLUDED.local,
+        SET local = CASE
+                WHEN trim(coalesce(EXCLUDED.local, '')) ~ '^[0-9]+$'
+                    AND trim(coalesce(centro_de_custo.local, '')) <> ''
+                    THEN centro_de_custo.local
+                ELSE EXCLUDED.local
+            END,
             departamento = EXCLUDED.departamento,
             cidade_id = EXCLUDED.cidade_id
         RETURNING (xmax = 0) AS inserted
