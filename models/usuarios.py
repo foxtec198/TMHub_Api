@@ -14,7 +14,10 @@ class Users(BaseModel):
     last_login = db.Column(db.DateTime)
     role = db.Column(db.String, default="USER")
     foto_perfil = db.Column(db.Text)
-    tema = db.Column(db.String(10), default="light")
+    # Identidade visual. Valores light/dark legados continuam aceitos na API
+    # e são migrados pelo frontend para TMHub + modo de luminosidade.
+    tema = db.Column(db.String(10), default="tmhub")
+    modo_tema = db.Column(db.String(5), default="light")
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)
     email_codigo_hash = db.Column(db.String)

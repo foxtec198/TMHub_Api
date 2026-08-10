@@ -374,6 +374,7 @@ class UserServices:
         nome = body.get("nome")
         foto = body.get("foto_perfil")
         tema = body.get("tema")
+        modo_tema = body.get("modo_tema")
         senha_atual = body.get("senha_atual")
         nova_senha = body.get("nova_senha")
 
@@ -390,9 +391,20 @@ class UserServices:
 
         if tema is not None:
             tema = str(tema).lower()
-            if tema not in {"light", "dark", "cyberpunk", "pride"}:
-                return jsonify("O tema deve ser light, dark, cyberpunk ou pride."), 400
-            user.tema = tema
+            if tema not in {"tmhub", "light", "dark", "cyberpunk", "pride", "christmas"}:
+                return jsonify("Tema visual inválido."), 400
+            if tema in {"light", "dark"}:
+                if modo_tema is None:
+                    user.modo_tema = tema
+                user.tema = "tmhub"
+            else:
+                user.tema = tema
+
+        if modo_tema is not None:
+            modo_tema = str(modo_tema).lower()
+            if modo_tema not in {"light", "dark"}:
+                return jsonify("O modo deve ser light ou dark."), 400
+            user.modo_tema = modo_tema
 
         if nova_senha is not None:
             valid_password, _, _ = verify_password(str(senha_atual or ""), user.hash)
@@ -406,7 +418,7 @@ class UserServices:
             user.token_version = int(user.token_version or 0) + 1
             user.senha_alterada_em = dt.now()
 
-        if not any(value is not None for value in (nome, foto, tema, nova_senha)):
+        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)):
             return jsonify("Nenhuma alteração informada."), 400
 
         refresh_user_requirements(user)
@@ -547,7 +559,8 @@ class UserServices:
             "nome": user.nome,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
-            "tema": user.tema or "light",
+            "tema": user.tema or "tmhub",
+            "modo_tema": user.modo_tema or "light",
             "role": user.role,
             "gerencia_faltas": bool(user.gerencia_faltas),
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in sorted(user.filiais, key=lambda item: item.nome) if branch.ativa],
