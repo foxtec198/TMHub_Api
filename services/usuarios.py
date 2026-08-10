@@ -390,8 +390,8 @@ class UserServices:
 
         if tema is not None:
             tema = str(tema).lower()
-            if tema not in {"light", "dark"}:
-                return jsonify("O tema deve ser light ou dark."), 400
+            if tema not in {"light", "dark", "cyberpunk", "pride"}:
+                return jsonify("O tema deve ser light, dark, cyberpunk ou pride."), 400
             user.tema = tema
 
         if nova_senha is not None:

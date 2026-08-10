@@ -13,7 +13,7 @@ from routes.projects import project_bp
 
 from routes.categorias import categorias_bp
 from routes.produtos import produtos_bp
-from routes.movimentos import movimentos_bp
+from routes.movimentacoes_estoque import movimentos_bp
 from routes.movimentacoes_ativos import asset_movements_bp
 
 from routes.admissao import admissao_bp

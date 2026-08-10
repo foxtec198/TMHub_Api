@@ -3,7 +3,6 @@ from models.usuarios import Users
 from utils.db import db
 from utils.token import decode_token
 
-
 PERMISSION_CATALOG = [
     {"key": "dashboard_reposicoes", "label": "Dashboard de Reposições", "group": "Dashboards", "actions": ["view"]},
     {"key": "dashboard_reposicoes_ods", "label": "Painel ODS de Reposições", "group": "Dashboards", "actions": ["view"]},

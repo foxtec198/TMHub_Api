@@ -1,7 +1,7 @@
 from flask import request, Blueprint
 from services.movimentos import MovementService
 
-movimentos_bp = Blueprint("Movimentos de Estoque", __name__)
+movimentos_bp = Blueprint("Movimentações de Estoque", __name__)
 movement_service = MovementService()
 
 @movimentos_bp.route("", methods=["GET", "POST"])

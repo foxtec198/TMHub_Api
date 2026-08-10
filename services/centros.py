@@ -70,18 +70,6 @@ class CostsCenterService():
         return jsonify([c.to_dict() for c in costs])
 
     @safe_route
-    def create(self):
-        ...
-
-    @safe_route
-    def update(self):
-        ...
-
-    @safe_route
-    def delete(self):
-        ...
-
-    @safe_route
     def settings(self, token_data):
         if not is_admin(token_data):
             return jsonify("Apenas administradores podem configurar departamentos e contratos."), 403
