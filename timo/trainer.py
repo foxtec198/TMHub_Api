@@ -5,14 +5,19 @@ from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
+from timo.navigation_catalog import NAVIGATION_TRAINING_EXAMPLES
+
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_PATH = BASE_DIR / "data" / "intents.csv"
 MODEL_PATH = BASE_DIR / "models" / "intent_model.pkl"
 
 def train():
     df = pd.read_csv(DATASET_PATH)
+    navigation_examples = pd.DataFrame(NAVIGATION_TRAINING_EXAMPLES)
+    df = pd.concat([df, navigation_examples], ignore_index=True)
 
     df = df.dropna(subset=["text", "intent"])
+    df = df.drop_duplicates(subset=["text", "intent"])
 
     X = df["text"].astype(str)
     y = df["intent"].astype(str)
