@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -8,16 +8,23 @@ from flask import jsonify, request
 from sqlalchemy import func, or_
 
 from models.admissao import Vacancy
+from models.centros_de_custo import CostCenters
+from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.rp_historico import History
+from models.rp_requisicao import Requisicao
+from models.reservas_tecnicas import Floaters
+from models.timo_aprendizados import TimoLearningExample
 from models.timo_configuracoes import TimoCommandTrigger, TimoIntentConfiguration
-from timo.entities import extract_entities
+from timo.analytics_catalog import ANALYTICS_INTENTS, analytics_intent_for_command
+from timo.entities import extract_entities, extract_period
 from timo.navigation_catalog import (
     NAVIGATION_ACTION_PATHS,
     NAVIGATION_INTENTS,
     navigation_intent_for_command,
 )
 from timo.predictor import predictor
+from timo.trainer import train as train_timo
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, is_admin
 from utils.permissions import has_permission
@@ -72,6 +79,7 @@ class TimoCommandService:
             "action_type": ACTION_NONE,
             "action_value": None,
         },
+        **ANALYTICS_INTENTS,
         **NAVIGATION_INTENTS,
     }
 
@@ -80,6 +88,18 @@ class TimoCommandService:
         "reposicoes_periodo": ["{total}", "{period_label}"],
         "postos_descobertos": ["{total}", "{period_label}"],
         "vagas_abertas": ["{total}"],
+        **{
+            intent: definition["variables"]
+            for intent, definition in ANALYTICS_INTENTS.items()
+        },
+    }
+
+    ANALYTICS_INTENT_IDS = {
+        "faltas_periodo",
+        "reposicoes_periodo",
+        "postos_descobertos",
+        "vagas_abertas",
+        *ANALYTICS_INTENTS.keys(),
     }
 
     @staticmethod
@@ -131,7 +151,50 @@ class TimoCommandService:
             "resposta_template": row.resposta_template or definition.get("response") or "Comando concluído.",
             "acao_tipo": row.acao_tipo or cls.ACTION_NONE,
             "acao_valor": row.acao_valor,
+            "categoria": (
+                "personalizado"
+                if row.personalizado
+                else "analises"
+                if row.intent in cls.ANALYTICS_INTENT_IDS
+                else "telas"
+            ),
         }
+
+    @classmethod
+    def _serialize_learning(cls, item):
+        return {
+            "id": item.id,
+            "texto": item.texto_normalizado,
+            "intent_sugerida": item.intent_sugerida,
+            "confianca": item.confianca,
+            "status": item.status,
+            "intent_confirmada": item.intent_confirmada,
+            "ocorrencias": item.ocorrencias,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+
+    @classmethod
+    def _capture_learning_candidate(cls, command, prediction, token_data):
+        """Registra somente comandos não entendidos; não há treinamento automático."""
+        existing = TimoLearningExample.query.filter_by(
+            texto_normalizado=command,
+            status="pendente",
+        ).first()
+        now = datetime.now(SAO_PAULO)
+        if existing:
+            existing.ocorrencias += 1
+            existing.intent_sugerida = prediction.get("intent") or existing.intent_sugerida
+            existing.confianca = prediction.get("confidence")
+            existing.ultimo_recebido_em = now
+        else:
+            db.session.add(TimoLearningExample(
+                texto_normalizado=command,
+                intent_sugerida=prediction.get("intent"),
+                confianca=prediction.get("confidence"),
+                criado_por_usuario_id=(token_data or {}).get("id"),
+                ultimo_recebido_em=now,
+            ))
+        db.session.commit()
 
     @classmethod
     def _custom_configuration_for_command(cls, command):
@@ -171,8 +234,190 @@ class TimoCommandService:
         end_date = datetime.fromisoformat(period["end"]).date()
         return datetime.combine(start_date, time.min), datetime.combine(end_date, time.max)
 
+    @staticmethod
+    def _absence_reason_filter():
+        """Mantém férias, remanejamento e posto vago fora dos indicadores de falta."""
+        return ~func.upper(AbsenceControl.motivo).in_(
+            ("REMANEJAMENTO", "FERIAS", "FÉRIAS", "POSTO VAGO")
+        )
+
+    @staticmethod
+    def _latest_history_query():
+        latest_history = (
+            db.session.query(
+                History.requisicao_id,
+                func.max(History.id).label("history_id"),
+            )
+            .group_by(History.requisicao_id)
+            .subquery()
+        )
+        return History.query.join(latest_history, History.id == latest_history.c.history_id)
+
+    @staticmethod
+    def _active_headcount(token_data):
+        query = Employees.query.filter(Employees.situacao == 1)
+        return apply_cost_center_scope(query, Employees.centro_id, token_data).count()
+
+    @classmethod
+    def _absenteeism_data(cls, entities, token_data):
+        start, end = cls._period_range(entities["period"])
+        absence_query = AbsenceControl.query.filter(
+            AbsenceControl.data_falta.between(start, end),
+            cls._absence_reason_filter(),
+        )
+        absences = apply_cost_center_scope(
+            absence_query, AbsenceControl.centro_custo_id, token_data
+        ).count()
+        active_headcount = cls._active_headcount(token_data)
+        start_date, end_date = start.date(), end.date()
+        operational_days = sum(
+            1
+            for day in range((end_date - start_date).days + 1)
+            if (start_date + timedelta(days=day)).weekday() < 5
+        ) or 1
+        average_absences = absences / operational_days
+        rate = (average_absences / active_headcount * 100) if active_headcount else 0
+        return {
+            "period_label": entities["period"]["label"],
+            "faltas": absences,
+            "media_faltas_dia": round(average_absences, 2),
+            "percentual_absenteismo": round(rate, 2),
+            "quadro_ativo": active_headcount,
+        }
+
+    @classmethod
+    def _coverage_data(cls, entities, token_data):
+        start, end = cls._period_range(entities["period"])
+        history_query = cls._latest_history_query().filter(
+            History.created_at.between(start, end),
+            History.status.in_(("approved", "reproved")),
+        )
+        history_query = apply_cost_center_scope(history_query, History.cc, token_data)
+        covered = history_query.filter(History.reserva_id > 0).count()
+        uncovered = history_query.filter(
+            or_(History.reserva_id == 0, History.reserva_id.is_(None))
+        ).count()
+        open_query = Requisicao.query.filter(
+            Requisicao.created_at.between(start, end),
+            Requisicao.status.in_(("pending", "updated")),
+        )
+        open_requests = apply_cost_center_scope(open_query, Requisicao.cc, token_data).count()
+        decided = covered + uncovered
+        rate = (covered / decided * 100) if decided else 0
+        return {
+            "period_label": entities["period"]["label"],
+            "cobertas": covered,
+            "descobertas": uncovered,
+            "abertas": open_requests,
+            "taxa_cobertura": round(rate, 2),
+        }
+
+    @classmethod
+    def _pending_absences_data(cls, token_data):
+        pending_query = AbsenceControl.query.filter(
+            AbsenceControl.status == "pendente",
+            cls._absence_reason_filter(),
+        )
+        pending_query = apply_cost_center_scope(
+            pending_query, AbsenceControl.centro_custo_id, token_data
+        )
+        now = datetime.now(SAO_PAULO)
+        overdue = pending_query.filter(
+            AbsenceControl.prazo_atestado.isnot(None),
+            AbsenceControl.prazo_atestado < now,
+        ).count()
+        return {"pendentes": pending_query.count(), "atrasadas": overdue}
+
+    @staticmethod
+    def _lotation_rows(token_data):
+        active_by_center = (
+            db.session.query(
+                Employees.centro_id.label("centro_id"),
+                func.count(Employees.id).label("ativos"),
+            )
+            .filter(Employees.situacao == 1)
+            .group_by(Employees.centro_id)
+            .subquery()
+        )
+        query = (
+            db.session.query(
+                CostCenters.id,
+                CostCenters.local,
+                CostCenters.capacidade_pessoas,
+                func.coalesce(active_by_center.c.ativos, 0).label("ativos"),
+            )
+            .outerjoin(active_by_center, active_by_center.c.centro_id == CostCenters.id)
+        )
+        return apply_cost_center_scope(query, CostCenters.id, token_data).all()
+
+    @classmethod
+    def _lotation_data(cls, token_data):
+        rows = cls._lotation_rows(token_data)
+        planned = [row for row in rows if row.capacidade_pessoas is not None]
+        capacity = sum(int(row.capacidade_pessoas) for row in planned)
+        active = sum(int(row.ativos or 0) for row in planned)
+        deficit = sum(max(0, int(row.capacidade_pessoas) - int(row.ativos or 0)) for row in planned)
+        excess = sum(max(0, int(row.ativos or 0) - int(row.capacidade_pessoas)) for row in planned)
+        critical = sorted(
+            (
+                (row.local or f"Centro {row.id}", int(row.capacidade_pessoas) - int(row.ativos or 0))
+                for row in planned
+                if int(row.capacidade_pessoas) > int(row.ativos or 0)
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:3]
+        critical_text = (
+            "Contratos com maior déficit: "
+            + "; ".join(f"{name} ({gap} posição(ões))" for name, gap in critical)
+            if critical
+            else "Não há contratos com déficit no QL informado."
+        )
+        return {
+            "quadro_ativo": active,
+            "capacidade_planejada": capacity,
+            "centros_planejados": len(planned),
+            "centros_sem_capacidade": len(rows) - len(planned),
+            "deficit": deficit,
+            "excedente": excess,
+            "qtd_criticos": len(critical),
+            "contratos_criticos": critical_text,
+        }
+
     @classmethod
     def _intent_data(cls, intent, entities, token_data):
+        if intent == "absenteismo_periodo":
+            if not (
+                has_permission(token_data, "dashboard_faltas", "view")
+                or has_permission(token_data, "controle_faltas", "view")
+            ):
+                return None, "Você não possui acesso aos dados de faltas."
+            return cls._absenteeism_data(entities, token_data), None
+
+        if intent == "coberturas_periodo":
+            if not has_permission(token_data, "reposicoes", "view"):
+                return None, "Você não possui acesso aos dados de reposições."
+            return cls._coverage_data(entities, token_data), None
+
+        if intent == "faltas_pendentes":
+            if not has_permission(token_data, "controle_faltas", "view"):
+                return None, "Você não possui acesso ao Controle de Faltas."
+            return cls._pending_absences_data(token_data), None
+
+        if intent in {"quadro_lotacao", "quadro_lotacao_critico"}:
+            if not has_permission(token_data, "estrutura", "view"):
+                return None, "Você não possui acesso à Estrutura e ao quadro de lotação."
+            return cls._lotation_data(token_data), None
+
+        if intent == "reservas_disponiveis":
+            if not has_permission(token_data, "reservas", "view"):
+                return None, "Você não possui acesso às reservas técnicas."
+            query = Floaters.query.join(Employees, Employees.id == Floaters.employee_id).filter(
+                Floaters.disponivel.is_(True)
+            )
+            total = apply_cost_center_scope(query, Employees.centro_id, token_data).count()
+            return {"total": total}, None
+
         if intent == "faltas_periodo":
             if not (
                 has_permission(token_data, "dashboard_faltas", "view")
@@ -239,19 +484,32 @@ class TimoCommandService:
 
         custom_configuration = self._custom_configuration_for_command(command)
         navigation_intent = None if custom_configuration else navigation_intent_for_command(command)
+        analytics_intent = (
+            None
+            if custom_configuration or navigation_intent
+            else analytics_intent_for_command(command)
+        )
         prediction = (
             predictor.predict(command)
-            if not custom_configuration and not navigation_intent
+            if not custom_configuration and not navigation_intent and not analytics_intent
             else None
         )
         intent = (
             custom_configuration.intent
             if custom_configuration
-            else navigation_intent or prediction["intent"]
+            else navigation_intent or analytics_intent or prediction["intent"]
         )
-        confidence = 1.0 if custom_configuration or navigation_intent else prediction["confidence"]
+        confidence = (
+            1.0
+            if custom_configuration or navigation_intent or analytics_intent
+            else prediction["confidence"]
+        )
         definition = self.INTENT_CATALOG.get(intent)
         if not custom_configuration and (confidence < self.MIN_CONFIDENCE or not definition):
+            try:
+                cls._capture_learning_candidate(command, prediction or {}, token_data)
+            except Exception:
+                db.session.rollback()
             return jsonify({
                 "success": False,
                 "understood": False,
@@ -273,6 +531,8 @@ class TimoCommandService:
             }), 200
 
         entities = extract_entities(command, intent) if definition else {}
+        if intent in {"absenteismo_periodo", "coberturas_periodo"} and "period" not in entities:
+            entities["period"] = extract_period(command)
         data, error = self._intent_data(intent, entities, token_data) if definition else ({}, None)
         if error:
             return jsonify({"success": False, "message": error, "action": None}), 403
@@ -306,6 +566,62 @@ class TimoCommandService:
                 for intent, definition in self.INTENT_CATALOG.items()
             ] + [self._serialize_configuration(row) for row in custom_rows],
             "acoes": self.action_options(),
+            "aprendizados": [
+                self._serialize_learning(item)
+                for item in TimoLearningExample.query.filter_by(status="pendente")
+                .order_by(TimoLearningExample.ocorrencias.desc(), TimoLearningExample.updated_at.desc())
+                .limit(100)
+                .all()
+            ],
+            "aprendizados_aprovados": TimoLearningExample.query.filter_by(
+                status="aprovado"
+            ).count(),
+            "intents_disponiveis": [
+                {
+                    "label": definition["label"],
+                    "value": intent,
+                    "categoria": "analises" if intent in self.ANALYTICS_INTENT_IDS else "telas",
+                }
+                for intent, definition in self.INTENT_CATALOG.items()
+            ],
+        }), 200
+
+    @safe_route
+    def review_learning(self, token_data, learning_id):
+        if not is_admin(token_data):
+            return jsonify("A configuração do Timo está disponível apenas para administradores."), 403
+        item = db.session.get(TimoLearningExample, learning_id)
+        if not item:
+            return jsonify("Frase de aprendizado não encontrada."), 404
+        body = request.get_json(silent=True) or {}
+        status = str(body.get("status") or "").strip().lower()
+        if status not in {"aprovado", "ignorado"}:
+            return jsonify("Informe se a frase deve ser aprovada ou ignorada."), 400
+        intent = str(body.get("intent") or "").strip()
+        if status == "aprovado" and intent not in self.INTENT_CATALOG:
+            return jsonify("Selecione uma intenção válida para treinar."), 400
+        item.status = status
+        item.intent_confirmada = intent if status == "aprovado" else None
+        item.revisado_por_usuario_id = token_data.get("id")
+        item.revisado_em = datetime.now(SAO_PAULO)
+        db.session.commit()
+        return jsonify({"message": "Frase revisada.", "aprendizado": self._serialize_learning(item)}), 200
+
+    @safe_route
+    def train_learning(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("O treinamento do Timo está disponível apenas para administradores."), 403
+        approved = TimoLearningExample.query.filter_by(status="aprovado").all()
+        examples = [
+            {"text": item.texto_normalizado, "intent": item.intent_confirmada}
+            for item in approved
+            if item.intent_confirmada in self.INTENT_CATALOG
+        ]
+        train_timo(examples)
+        predictor.reload()
+        return jsonify({
+            "message": "Modelo do Timo treinado com as frases revisadas.",
+            "frases_aprovadas": len(examples),
         }), 200
 
     @safe_route

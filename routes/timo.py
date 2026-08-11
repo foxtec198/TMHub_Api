@@ -30,3 +30,13 @@ def create_custom_command():
 @timo_bp.delete("/configuracoes/<string:intent>")
 def delete_custom_command(intent):
     return service.delete_custom_command(intent=intent)
+
+
+@timo_bp.patch("/aprendizados/<int:learning_id>")
+def review_learning(learning_id):
+    return service.review_learning(learning_id=learning_id)
+
+
+@timo_bp.post("/aprendizados/treinar")
+def train_learning():
+    return service.train_learning()

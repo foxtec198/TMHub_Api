@@ -11,6 +11,9 @@ class IntentPredictor:
                 "Modelo do Timo não encontrado. "
                 "Execute: python -m timo.trainer"
             )
+        self.reload()
+
+    def reload(self):
         self.model = joblib.load(MODEL_PATH)
 
     def predict(self, text: str):
