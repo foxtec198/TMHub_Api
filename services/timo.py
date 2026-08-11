@@ -12,6 +12,11 @@ from models.controle_faltas import AbsenceControl
 from models.rp_historico import History
 from models.timo_configuracoes import TimoCommandTrigger, TimoIntentConfiguration
 from timo.entities import extract_entities
+from timo.navigation_catalog import (
+    NAVIGATION_ACTION_PATHS,
+    NAVIGATION_INTENTS,
+    navigation_intent_for_command,
+)
 from timo.predictor import predictor
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, is_admin
@@ -36,36 +41,7 @@ class TimoCommandService:
     ACTION_NONE = "none"
     ACTION_NAVIGATE = "navigate"
 
-    ACTION_PATHS = {
-        "/controle-faltas": {
-            "label": "Controle de Faltas",
-            "permission": "controle_faltas",
-        },
-        "/reposicoes/requisicoes": {
-            "label": "Requisições",
-            "permission": "reposicoes",
-        },
-        "/reposicoes/reservas": {
-            "label": "Reservas técnicas",
-            "permission": "reservas",
-        },
-        "/projetos": {
-            "label": "Meus Projetos",
-            "permission": "projetos",
-        },
-        "/estoque/produtos": {
-            "label": "Produtos em estoque",
-            "permission": "estoque_produtos",
-        },
-        "/reports/colaboradores-departamento": {
-            "label": "Colaboradores por departamento",
-            "permission": "dashboard_colaboradores",
-        },
-        "/admissao": {
-            "label": "Vagas e admissões",
-            "permission": "admissoes",
-        },
-    }
+    ACTION_PATHS = NAVIGATION_ACTION_PATHS
 
     INTENT_CATALOG = {
         "faltas_periodo": {
@@ -96,20 +72,7 @@ class TimoCommandService:
             "action_type": ACTION_NONE,
             "action_value": None,
         },
-        "navegar_faltas": {
-            "label": "Abrir Controle de Faltas",
-            "description": "Abre a tela do Controle de Faltas.",
-            "response": "Abrindo o Controle de Faltas.",
-            "action_type": ACTION_NAVIGATE,
-            "action_value": "/controle-faltas",
-        },
-        "navegar_colaboradores": {
-            "label": "Abrir Colaboradores por departamento",
-            "description": "Abre a tela de colaboradores por departamento.",
-            "response": "Abrindo Colaboradores por departamento.",
-            "action_type": ACTION_NAVIGATE,
-            "action_value": "/reports/colaboradores-departamento",
-        },
+        **NAVIGATION_INTENTS,
     }
 
     TEMPLATE_VARIABLES = {
@@ -256,7 +219,12 @@ class TimoCommandService:
             return None
         path = configuration.acao_valor
         metadata = cls.ACTION_PATHS.get(path)
-        if not metadata or not has_permission(token_data, metadata["permission"], "view"):
+        if not metadata:
+            return None
+        if metadata.get("admin_only") and not is_admin(token_data):
+            return None
+        permission = metadata.get("permission")
+        if permission and not has_permission(token_data, permission, "view"):
             return None
         return {"type": cls.ACTION_NAVIGATE, "path": path}
 
@@ -270,9 +238,18 @@ class TimoCommandService:
             return jsonify({"success": False, "message": "Esse comando é muito longo.", "action": None}), 400
 
         custom_configuration = self._custom_configuration_for_command(command)
-        prediction = predictor.predict(command) if not custom_configuration else None
-        intent = custom_configuration.intent if custom_configuration else prediction["intent"]
-        confidence = 1.0 if custom_configuration else prediction["confidence"]
+        navigation_intent = None if custom_configuration else navigation_intent_for_command(command)
+        prediction = (
+            predictor.predict(command)
+            if not custom_configuration and not navigation_intent
+            else None
+        )
+        intent = (
+            custom_configuration.intent
+            if custom_configuration
+            else navigation_intent or prediction["intent"]
+        )
+        confidence = 1.0 if custom_configuration or navigation_intent else prediction["confidence"]
         definition = self.INTENT_CATALOG.get(intent)
         if not custom_configuration and (confidence < self.MIN_CONFIDENCE or not definition):
             return jsonify({
