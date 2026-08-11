@@ -25,5 +25,6 @@ jobs: # Jobs will run
             set -e
             cd /home/guibs/api_tmhub
             sudo git pull origin main
-            venv/bin/pip install -r requirements.txt --upgrade
+            venv/bin/pip cache purge || true
+            venv/bin/pip install --no-cache-dir -r requirements.txt --upgrade
             sudo systemctl restart api_tmhub
