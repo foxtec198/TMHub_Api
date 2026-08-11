@@ -17,6 +17,7 @@ from models.reservas_tecnicas import Floaters
 from models.timo_aprendizados import TimoLearningExample
 from models.timo_configuracoes import TimoCommandTrigger, TimoIntentConfiguration
 from timo.analytics_catalog import ANALYTICS_INTENTS, analytics_intent_for_command
+from timo.command_catalog import known_intent_for_command
 from timo.entities import extract_entities, extract_period
 from timo.navigation_catalog import (
     NAVIGATION_ACTION_PATHS,
@@ -489,25 +490,30 @@ class TimoCommandService:
             if custom_configuration or navigation_intent
             else analytics_intent_for_command(command)
         )
+        known_command = (
+            None
+            if custom_configuration or navigation_intent or analytics_intent
+            else known_intent_for_command(command)
+        )
         prediction = (
             predictor.predict(command)
-            if not custom_configuration and not navigation_intent and not analytics_intent
+            if not custom_configuration and not navigation_intent and not analytics_intent and not known_command
             else None
         )
         intent = (
             custom_configuration.intent
             if custom_configuration
-            else navigation_intent or analytics_intent or prediction["intent"]
+            else navigation_intent or analytics_intent or (known_command or {}).get("intent") or prediction["intent"]
         )
         confidence = (
             1.0
-            if custom_configuration or navigation_intent or analytics_intent
+            if custom_configuration or navigation_intent or analytics_intent or known_command
             else prediction["confidence"]
         )
         definition = self.INTENT_CATALOG.get(intent)
         if not custom_configuration and (confidence < self.MIN_CONFIDENCE or not definition):
             try:
-                cls._capture_learning_candidate(command, prediction or {}, token_data)
+                self._capture_learning_candidate(command, prediction or {}, token_data)
             except Exception:
                 db.session.rollback()
             return jsonify({
