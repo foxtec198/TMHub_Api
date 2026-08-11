@@ -1,0 +1,54 @@
+text,intent
+quantas faltas tivemos hoje,faltas_periodo
+quantas faltas tem hoje,faltas_periodo
+quantas faltas ocorreram hoje,faltas_periodo
+total de faltas hoje,faltas_periodo
+me mostra as faltas de hoje,faltas_periodo
+como estão as faltas hoje,faltas_periodo
+como ta de falta hoje,faltas_periodo
+quantas faltas tivemos ontem,faltas_periodo
+total de faltas ontem,faltas_periodo
+quantas faltas tivemos esse mês,faltas_periodo
+quantas faltas tivemos este mês,faltas_periodo
+total de faltas deste mês,faltas_periodo
+me fala as faltas desse mês,faltas_periodo
+quantas faltas tivemos mês passado,faltas_periodo
+total de faltas do mês passado,faltas_periodo
+como estão as faltas,faltas_periodo
+me mostre as faltas,faltas_periodo
+
+quantas reposições tivemos hoje,reposicoes_periodo
+quantas reposições tem hoje,reposicoes_periodo
+total de reposições hoje,reposicoes_periodo
+quantas coberturas tivemos hoje,reposicoes_periodo
+quantos postos foram cobertos hoje,reposicoes_periodo
+quantas reposições tivemos esse mês,reposicoes_periodo
+total de reposições este mês,reposicoes_periodo
+quantas coberturas tivemos este mês,reposicoes_periodo
+quantas reposições tivemos mês passado,reposicoes_periodo
+
+quantos postos estão descobertos,postos_descobertos
+quantos postos descobertos temos,postos_descobertos
+tem algum posto descoberto,postos_descobertos
+quantos postos sem cobertura,postos_descobertos
+quantas faltas estão sem cobertura,postos_descobertos
+me mostra os postos descobertos,postos_descobertos
+
+quantas vagas estão abertas,vagas_abertas
+quantas vagas temos abertas,vagas_abertas
+total de vagas abertas,vagas_abertas
+tem vaga aberta,vagas_abertas
+me mostra as vagas abertas,vagas_abertas
+
+abre o controle de faltas,navegar_faltas
+abra o controle de faltas,navegar_faltas
+abrir controle de faltas,navegar_faltas
+me leva para o controle de faltas,navegar_faltas
+vai para faltas,navegar_faltas
+mostrar controle de faltas,navegar_faltas
+
+abre os colaboradores,navegar_colaboradores
+abra os colaboradores,navegar_colaboradores
+me leva para colaboradores,navegar_colaboradores
+abre a lista de colaboradores,navegar_colaboradores
+mostrar colaboradores,navegar_colaboradores

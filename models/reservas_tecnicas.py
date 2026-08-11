@@ -15,3 +15,6 @@ class Floaters(BaseModel):
         index=True,
     )
     was_used = db.Column(db.Integer, default=0)
+    disponivel = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    indisponibilidade_motivo = db.Column(db.String(12))
+    indisponivel_em = db.Column(db.DateTime)

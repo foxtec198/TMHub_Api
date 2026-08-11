@@ -10,6 +10,7 @@ def prepare_uploaded_json(data):
         if not isinstance(group, dict):
             continue
         center_name = group.get("centro_de_custo")
+        print("TRY IT, IS HERE", center_name)
         center_id = center_name.split(" - ", 1)[0].strip() if center_name else None
         department, city_id, city_name = _cidade_para(center_id)
         group_employees = group.get("empregados") or []
