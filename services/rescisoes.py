@@ -15,12 +15,7 @@ from models.rescisoes import Termination
 from models.supervisores import Supervisors
 from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import (
-    allowed_cost_center_ids,
-    apply_cost_center_scope,
-    can_access_cost_center,
-    is_admin,
-)
+from utils.filial_scope import (allowed_cost_center_ids, apply_cost_center_scope, can_access_cost_center, is_admin,)
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
@@ -85,6 +80,28 @@ def _notice_value(value):
 
 def _cell(row, index):
     return row[index] if index < len(row) else None
+
+
+def _filter_values(field, converter=str):
+    values = []
+    seen = set()
+
+    for raw_value in request.args.getlist(field):
+        for raw_item in str(raw_value or "").split(","):
+            item = raw_item.strip()
+            if not item:
+                continue
+            try:
+                converted = converter(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Filtro {field} inválido.") from error
+            if converter is int and converted <= 0:
+                raise ValueError(f"Filtro {field} inválido.")
+            if converted not in seen:
+                seen.add(converted)
+                values.append(converted)
+
+    return values
 
 
 def _first_filled_cell(row, indexes):
@@ -284,22 +301,26 @@ class TerminationService:
             token_data,
         )
         try:
+            center_ids = _filter_values("centro_custo_id", int)
+            supervisor_ids = _filter_values("supervisor_id", int)
+            departments = _filter_values("departamento", int)
+            reasons = _filter_values("motivo")
+
             if request.args.get("inicio"):
                 query = query.filter(Termination.data_demissao >= _parse_date(request.args["inicio"], "Data inicial"))
             if request.args.get("fim"):
                 query = query.filter(Termination.data_demissao <= _parse_date(request.args["fim"], "Data final"))
-            if request.args.get("centro_custo_id"):
-                query = query.filter(Employees.centro_id == int(request.args["centro_custo_id"]))
-            if request.args.get("supervisor_id"):
-                query = query.filter(CostCenters.supervisor_id == int(request.args["supervisor_id"]))
-            if request.args.get("departamento"):
-                query = query.filter(CostCenters.departamento == int(request.args["departamento"]))
+            if center_ids:
+                query = query.filter(Employees.centro_id.in_(center_ids))
+            if supervisor_ids:
+                query = query.filter(CostCenters.supervisor_id.in_(supervisor_ids))
+            if departments:
+                query = query.filter(CostCenters.departamento.in_(departments))
+            if reasons:
+                query = query.filter(Termination.motivo_rescisao.in_(reasons))
         except (TypeError, ValueError) as error:
             return jsonify(str(error) or "Filtro invalido."), 400
 
-        reason = str(request.args.get("motivo") or "").strip()
-        if reason:
-            query = query.filter(Termination.motivo_rescisao == reason)
         search = str(request.args.get("busca") or "").strip()
         if search:
             pattern = f"%{search}%"
