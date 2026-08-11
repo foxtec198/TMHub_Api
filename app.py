@@ -82,6 +82,52 @@ with app.app_context():
             if "timo_ativo" not in refreshed_columns:
                 raise
 
+    tables = set(inspect(db.engine).get_table_names())
+    if "timo_configuracoes" in tables:
+        timo_columns = {
+            column["name"]
+            for column in inspect(db.engine).get_columns("timo_configuracoes")
+        }
+        timo_migrations = (
+            ("titulo", "ALTER TABLE timo_configuracoes ADD COLUMN titulo VARCHAR(150)"),
+            ("descricao", "ALTER TABLE timo_configuracoes ADD COLUMN descricao TEXT"),
+            ("personalizado", "ALTER TABLE timo_configuracoes ADD COLUMN personalizado BOOLEAN NOT NULL DEFAULT FALSE"),
+        )
+        for column_name, statement in timo_migrations:
+            if column_name in timo_columns:
+                continue
+            try:
+                with db.engine.begin() as connection:
+                    connection.execute(text(statement))
+            except SQLAlchemyError:
+                refreshed_columns = {
+                    column["name"]
+                    for column in inspect(db.engine).get_columns("timo_configuracoes")
+                }
+                if column_name not in refreshed_columns:
+                    raise
+            timo_columns.add(column_name)
+
+    floater_columns = {column["name"] for column in inspect(db.engine).get_columns("volantes")}
+    floater_migrations = (
+        ("disponivel", "ALTER TABLE volantes ADD COLUMN disponivel BOOLEAN NOT NULL DEFAULT TRUE"),
+        ("indisponibilidade_motivo", "ALTER TABLE volantes ADD COLUMN indisponibilidade_motivo VARCHAR(12)"),
+        ("indisponivel_em", "ALTER TABLE volantes ADD COLUMN indisponivel_em TIMESTAMP"),
+    )
+    for column_name, statement in floater_migrations:
+        if column_name in floater_columns:
+            continue
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(text(statement))
+        except SQLAlchemyError:
+            refreshed_columns = {
+                column["name"] for column in inspect(db.engine).get_columns("volantes")
+            }
+            if column_name not in refreshed_columns:
+                raise
+        floater_columns.add(column_name)
+
 @app.route("/")
 @app.route("/docs")
 def index():

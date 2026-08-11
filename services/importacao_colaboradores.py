@@ -251,20 +251,15 @@ class CollaboratorImportService:
         if not is_admin(token_data):
             return jsonify("Apenas administradores podem importar colaboradores."), 403
         job = _job_snapshot(job_id)
-        if not job or job.get("status") != "uploading":
-            return jsonify("Envio não encontrado ou já finalizado."), 404
+        if not job or job.get("status") != "uploading": return jsonify("Envio não encontrado ou já finalizado."), 404
 
         uploaded = request.files.get("chunk")
-        try:
-            index = int(request.form.get("index", -1))
-        except (TypeError, ValueError):
-            index = -1
-        if not uploaded or index < 0 or index >= job["chunks"]:
-            return jsonify("Parte do arquivo inválida."), 400
+        try: index = int(request.form.get("index", -1))
+        except (TypeError, ValueError): index = -1
+        if not uploaded or index < 0 or index >= job["chunks"]: return jsonify("Parte do arquivo inválida."), 400
 
         content = uploaded.read(MAX_CHUNK_SIZE + 1)
-        if len(content) > MAX_CHUNK_SIZE:
-            return jsonify("Parte do arquivo excede o limite permitido."), 413
+        if len(content) > MAX_CHUNK_SIZE: return jsonify("Parte do arquivo excede o limite permitido."), 413
 
         part_path = UPLOAD_ROOT / job_id / f"{index:06d}.part"
         part_path.write_bytes(content)

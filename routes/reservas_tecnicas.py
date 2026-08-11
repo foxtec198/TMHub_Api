@@ -9,4 +9,5 @@ def root():
     match request.method:
         case "GET": return service.read()
         case "POST": return service.add()
+        case "PATCH": return service.update()
         case "DELETE": return service.remove()

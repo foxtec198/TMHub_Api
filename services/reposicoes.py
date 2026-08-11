@@ -150,6 +150,7 @@ class RequestService:
                 case(
                     (Requisicao.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
                 ).label("reserva"),
+                Floaters.id.label("reserva_floater_id"),
                 CostCenters.local,
                 Supervisors.nome.label("supervisor"),
                 Requisicao.warning,
@@ -164,6 +165,7 @@ class RequestService:
             ))
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
+            .outerjoin(Floaters, Floaters.employee_id == Reserva.id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
             .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .order_by(Requisicao.created_at.desc())
@@ -307,6 +309,9 @@ class RequestService:
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
             if not reservation:
                 return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
+            if not reservation.disponivel:
+                reason = (reservation.indisponibilidade_motivo or "indisponível").lower()
+                return jsonify(f"Esta reserva está indisponível por {reason}."), 409
             if access_token and not _can_access_employee(token_data, reserva_id):
                 return jsonify("Você não possui acesso à filial desta reserva."), 403
             day_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -376,6 +381,14 @@ class RequestService:
             token_data, bd.get("reserva_id"), allow_uncovered=True
         ):
             return jsonify("Você não possui acesso à filial desta reserva."), 403
+
+        if "reserva_id" in bd and bd.get("reserva_id") not in (None, 0):
+            reservation = Floaters.query.filter_by(employee_id=bd.get("reserva_id")).first()
+            if not reservation:
+                return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
+            if not reservation.disponivel:
+                reason = (reservation.indisponibilidade_motivo or "indisponível").lower()
+                return jsonify(f"Esta reserva está indisponível por {reason}."), 409
 
         if "reserva_id" in bd: req.reserva_id = bd.get("reserva_id")
         if "centro_id" in bd: req.cc = bd.get("centro_id")
@@ -676,6 +689,8 @@ class RequestService:
                 Cargos.nome.label("cargo"),
                 Situations.tipo.label("situacao"),
                 last_usage.c.ultimo_contrato,
+                Floaters.disponivel,
+                Floaters.indisponibilidade_motivo,
             )
             .select_from(Floaters)
             .join(Employees, Employees.id == Floaters.employee_id)
@@ -707,8 +722,9 @@ class RequestService:
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
             "data": init.strftime("%Y-%m-%d"),
-            "usadas": [row for row in response if row["usada"]],
-            "disponiveis": [row for row in response if not row["usada"]],
+            "usadas": [row for row in response if row["usada"] and row["disponivel"]],
+            "disponiveis": [row for row in response if not row["usada"] and row["disponivel"]],
+            "indisponiveis": [row for row in response if not row["disponivel"]],
         }), 200
         
     @safe_route
