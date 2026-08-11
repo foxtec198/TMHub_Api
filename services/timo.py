@@ -623,8 +623,17 @@ class TimoCommandService:
             for item in approved
             if item.intent_confirmada in self.INTENT_CATALOG
         ]
-        train_timo(examples)
-        predictor.reload()
+        try:
+            train_timo(examples)
+            predictor.reload()
+        except OSError:
+            # O modelo publicado em timo/models é imutável no servidor. O
+            # treinamento usa storage/timo; este retorno preserva uma mensagem
+            # útil se o diretório persistente for configurado incorretamente.
+            return jsonify(
+                "Não foi possível salvar o modelo treinado do Timo. "
+                "Verifique a permissão do diretório de armazenamento da API."
+            ), 500
         return jsonify({
             "message": "Modelo do Timo treinado com as frases revisadas.",
             "frases_aprovadas": len(examples),

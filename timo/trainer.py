@@ -6,11 +6,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
 from timo.analytics_catalog import ANALYTICS_TRAINING_EXAMPLES
+from timo.model_storage import ensure_trained_model_directory
 from timo.navigation_catalog import NAVIGATION_TRAINING_EXAMPLES
 
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_PATH = BASE_DIR / "data" / "intents.csv"
-MODEL_PATH = BASE_DIR / "models" / "intent_model.pkl"
 
 def train(extra_examples=None):
     df = pd.read_csv(DATASET_PATH)
@@ -50,12 +50,13 @@ def train(extra_examples=None):
     ])
 
     model.fit(X, y)
-    MODEL_PATH.parent.mkdir( parents=True, exist_ok=True )
-    joblib.dump(model, MODEL_PATH)
+    model_path = ensure_trained_model_directory()
+    joblib.dump(model, model_path)
 
     print("Modelo treinado.")
     print(f"Exemplos: {len(df)}")
     print(f"Intents: {df['intent'].nunique()}")
-    print(f"Salvo em: {MODEL_PATH}")
+    print(f"Salvo em: {model_path}")
+    return model_path
 
 if __name__ == "__main__": train()
