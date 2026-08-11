@@ -16,6 +16,7 @@ SITUACOES_ATIVAS = {1}
 SITUACAO_DEMITIDO = 8
 META_PCD = 5
 PCD_EXCLUDED_SCOPE_CODES = {306, 308, 312}
+PCD_EXCLUDED_BRANCH_NAME = "londrina"
 
 
 def _parse_branch_ids(raw_value):
@@ -167,9 +168,8 @@ class PcdDashboardService:
         for branch_id, center_id in department_rows:
             branch_centers[branch_id].add(center_id)
 
-        # Regra exclusiva do Dashboard PCD: os códigos abaixo não compõem
-        # a base, mesmo quando vinculados à filial diretamente por contrato
-        # ou indiretamente por departamento.
+        # Regra exclusiva do Dashboard PCD: contratos ou departamentos
+        # 306, 308 e 312 não compõem SOMENTE a base da filial Londrina.
         excluded_center_ids = {
             center_id
             for center_id, in (
@@ -181,8 +181,14 @@ class PcdDashboardService:
                 .all()
             )
         }
-        for center_ids in branch_centers.values():
-            center_ids.difference_update(excluded_center_ids)
+        londrina_branch_ids = {
+            branch.id
+            for branch in selected_branches
+            if str(branch.nome or "").strip().casefold()
+            == PCD_EXCLUDED_BRANCH_NAME
+        }
+        for branch_id in londrina_branch_ids:
+            branch_centers[branch_id].difference_update(excluded_center_ids)
 
         selected_center_ids = set().union(
             *branch_centers.values(),
