@@ -1,12 +1,10 @@
-from pathlib import Path
 import joblib
 
-BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "models" / "intent_model.pkl"
+from timo.model_storage import active_model_path
 
 class IntentPredictor:
     def __init__(self):
-        if not MODEL_PATH.exists():
+        if not active_model_path().exists():
             raise RuntimeError(
                 "Modelo do Timo não encontrado. "
                 "Execute: python -m timo.trainer"
@@ -14,7 +12,7 @@ class IntentPredictor:
         self.reload()
 
     def reload(self):
-        self.model = joblib.load(MODEL_PATH)
+        self.model = joblib.load(active_model_path())
 
     def predict(self, text: str):
         probabilities = self.model.predict_proba([text])[0]
