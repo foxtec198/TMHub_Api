@@ -25,9 +25,6 @@ jobs: # Jobs will run
             set -e
             cd /home/guibs/api_tmhub
             sudo git pull origin main
-            # Modelos treinados pelo Timo não ficam no repositório. O serviço
-            # precisa poder escrever neste diretório após o deploy.
-            sudo install -d -m 775 -o guibs -g guibs /home/guibs/api_tmhub/storage/timo
             venv/bin/pip cache purge || true
             venv/bin/pip install --no-cache-dir -r requirements.txt --upgrade
             sudo systemctl restart api_tmhub
