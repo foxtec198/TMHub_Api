@@ -2,45 +2,18 @@ from datetime import datetime, time
 from sqlalchemy import or_
 from models.rp_historico import History
 
-
 def _get_datetime_range(period):
-    """
-    Converte:
-        2026-08-01
-        2026-08-31
+    start_date = datetime.fromisoformat( period["start"] ).date()
+    end_date = datetime.fromisoformat( period["end"] ).date()
 
-    para:
-        2026-08-01 00:00:00
-        2026-08-31 23:59:59.999999
-    """
-
-    start_date = datetime.fromisoformat(
-        period["start"]
-    ).date()
-
-    end_date = datetime.fromisoformat(
-        period["end"]
-    ).date()
-
-    start = datetime.combine(
-        start_date,
-        time.min
-    )
-
-    end = datetime.combine(
-        end_date,
-        time.max
-    )
+    start = datetime.combine( start_date, time.min )
+    end = datetime.combine( end_date, time.max )
 
     return start, end
 
-
 def faltas_periodo(entities):
     period = entities["period"]
-
-    start, end = _get_datetime_range(
-        period
-    )
+    start, end = _get_datetime_range( period )
 
     total = (
         History.query
@@ -57,7 +30,6 @@ def faltas_periodo(entities):
         "total": total,
         "period_label": period["label"]
     }
-
 
 def reposicoes_periodo(entities):
     period = entities["period"]
@@ -82,7 +54,6 @@ def reposicoes_periodo(entities):
         "total": total,
         "period_label": period["label"]
     }
-
 
 def postos_descobertos(entities):
     period = entities["period"]
@@ -111,20 +82,11 @@ def postos_descobertos(entities):
         "period_label": period["label"]
     }
 
-
 def navegar_faltas(entities):
-    return {
-        "action": "navigate",
-        "path": "/controle-faltas"
-    }
-
+    return { "action": "navigate", "path": "/controle-faltas" }
 
 def navegar_colaboradores(entities):
-    return {
-        "action": "navigate",
-        "path": "/colaboradores"
-    }
-
+    return { "action": "navigate", "path": "/colaboradores" }
 
 HANDLERS = {
     "faltas_periodo": faltas_periodo,
@@ -135,13 +97,7 @@ HANDLERS = {
     "navegar_colaboradores": navegar_colaboradores,
 }
 
-
 def execute_intent(intent, entities):
     handler = HANDLERS.get(intent)
-
-    if not handler:
-        raise ValueError(
-            f"Intent sem handler cadastrado: {intent}"
-        )
-
+    if not handler: raise ValueError(f"Intent sem handler cadastrado: {intent}")
     return handler(entities)
