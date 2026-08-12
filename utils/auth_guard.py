@@ -14,31 +14,32 @@ ONBOARDING_PATHS = {
 }
 PUBLIC_PATHS = {"/", "/login", "/docs", "/openapi.json"}
 PUBLIC_PREFIXES = ("/updates/", "/arquivos/glosas/")
-
+AGENT_ALLOWED_PATHS = {"/timo/process", "/timo/agentes/tema"}
 
 def enforce_auth_state():
-    if request.method == "OPTIONS":
-        return None
+    if request.method == "OPTIONS": return None
     normalized_path = request.path.rstrip("/") or "/"
-    # O Schedular possui autenticaÃ§Ã£o e sessÃ£o prÃ³prias, validadas pelas
-    # rotas desse mÃ³dulo. Nunca tente interpretar seu token como usuÃ¡rio TMHub.
-    if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")):
-        return None
-    if normalized_path in PUBLIC_PATHS or normalized_path.startswith(PUBLIC_PREFIXES):
-        return None
+    if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")): return None
+    if normalized_path in PUBLIC_PATHS or normalized_path.startswith(PUBLIC_PREFIXES): return None
     access_token = request.headers.get("Access-Token")
-    if not access_token:
-        return None
-    try:
-        token_data = decode_token(access_token)
-    except ExpiredSignatureError:
-        return jsonify("Token de acesso expirado."), 401
-    except InvalidTokenError:
-        return jsonify("Token de acesso inválido."), 401
+    if not access_token: return None
+
+    try: token_data = decode_token(access_token)
+    except ExpiredSignatureError: return jsonify("Token de acesso expirado."), 401
+    except InvalidTokenError: return jsonify("Token de acesso inválido."), 401
+
+    is_timo_voice_agent = token_data.get("typ") == "timo_voice_agent"
+    if is_timo_voice_agent and normalized_path not in AGENT_ALLOWED_PATHS:
+        return jsonify("A credencial do Timo Voice Agent não permite esta operação."), 403
 
     user = db.session.get(Users, token_data.get("id"))
     if not user:
         return jsonify("Usuário da sessão não encontrado."), 401
+    # O token do agente possui uma versão própria, diferente da versão de sessão
+    # do usuário. A validação completa (agente + proprietário) ocorre no serviço
+    # do Timo antes de processar qualquer comando.
+    if is_timo_voice_agent:
+        return None
     if int(token_data.get("ver", 0)) != int(user.token_version or 0):
         return jsonify("Esta sessão foi invalidada. Entre novamente."), 401
 

@@ -12,9 +12,19 @@ class IntentPredictor:
         self.reload()
 
     def reload(self):
-        self.model = joblib.load(active_model_path())
+        self.model_path = active_model_path()
+        self.model_mtime_ns = self.model_path.stat().st_mtime_ns
+        self.model = joblib.load(self.model_path)
+
+    def reload_if_changed(self):
+        """Sincroniza workers que não executaram o treino diretamente."""
+        model_path = active_model_path()
+        model_mtime_ns = model_path.stat().st_mtime_ns
+        if model_path != self.model_path or model_mtime_ns != self.model_mtime_ns:
+            self.reload()
 
     def predict(self, text: str):
+        self.reload_if_changed()
         probabilities = self.model.predict_proba([text])[0]
 
         index = probabilities.argmax()

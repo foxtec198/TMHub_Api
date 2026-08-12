@@ -32,6 +32,7 @@ from routes.dashboard_rescisoes import termination_dashboard_bp
 from routes.tm_ops import tm_ops_bp
 from routes.medidas_disciplinares import disciplinary_measures_bp
 from routes.timo import timo_bp
+from routes.timo_voice_agents import timo_voice_agents_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -77,6 +78,7 @@ blueprints = {
     schedular_bp: "/schedular",
     tm_ops_bp: "/tm-ops",
     timo_bp: "/timo",
+    timo_voice_agents_bp: "/timo/agentes",
 
     #Medidas Disciplinares
     disciplinary_measures_bp: "/medidas-disciplinares"
