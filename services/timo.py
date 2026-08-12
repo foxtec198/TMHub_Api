@@ -45,7 +45,9 @@ class SafeTemplateValues(dict):
 class TimoCommandService:
     """Processa comandos e aplica a resposta/ação configurada por administradores."""
 
-    MIN_CONFIDENCE = 0.30
+    # Limiar mínimo (20%) para aceitar a previsão estatística do modelo.
+    # Os catálogos determinísticos continuam tendo prioridade antes daqui.
+    MIN_CONFIDENCE = 0.20
     ACTION_NONE = "none"
     ACTION_NAVIGATE = "navigate"
 
@@ -196,6 +198,21 @@ class TimoCommandService:
                 ultimo_recebido_em=now,
             ))
         db.session.commit()
+
+    @classmethod
+    def _trained_learning_intent_for_command(cls, command):
+        """Resolve literalmente as frases já revisadas e treinadas.
+
+        Isto impede que uma frase idêntica volte para a fila e garante um
+        resultado igual em todos os workers logo após o treinamento.
+        """
+        item = TimoLearningExample.query.filter_by(
+            texto_normalizado=command,
+            status="treinado",
+        ).filter(
+            TimoLearningExample.intent_confirmada.isnot(None)
+        ).order_by(TimoLearningExample.revisado_em.desc()).first()
+        return item.intent_confirmada if item else None
 
     @classmethod
     def _custom_configuration_for_command(cls, command):
@@ -476,6 +493,14 @@ class TimoCommandService:
 
     @safe_route
     def process(self, token_data):
+        if token_data.get("typ") == "timo_voice_agent":
+            try:
+                from services.timo_voice_agents import validate_agent_token
+                agent, _ = validate_agent_token(request.headers.get("Access-Token"))
+                if int(agent.usuario_id) != int(token_data.get("id")):
+                    return jsonify("Credencial do Timo Voice Agent inválida."), 403
+            except Exception:
+                return jsonify("Credencial do Timo Voice Agent inválida ou revogada."), 401
         body = request.get_json(silent=True) or {}
         command = self._normalize(body.get("text") or body.get("command"))
         if not command:
@@ -490,24 +515,31 @@ class TimoCommandService:
             if custom_configuration or navigation_intent
             else analytics_intent_for_command(command)
         )
-        known_command = (
+        trained_learning_intent = (
             None
             if custom_configuration or navigation_intent or analytics_intent
+            else self._trained_learning_intent_for_command(command)
+        )
+        known_command = (
+            None
+            if custom_configuration or navigation_intent or analytics_intent or trained_learning_intent
             else known_intent_for_command(command)
         )
         prediction = (
             predictor.predict(command)
-            if not custom_configuration and not navigation_intent and not analytics_intent and not known_command
+            if not custom_configuration and not navigation_intent and not analytics_intent
+            and not trained_learning_intent and not known_command
             else None
         )
         intent = (
             custom_configuration.intent
             if custom_configuration
-            else navigation_intent or analytics_intent or (known_command or {}).get("intent") or prediction["intent"]
+            else navigation_intent or analytics_intent or trained_learning_intent
+            or (known_command or {}).get("intent") or prediction["intent"]
         )
         confidence = (
             1.0
-            if custom_configuration or navigation_intent or analytics_intent or known_command
+            if custom_configuration or navigation_intent or analytics_intent or trained_learning_intent or known_command
             else prediction["confidence"]
         )
         definition = self.INTENT_CATALOG.get(intent)
@@ -582,6 +614,9 @@ class TimoCommandService:
             "aprendizados_aprovados": TimoLearningExample.query.filter_by(
                 status="aprovado"
             ).count(),
+            "aprendizados_treinados": TimoLearningExample.query.filter_by(
+                status="treinado"
+            ).count(),
             "intents_disponiveis": [
                 {
                     "label": definition["label"],
@@ -634,9 +669,20 @@ class TimoCommandService:
                 "Não foi possível salvar o modelo treinado do Timo. "
                 "Verifique a permissão do diretório de armazenamento da API."
             ), 500
+        approved_ids = [
+            item.id
+            for item in approved
+            if item.intent_confirmada in self.INTENT_CATALOG
+        ]
+        if approved_ids:
+            TimoLearningExample.query.filter(
+                TimoLearningExample.id.in_(approved_ids)
+            ).update({"status": "treinado"}, synchronize_session=False)
+            db.session.commit()
         return jsonify({
             "message": "Modelo do Timo treinado com as frases revisadas.",
-            "frases_aprovadas": len(examples),
+            "frases_treinadas": len(examples),
+            "aprendizados_aprovados": 0,
         }), 200
 
     @safe_route

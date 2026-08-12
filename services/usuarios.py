@@ -432,6 +432,18 @@ class UserServices:
 
         refresh_user_requirements(user)
         db.session.commit()
+        if tema is not None or modo_tema is not None:
+            # O mascote desktop não depende do browser, então recebe a paleta
+            # logo após o usuário trocar o tema na própria conta.
+            from models.timo_voice_agents import TimoUserPreference
+            from utils.timo_voice_socket import emit_agent_control
+
+            preference = db.session.get(TimoUserPreference, user.id)
+            if preference and preference.agente_preferido_id:
+                emit_agent_control(
+                    preference.agente_preferido_id,
+                    bool(preference.habilitado),
+                )
         response = self._serialize(user)
         if nova_senha is not None:
             response["access_token"] = self._issue_token(user)
