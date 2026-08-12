@@ -12,6 +12,7 @@ from utils.db import db
 from utils.permissions import enforce_request_permission
 from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
+from services.tickets import TicketService
 
 load_dotenv()  # Carrega o dotenv
 
@@ -127,6 +128,49 @@ with app.app_context():
             if column_name not in refreshed_columns:
                 raise
         floater_columns.add(column_name)
+
+    ticket_tables = set(inspect(db.engine).get_table_names())
+    if "tc_historico" in ticket_tables:
+        ticket_columns = {
+            column["name"] for column in inspect(db.engine).get_columns("tc_historico")
+        }
+        if "filial_id" not in ticket_columns:
+            try:
+                with db.engine.begin() as connection:
+                    connection.execute(text(
+                        "ALTER TABLE tc_historico ADD COLUMN filial_id INTEGER REFERENCES filiais(id) ON DELETE SET NULL"
+                    ))
+                    connection.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_tc_historico_filial_id ON tc_historico (filial_id)"
+                    ))
+                    connection.execute(text(
+                        "UPDATE tc_historico ticket "
+                        "SET filial_id = ("
+                        "  SELECT MIN(link.filial_id) FROM filial_usuarios link "
+                        "  WHERE link.usuario_id = ticket.created_by"
+                        ") "
+                        "WHERE ticket.filial_id IS NULL AND ticket.created_by IS NOT NULL"
+                    ))
+            except SQLAlchemyError:
+                refreshed_columns = {
+                    column["name"] for column in inspect(db.engine).get_columns("tc_historico")
+                }
+                if "filial_id" not in refreshed_columns:
+                    raise
+
+
+def ticket_sla_monitor():
+    """Atualiza atrasos sem depender de alguém abrir a tela de chamados."""
+    while True:
+        try:
+            with app.app_context():
+                TicketService._refresh_overdue()
+        except Exception:
+            app.logger.exception("Falha ao atualizar SLA dos chamados")
+        socketio.sleep(60)
+
+
+socketio.start_background_task(ticket_sla_monitor)
 
 @app.route("/")
 @app.route("/docs")

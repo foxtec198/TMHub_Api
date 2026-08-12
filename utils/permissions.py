@@ -30,6 +30,7 @@ PERMISSION_CATALOG = [
     {"key": "tm_ops", "label": "TM Ops", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "dashboard_pcd", "label": "Dashboard PCD", "group": "Dashboards", "actions": ["view"]},
     {"key": "dashboard_rescisoes","label": "Dashboard de Rescisões","group": "Dashboards","actions": ["view"],},
+    {"key": "tickets", "label": "Chamados", "group": "Operação", "actions": ["view", "create", "edit"]},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
@@ -131,6 +132,13 @@ def request_permission(path, method):
     path_parts = path.strip("/").split("/")
     if (
         len(path_parts) == 3
+        and path_parts[0] == "tickets"
+        and path_parts[1].isdigit()
+        and path_parts[2] == "comentarios"
+    ):
+        return ("tickets", "edit") if method == "POST" else None
+    if (
+        len(path_parts) == 3
         and path_parts[0] == "glosas"
         and path_parts[1].isdigit()
         and path_parts[2] == "evidencia"
@@ -170,6 +178,7 @@ def request_permission(path, method):
         ("/dash/colaboradores-departamento", "dashboard_colaboradores", {"POST": "view"}),
         ("/projetos/dashboard", "dashboard_projetos", {"GET": "view"}),
         ("/projetos", "projetos", {"GET": "view", "POST": "create", "PATCH": "edit", "PUT": "edit", "DELETE": "edit"}),
+        ("/tickets", "tickets", {"GET": "view", "POST": "create", "PATCH": "edit", "PUT": "edit", "DELETE": "edit"}),
         ("/estrutura", "estrutura", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/pcd", "dashboard_pcd", {"GET": "view"}),
         ("/dash/rescisoes", "dashboard_rescisoes", {"GET": "view"}),
