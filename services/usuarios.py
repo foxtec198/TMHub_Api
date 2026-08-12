@@ -613,7 +613,7 @@ class UserServices:
         with smtplib.SMTP(host, port, timeout=15) as smtp:
             if getenv("SMTP_STARTTLS", "true").lower() == "true":
                 smtp.starttls()
-            username = getenv("SMTP_USER")
+            username = getenv("SMTP_USER") or sender
             password = getenv("SMTP_PASSWORD")
             if username and password:
                 smtp.login(username, password)

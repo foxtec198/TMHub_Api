@@ -28,8 +28,10 @@ def notify_card_members(recipients, subject, content):
             with smtplib.SMTP(host, int(getenv("SMTP_PORT", "587")), timeout=15) as smtp:
                 if getenv("SMTP_STARTTLS", "true").lower() == "true":
                     smtp.starttls()
-                if getenv("SMTP_USER") and getenv("SMTP_PASSWORD"):
-                    smtp.login(getenv("SMTP_USER"), getenv("SMTP_PASSWORD"))
+                username = getenv("SMTP_USER") or sender
+                password = getenv("SMTP_PASSWORD")
+                if username and password:
+                    smtp.login(username, password)
                 smtp.send_message(message)
         except Exception:
             logger.exception("Falha ao enviar notificação do card")
