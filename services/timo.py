@@ -177,6 +177,23 @@ class TimoCommandService:
         }
 
     @classmethod
+    def _emit_learning_update(cls, user_id, event, item=None):
+        """Sincroniza a fila de aprendizado aberta pelo administrador."""
+        from utils.socket import socketio
+
+        socketio.emit(
+            "timo_learning_updated",
+            {
+                "event": event,
+                "aprendizado": cls._serialize_learning(item) if item else None,
+                "aprendizados_aprovados": TimoLearningExample.query.filter_by(
+                    status="aprovado"
+                ).count(),
+            },
+            to=f"user:{user_id}",
+        )
+
+    @classmethod
     def _capture_learning_candidate(cls, command, prediction, token_data):
         """Registra somente comandos não entendidos; não há treinamento automático."""
         existing = TimoLearningExample.query.filter_by(
@@ -189,15 +206,18 @@ class TimoCommandService:
             existing.intent_sugerida = prediction.get("intent") or existing.intent_sugerida
             existing.confianca = prediction.get("confidence")
             existing.ultimo_recebido_em = now
+            item = existing
         else:
-            db.session.add(TimoLearningExample(
+            item = TimoLearningExample(
                 texto_normalizado=command,
                 intent_sugerida=prediction.get("intent"),
                 confianca=prediction.get("confidence"),
                 criado_por_usuario_id=(token_data or {}).get("id"),
                 ultimo_recebido_em=now,
-            ))
+            )
+            db.session.add(item)
         db.session.commit()
+        cls._emit_learning_update((token_data or {}).get("id"), "capturado", item)
 
     @classmethod
     def _trained_learning_intent_for_command(cls, command):
@@ -543,9 +563,13 @@ class TimoCommandService:
             else prediction["confidence"]
         )
         definition = self.INTENT_CATALOG.get(intent)
+        wake_verified = request.headers.get("X-Timo-Wake-Verified") == "1"
         if not custom_configuration and (confidence < self.MIN_CONFIDENCE or not definition):
             try:
-                self._capture_learning_candidate(command, prediction or {}, token_data)
+                # Somente tentativas de comando que passaram pela wake word no
+                # agente local entram na fila de aprendizado.
+                if wake_verified:
+                    self._capture_learning_candidate(command, prediction or {}, token_data)
             except Exception:
                 db.session.rollback()
             return jsonify({
@@ -646,6 +670,7 @@ class TimoCommandService:
         item.revisado_por_usuario_id = token_data.get("id")
         item.revisado_em = datetime.now(SAO_PAULO)
         db.session.commit()
+        self._emit_learning_update(token_data.get("id"), "revisado", item)
         return jsonify({"message": "Frase revisada.", "aprendizado": self._serialize_learning(item)}), 200
 
     @safe_route
@@ -679,6 +704,7 @@ class TimoCommandService:
                 TimoLearningExample.id.in_(approved_ids)
             ).update({"status": "treinado"}, synchronize_session=False)
             db.session.commit()
+        self._emit_learning_update(token_data.get("id"), "treinado")
         return jsonify({
             "message": "Modelo do Timo treinado com as frases revisadas.",
             "frases_treinadas": len(examples),
