@@ -34,6 +34,7 @@ from routes.medidas_disciplinares import disciplinary_measures_bp
 from routes.timo import timo_bp
 from routes.timo_voice_agents import timo_voice_agents_bp
 from routes.tickets import tickets_bp
+from routes.dashboard_medidas_disciplinares import disciplinary_measures_dashboard_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -58,6 +59,7 @@ blueprints = {
     collaborator_import_bp: "/importacao-colaboradores",
     updates_bp: "/updates",
     termination_dashboard_bp: "/dash/rescisoes",
+    disciplinary_measures_dashboard_bp: "/dash/medidas-disciplinares",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
@@ -83,5 +85,5 @@ blueprints = {
     tickets_bp: "/tickets",
 
     #Medidas Disciplinares
-    disciplinary_measures_bp: "/medidas-disciplinares"
+    disciplinary_measures_bp: "/medidas-disciplinares",
 }
