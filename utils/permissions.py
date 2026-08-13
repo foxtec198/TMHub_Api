@@ -31,6 +31,7 @@ PERMISSION_CATALOG = [
     {"key": "dashboard_pcd", "label": "Dashboard PCD", "group": "Dashboards", "actions": ["view"]},
     {"key": "dashboard_rescisoes","label": "Dashboard de Rescisões","group": "Dashboards","actions": ["view"],},
     {"key": "tickets", "label": "Chamados", "group": "Operação", "actions": ["view", "create", "edit"]},
+    {"key": "dashboard_medidas_disciplinares","label": "Dashboard de Medidas Disciplinares","group": "Dashboards","actions": ["view"],},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
@@ -39,7 +40,7 @@ ACTION_COLUMNS = {
     "create": "pode_criar",
     "edit": "pode_alterar",
 }
-LEGACY_RESTRICTED = {"controle_faltas", "controle_glosas", "dashboard_faltas","controle_medidas_disciplinares"}
+LEGACY_RESTRICTED = {"controle_faltas","controle_glosas","dashboard_faltas","controle_medidas_disciplinares","dashboard_medidas_disciplinares",}
 
 
 def _legacy_permission(user, screen, action):
@@ -182,6 +183,7 @@ def request_permission(path, method):
         ("/estrutura", "estrutura", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/pcd", "dashboard_pcd", {"GET": "view"}),
         ("/dash/rescisoes", "dashboard_rescisoes", {"GET": "view"}),
+        ("/dash/medidas-disciplinares","dashboard_medidas_disciplinares",{"GET": "view"},),
     ]
     for prefix, screen, actions in rules:
         if path == prefix or path.startswith(f"{prefix}/"):
