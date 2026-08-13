@@ -174,6 +174,11 @@ NAVIGATION_SCREENS = {
             "abrir tarefas", "abrir tarefas administrativas", "ir para tarefas", "mostrar tarefas do scheduler", "abrir tm ops tarefas",
         ),
     ),
+    "navegar_dashboard_medidas_disciplinares": _screen(
+        "Dashboard de Medidas Disciplinares", "/reports/medidas-disciplinares", "dashboard_medidas_disciplinares", commands=(
+            "abrir dashboard de medidas disciplinares", "mostrar painel disciplinar", "ir para indicadores disciplinares", "abrir relatorio de advertencias", "ver dashboard de suspensoes",
+        ),
+    ),
 }
 
 
