@@ -1,177 +1,122 @@
 <div align="center">
   <img src="./static/assets/brands/main_brand.svg" alt="TM Hub" width="260">
-  <h1>TM Hub | API</h1>
 
+  # TM Hub · API
 
-  <p>
-    API, regras de negócio e eventos em tempo real do Painel Executivo TM Hub.
-  </p>
+  API, regras de negócio, segurança e eventos em tempo real do Painel Executivo TM Hub.
 
   [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
   [![Flask](https://img.shields.io/badge/Flask-3.1-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
   [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Ready-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
   [![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2-D71F00?logo=sqlalchemy&logoColor=white)](https://www.sqlalchemy.org/)
-  [![Socket.IO](https://img.shields.io/badge/Socket.IO-Realtime-010101?logo=socketdotio&logoColor=white)](https://socket.io/)
+  [![Socket.IO](https://img.shields.io/badge/Socket.IO-Tempo%20real-010101?logo=socketdotio&logoColor=white)](https://socket.io/)
   [![JWT](https://img.shields.io/badge/JWT-Auth-000000?logo=jsonwebtokens&logoColor=white)](https://jwt.io/)
-  [![Gunicorn](https://img.shields.io/badge/Gunicorn-Production-499848?logo=gunicorn&logoColor=white)](https://gunicorn.org/)
 
   [Frontend](https://github.com/foxtec198/tmhub) ·
-  [Configuração](#executando-localmente) ·
-  [Recursos](#domínios-da-api)
+  [Fluxo do time](./FLUXO.md) ·
+  [Documentação OpenAPI](/docs)
 </div>
 
 ---
 
-## Sobre
+## Visão geral
 
-A **TM Hub API** concentra a persistência, autenticação, permissões, regras de
-filial e automações do Painel Executivo. A aplicação oferece endpoints REST e
-eventos Socket.IO para os módulos operacionais do
-[frontend TM Hub](https://github.com/foxtec198/tmhub).
+A API TM Hub centraliza persistência, autenticação, permissões, escopo de
+filiais, automações e comunicação em tempo real para o frontend e agentes
+integrados. A documentação interativa é exposta em `/docs` e o contrato OpenAPI
+em `/openapi.json`.
 
-## Domínios da API
+## Domínios principais
 
 | Prefixo | Domínio |
 | --- | --- |
-| `/login` | Autenticação |
-| `/usuarios` | Usuários, perfil, tema e permissões |
-| `/filiais` | Filiais, departamentos, contratos e vínculos de usuários |
-| `/funcionarios` | Colaboradores e busca operacional |
-| `/supervisores` | Supervisores |
-| `/centro` | Centros de custo e contratos |
-| `/repo` | Requisições, histórico, timeline, importação e KDS |
-| `/reservas` | Reservas técnicas |
-| `/controle-faltas` | Faltas, tratativas e dashboard |
-| `/glosas` | Glosas, cobertura, valores, evidências e exportação |
-| `/admissao/vagas` | Vagas, admissões e aditivos |
-| `/estrutura` | Locais, ativos e patrimônio |
-| `/estoque/*` | Categorias, produtos e movimentações |
-| `/dash/*` | Indicadores e Ponto 48h |
-| `/projetos` | Projetos e atividades |
-| `/tm-ops` | Rotinas, checklists, tarefas e Executor do TM Ops |
-| `/rpa` | Comunicação com agentes RPA |
+| `/login` e `/usuarios` | Autenticação, perfil, senha, tema e permissões. |
+| `/filiais`, `/centro`, `/funcionarios`, `/supervisores` | Filiais, departamentos, contratos, colaboradores e supervisores. |
+| `/repo`, `/reservas`, `/controle-faltas` | Reposições, histórico, reservas e faltas. |
+| `/glosas` | Controle de glosas, cobertura, evidências, exportação e Roçada. |
+| `/admissao/vagas` e `/rescisoes` | Vagas, admissões, aditivos e desligamentos. |
+| `/estoque/*` | Produtos, categorias, movimentações e logística. |
+| `/estrutura` | Hierarquia de contratos, locais, subestruturas e ativos. |
+| `/tm-ops` | Acessos, rotinas, checklists, tarefas, evidências e geolocalização. |
+| `/projetos` | Projetos, cards, membros, comentários, anexos e métricas. |
+| `/tickets` | Chamados, comentários, motivos, responsáveis, SLA e notificações. |
+| `/dash/*` | Indicadores operacionais e executivos. |
+| `/timo` e `/timo/agentes` | Intenções, aprendizado, comandos e Timo Voice Agent. |
 
-## Recursos principais
+## Recursos atuais
 
-- API REST com Flask.
-- PostgreSQL com SQLAlchemy.
-- Autenticação por JWT.
-- Matriz de permissões por tela e ação.
-- Escopo obrigatório de dados por filial.
-- Atualizações em tempo real via Flask-SocketIO.
-- Importação e exportação de planilhas com Pandas/OpenPyXL.
-- Armazenamento controlado de evidências de glosas.
-- Envio de códigos de segurança por SMTP.
-- Integrações com SQL Server via PyODBC/PyMSSQL.
-- Execução produtiva com Gunicorn, Gevent e WebSocket.
-
-> [!IMPORTANT]
-> `apply_cost_center_scope` e `can_access_cost_center` fazem parte da barreira de
-> segurança do sistema. Novas telas autenticadas que consultem contratos,
-> colaboradores ou dados operacionais devem aplicar o escopo de filial.
-
-## Tecnologias
-
-| Categoria | Tecnologias |
-| --- | --- |
-| Web | Flask, Flask-CORS e Werkzeug |
-| Persistência | PostgreSQL, SQLAlchemy e psycopg2 |
-| Tempo real | Flask-SocketIO, Gevent e WebSocket |
-| Segurança | PyJWT e Cryptography |
-| Dados | Pandas, NumPy e OpenPyXL |
-| Bancos externos | PyODBC e PyMSSQL |
-| Produção | Gunicorn |
-| Integrações | HTTPX, Requests, SMTP e OpenAI SDK |
+- API REST com Flask, SQLAlchemy e PostgreSQL.
+- OpenAPI/Swagger gerado a partir das rotas registradas.
+- JWT com invalidação por versão de token e senhas novas em Argon2id com pepper.
+- Pendências obrigatórias de primeiro acesso: CPF, senha e dados de perfil conforme a política configurada.
+- Matriz de permissões por tela e ação, aplicada antes das rotas protegidas.
+- Escopo de filial no backend por `X-Filial-Ids`; o servidor decide o que cada usuário pode consultar.
+- Eventos Socket.IO por domínio e evento genérico `data_changed`, evitando atualização global desnecessária.
+- Importação de colaboradores com progresso, validação de cargos e atualização em tempo real.
+- Scheduler/TM Ops com recorrência ancorada, tarefas compartilhadas, executor, checklist, evidências e trilha GPS.
+- Chamados vinculados à filial, SLA de 24 horas, comentários, gestão de motivos, notificações SMTP e atualização em tempo real.
+- Timo configurável, aprendizado assistido e suporte ao agente desktop pareado por WebSocket.
 
 ## Arquitetura
 
 ```text
-routes/       Endpoints e blueprints
-    │
-    ▼
-services/     Regras de negócio, validação e eventos
-    │
-    ├────────► models/        Modelos SQLAlchemy
-    ├────────► utils/         Token, permissões, filial e banco
-    ├────────► storage/       Evidências persistidas
-    └────────► PostgreSQL
+routes/       Blueprints e contratos HTTP
+   │
+   ▼
+services/     Regras de negócio, validações e transações
+   ├── models/       Entidades SQLAlchemy
+   ├── utils/        JWT, permissões, filial, Socket.IO e OpenAPI
+   ├── storage/      Evidências e arquivos persistidos
+   └── PostgreSQL
 ```
 
-## Executando localmente
+## Execução local
 
 ### Pré-requisitos
 
 - Python 3.11 ou superior.
-- PostgreSQL.
+- PostgreSQL acessível.
 - Ambiente virtual Python.
 
-### Instalação
-
-```bash
+```powershell
 git clone https://github.com/foxtec198/api_tmhub.git
 cd api_tmhub
 python -m venv venv
-```
-
-Ative o ambiente virtual:
-
-```powershell
-# Windows
 .\venv\Scripts\Activate.ps1
-```
-
-```bash
-# Linux/macOS
-source venv/bin/activate
-```
-
-Instale as dependências:
-
-```bash
 pip install -r requirements.txt
+Copy-Item .env.example .env
+python app.py
 ```
 
-Copie `.env.example` para `.env` e configure o ambiente:
+A API responde, por padrão, em `http://localhost:8590`.
+
+Variáveis essenciais em `.env`:
 
 ```env
 SECRET=troque-por-uma-chave-segura
-PASSWORD_PEPPER=gere-um-segredo-aleatorio-com-pelo-menos-32-caracteres
+PASSWORD_PEPPER=segredo-longo-exclusivo-do-ambiente
 DB_URI=postgresql://usuario:senha@localhost:5432/tmhub
 HOST=0.0.0.0
 PORT=8590
-DEBUG=False
 
-SMTP_HOST=
+SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM=
 SMTP_STARTTLS=true
-
-# Opcional: diretório persistente para evidências
-GLOSA_EVIDENCE_DIR=
-TM_OPS_EVIDENCE_DIR=
 ```
 
-Antes de iniciar esta versão sobre uma base existente, execute
-`migrations/20260805_tm_ops_colaboradores.sql`. A migration audita acessos sem
-colaborador e duplicidades em `tm_ops_migration_audit`, migra as credenciais
-para `colaboradores` e preserva a tabela anterior como
-`schedular_acessos_legacy` para conferência e rollback operacional. Durante a
-transição, uma view gravável chamada `schedular_acessos` e um trigger mantêm
-compatibilidade com instâncias antigas da API até a publicação do novo backend.
-
-Inicie a API:
-
-```bash
-python app.py
-```
-
-Por padrão, o serviço utiliza a porta `8590`.
+As tabelas e migrations aditivas compatíveis são verificadas na inicialização.
+Quando uma alteração exigir uma migration específica, ela deve ser executada e
+validada antes de publicar a API.
 
 ## Produção
 
-Exemplo com Gunicorn e worker Gevent WebSocket:
+O GitHub Actions faz deploy apenas após push em `main`. O workflow atualiza o
+checkout no servidor, instala dependências e reinicia o serviço `api_tmhub`.
+
+Exemplo de execução com WebSocket:
 
 ```bash
 gunicorn \
@@ -181,73 +126,55 @@ gunicorn \
   wsgi:app
 ```
 
-O Socket.IO mantém estado de conexões e eventos; revise a estratégia de
-mensageria antes de aumentar o número de workers.
+## Segurança e filial
 
-## Autenticação e permissões
+1. O token chega pelo cabeçalho `Access-Token`.
+2. A API identifica o usuário e aplica a matriz de permissões.
+3. O escopo de filiais calcula os centros de custo autorizados.
+4. Serviços e queries aplicam `apply_cost_center_scope` ou a regra de domínio equivalente.
 
-As rotas autenticadas recebem o JWT pelo cabeçalho:
-
-```http
-Access-Token: <token>
-```
-
-As senhas novas utilizam Argon2id com um pepper fornecido exclusivamente por
-`PASSWORD_PEPPER`. Mantenha o mesmo valor em todas as instâncias da API e nunca
-o grave no banco ou no repositório. A troca de senha incrementa a versão da
-sessão e invalida os JWTs emitidos anteriormente.
-
-A autorização combina:
-
-1. Usuário autenticado.
-2. Permissão da tela e da ação.
-3. Filiais vinculadas ao usuário.
-4. Centros de custo permitidos pelas filiais.
-
-Administradores possuem visão global. Usuários comuns recebem a união das
-filiais autorizadas.
+Administradores têm visão global. Usuários vinculados à Matriz podem selecionar
+filiais no layout; usuários comuns recebem apenas o conjunto de filiais que
+possuem vínculo ativo.
 
 ## Eventos em tempo real
 
-Entre os eventos publicados pela API estão:
-
-| Evento | Finalidade |
+| Evento/canal | Finalidade |
 | --- | --- |
-| `new_request` | Atualizar requisições |
-| `new_history` | Atualizar histórico |
-| `kds_update` | Atualizar o painel KDS |
-| `absence_control_update` | Atualizar controle e dashboard de faltas |
-| `disallowance_update` | Atualizar controle de glosas |
-| `command` / `command_done` | Comunicação com agentes RPA |
+| `new_request`, `new_history`, `kds_update` | Reposições, histórico e KDS. |
+| `absence_control_update` | Controle e dashboard de faltas. |
+| `disallowance_update` | Glosas e Roçada. |
+| `ticket_update` | Criação, comentário, atualização e atraso de chamados. |
+| `data_changed` | Atualização por domínio da tela afetada. |
+| `timo_learning_updated`, `timo_agent_*` | Aprendizado e estado do Timo Voice Agent. |
+| `command`, `command_done` | Comunicação com agentes RPA. |
 
-## Estrutura principal
+## Estrutura do backend
 
 ```text
 api_tmhub/
-├── models/          # Entidades SQLAlchemy
-├── routes/          # Blueprints HTTP
-├── services/        # Casos de uso e regras de negócio
-├── utils/           # Infraestrutura e segurança
-├── storage/         # Arquivos persistidos
-├── import_col/      # Importação de colaboradores
-├── app.py           # Aplicação principal
-└── wsgi.py          # Entrada para produção
+├── models/       entidades SQLAlchemy
+├── routes/       blueprints HTTP
+├── services/     casos de uso e regras de negócio
+├── utils/        infraestrutura, segurança e Socket.IO
+├── storage/      arquivos persistidos
+├── import_col/   importação de colaboradores
+├── scripts/      fluxo de branches e Pull Requests
+├── app.py        aplicação Flask
+└── wsgi.py       entrada de produção
 ```
 
-## Boas práticas
+## Contribuição
 
-- Nunca versionar `.env`, credenciais ou tokens.
-- Aplicar o escopo de filial em toda nova consulta autenticada.
-- Validar permissão novamente na API; ocultar botões no frontend não é segurança.
-- Executar migrations necessárias antes de publicar alterações de modelo.
-- Manter uploads em armazenamento persistente no ambiente de produção.
+Leia [FLUXO.md](./FLUXO.md). Toda nova tela autenticada deve ter permissão,
+escopo de filial no backend, eventos em tempo real quando aplicável e validação
+do contrato OpenAPI.
 
 ## Projeto relacionado
 
-A interface web está no repositório
-**[tmhub](https://github.com/foxtec198/tmhub)**.
+A interface web está em **[tmhub](https://github.com/foxtec198/tmhub)**.
 
 ## Licença e uso
 
-Projeto proprietário destinado ao uso interno. Distribuição, cópia ou
-modificação externa dependem de autorização.
+Projeto proprietário de uso interno. Distribuição, cópia ou modificação externa
+dependem de autorização.
