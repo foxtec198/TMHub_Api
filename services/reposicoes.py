@@ -59,7 +59,7 @@ def _can_access_employee(token_data, employee_id, allow_uncovered=False):
 class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
     REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA"}
-    ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO"]
+    ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "AFASTAMENTO"]
 
     @staticmethod
     def _disciplinary_context(employee_id, reason, new_measure_informed):
