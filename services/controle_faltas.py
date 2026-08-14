@@ -1,5 +1,6 @@
 from datetime import datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation
+from unicodedata import normalize
 from zoneinfo import ZoneInfo
 
 from dateutil import relativedelta
@@ -22,15 +23,28 @@ from utils.safe_route import safe_route
 from utils.socket import socketio
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
-JUSTIFIED_REASON_TERMS = ("ATESTADO", "AFASTAMENTO", "DECLARAÇÃO", "DECLARAÃ‡ÃƒO")
-NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FÉRIAS", "FERIAS", "POSTO VAGO")
+NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO")
+DECLARATION_PARTIAL_HOURS = Decimal("4")
 
 
 class AbsenceControlService:
     @staticmethod
-    def _requires_document_deadline(reason):
-        normalized = str(reason or "").strip().upper()
-        return "ATESTADO" in normalized or "DECLARA" in normalized
+    def _normalized_reason(reason):
+        raw = str(reason or "").strip()
+        return "".join(
+            character
+            for character in normalize("NFD", raw)
+            if ord(character) < 0x300 or ord(character) > 0x36F
+        ).upper()
+
+    @classmethod
+    def _requires_document_deadline(cls, reason):
+        normalized = cls._normalized_reason(reason)
+        return "ATESTADO" in normalized or "DECLARACAO" in normalized
+
+    @classmethod
+    def _is_declaration(cls, reason):
+        return "DECLARACAO" in cls._normalized_reason(reason)
     
     @staticmethod
     def _is_historical(value):
@@ -55,18 +69,18 @@ class AbsenceControlService:
         user = db.session.get(Users, (token_data or {}).get("id"))
         return bool(user and user.gerencia_faltas)
 
-    @staticmethod
-    def _initial_classification(reason):
-        normalized = str(reason or "").strip().upper()
+    @classmethod
+    def _initial_classification(cls, reason):
+        normalized = cls._normalized_reason(reason)
         if normalized == "INJUSTIFICADA":
             return "injustificada"
-        if any(term in normalized for term in JUSTIFIED_REASON_TERMS):
+        if "ATESTADO" in normalized or "AFASTAMENTO" in normalized or "DECLARACAO" in normalized:
             return "justificada"
         return "em_analise"
 
-    @staticmethod
-    def _is_absence_reason(reason):
-        normalized = str(reason or "").strip().upper()
+    @classmethod
+    def _is_absence_reason(cls, reason):
+        normalized = cls._normalized_reason(reason)
         return not any(term in normalized for term in NON_ABSENCE_REASON_TERMS)
 
     @staticmethod
@@ -105,8 +119,13 @@ class AbsenceControlService:
         absence.centro_custo_id = req.cc
         absence.supervisor_id = req.supervisor_id
         absence.motivo = req.motivo
-        if not absence.tipo_ausencia:
+        if cls._is_declaration(req.motivo):
+            absence.tipo_ausencia = "parcial"
+            if absence.quantidade_horas is None:
+                absence.quantidade_horas = DECLARATION_PARTIAL_HOURS
+        else:
             absence.tipo_ausencia = "integral"
+            absence.quantidade_horas = None
         absence.data_falta = req.created_at
         if is_new and req.obs:
             absence.observacao = req.obs
