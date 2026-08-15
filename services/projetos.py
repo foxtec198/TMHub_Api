@@ -157,6 +157,10 @@ class ProjectService:
             Users.id.in_(participant_ids | assigned_ids or {0})
         ).all()
         employees = {employee.id: employee.nome for employee in employee_rows}
+        employee_photos = {
+            employee.id: employee.foto_perfil
+            for employee in employee_rows
+        }
         project_members = defaultdict(list)
         for row in project_member_rows:
             employee = next(
@@ -170,6 +174,7 @@ class ProjectService:
                 "nome": employee.nome,
                 "iniciais": self._initials(employee.nome),
                 "avatarColor": self._color(employee.id),
+                "foto_perfil": employee.foto_perfil,
             })
         by_employee = defaultdict(lambda: {"cards": 0, "concluidos": 0, "horas_execucao": []})
         for card, done in filtered:
@@ -235,6 +240,7 @@ class ProjectService:
                         "nome": employees.get(member_id, "Colaborador removido"),
                         "iniciais": self._initials(employees.get(member_id, "?")),
                         "avatarColor": self._color(member_id),
+                        "foto_perfil": employee_photos.get(member_id),
                     }
                     for member_id in card_members[card.id]
                 ],
@@ -315,8 +321,8 @@ class ProjectService:
             return []
 
         project_members = defaultdict(list)
-        for project_id, employee_id, name in (
-            db.session.query(ProjectMember.project_id, Users.id, Users.nome)
+        for project_id, employee_id, name, photo in (
+            db.session.query(ProjectMember.project_id, Users.id, Users.nome, Users.foto_perfil)
             .join(Users, Users.id == ProjectMember.employee_id)
             .filter(ProjectMember.project_id.in_(project_ids))
             .all()
@@ -326,6 +332,7 @@ class ProjectService:
                 "nome": name,
                 "iniciais": self._initials(name),
                 "avatarColor": self._color(employee_id),
+                "foto_perfil": photo,
             })
 
         columns = (
@@ -346,8 +353,8 @@ class ProjectService:
         )
         card_ids = [card.id for card in cards]
         card_members = defaultdict(list)
-        for card_id, employee_id, name in (
-            db.session.query(ProjectCardMember.card_id, Users.id, Users.nome)
+        for card_id, employee_id, name, photo in (
+            db.session.query(ProjectCardMember.card_id, Users.id, Users.nome, Users.foto_perfil)
             .join(Users, Users.id == ProjectCardMember.employee_id)
             .filter(ProjectCardMember.card_id.in_(card_ids or [0]))
             .all()
@@ -357,6 +364,7 @@ class ProjectService:
                 "nome": name,
                 "iniciais": self._initials(name),
                 "avatarColor": self._color(employee_id),
+                "foto_perfil": photo,
             })
 
         comments_by_card = defaultdict(list)
