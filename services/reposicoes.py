@@ -1034,6 +1034,10 @@ class TimelineService:
                 Timeline.created_at,
                 Timeline.status,
                 Timeline.tipo,
+                Timeline.supervisor_id,
+                Timeline.criado_por_supervisor_id,
+                Timeline.criado_por_usuario_id,
+                Timeline.alterado_por_usuario_id,
                 Ausente.nome.label("ausente"),
                 case(
                     (Timeline.reserva_id == 0, "SEM COBERTURA"),
@@ -1043,7 +1047,9 @@ class TimelineService:
                 Supervisors.nome.label("supervisor"),
                 Criador.nome.label("criado_por"),
                 CriadorUsuario.nome.label("criado_por_usuario"),
+                CriadorUsuario.foto_perfil.label("criado_por_usuario_foto"),
                 Alterador.nome.label("alterado_por"),
+                Alterador.foto_perfil.label("alterado_por_foto"),
                 Timeline.motivo,
                 Timeline.obs,
             )
