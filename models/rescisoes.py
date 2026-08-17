@@ -1,9 +1,13 @@
+# Modelo de dados de rescisões.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade Termination persistida no banco de dados.
 class Termination(BaseModel):
     __tablename__ = "rh_rescisoes"
     __table_args__ = (

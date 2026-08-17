@@ -1,3 +1,5 @@
+# Utilitários de requisitos de usuário.
+# Biblioteca padrão.
 import base64
 import binascii
 import re

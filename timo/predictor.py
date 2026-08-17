@@ -1,8 +1,12 @@
+# Recursos do assistente Timo: previsão de intenções.
+# Dependências externas.
 import joblib
 
+# Módulos internos da aplicação.
 from timo.model_storage import active_model_path
 
 class IntentPredictor:
+    # Inicializa as dependências e o estado da instância.
     def __init__(self):
         if not active_model_path().exists():
             raise RuntimeError(

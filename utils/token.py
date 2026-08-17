@@ -1,5 +1,8 @@
+# Utilitários de tokens de acesso.
+# Dependências externas.
 from jwt import encode, decode
 from dateutils import relativedelta
+# Biblioteca padrão.
 from os import getenv
 from datetime import datetime
 

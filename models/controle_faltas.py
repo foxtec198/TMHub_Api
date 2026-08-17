@@ -1,9 +1,13 @@
+# Modelo de dados de controle de faltas.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade AbsenceControl persistida no banco de dados.
 class AbsenceControl(BaseModel):
     __tablename__ = "controle_faltas"
 

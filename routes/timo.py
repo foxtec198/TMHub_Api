@@ -1,5 +1,8 @@
+# Rotas HTTP de assistente Timo.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.timo import TimoCommandService
 
 

@@ -1,4 +1,7 @@
+# Regras de negócio de supervisores.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from models.supervisores import Supervisors, db
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees

@@ -1,9 +1,13 @@
+# Regras de negócio de glosas de roçada.
 """Métrica contratual de glosa do DPTO 92 (Roçada)."""
+# Biblioteca padrão.
 import calendar
 from collections import defaultdict
 from datetime import date, datetime
 
+# Dependências externas.
 from flask import jsonify, request
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.pt48 import Ponto48Espelho, Ponto48EspelhoImport
@@ -11,12 +15,15 @@ from models.rp_historico import History
 from models.rp_requisicao import Requisicao
 from models.rescisoes import Termination
 from services.ponto48 import Ponto48Service
+# Dependências externas.
 from sqlalchemy import func
+# Módulos internos da aplicação.
 from utils.db import db
 from utils.filial_scope import allowed_cost_center_ids
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
+# Dependências externas.
 from werkzeug.utils import secure_filename
 
 

@@ -1,7 +1,11 @@
+# Modelo de dados de admissões.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade WorkSchedule persistida no banco de dados.
 class WorkSchedule(BaseModel):
     """Catálogo deduplicado de jornadas digitadas pelos usuários."""
     __tablename__ = "ad_horarios_trabalho"
@@ -11,6 +15,7 @@ class WorkSchedule(BaseModel):
     descricao_normalizada = db.Column(db.String(100), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, default=dt.now)
 
+# Define a entidade InterviewHistory persistida no banco de dados.
 class InterviewHistory(BaseModel):
     """Histórico consolidado de entrevistas importadas e vagas concluídas."""
     __tablename__ = "ad_entrevistas_historico"
@@ -65,6 +70,7 @@ class InterviewHistory(BaseModel):
         ),
     )
 
+# Define a entidade VacancyEvent persistida no banco de dados.
 class VacancyEvent(BaseModel):
     """Linha do tempo auditável de cada mudança de status da vaga."""
     __tablename__ = "ad_vagas_eventos"
@@ -77,6 +83,7 @@ class VacancyEvent(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), default=dt.now)
 
 
+# Define a entidade VacancyCandidateHistory persistida no banco de dados.
 class VacancyCandidateHistory(BaseModel):
     """Preserva cada candidato considerado e seu resultado dentro da vaga."""
     __tablename__ = "ad_vagas_candidatos_historico"
@@ -105,6 +112,7 @@ class VacancyCandidateHistory(BaseModel):
     ocorrido_em = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
     created_at = db.Column(db.DateTime(timezone=True), default=dt.now)
 
+# Define a entidade Vacancy persistida no banco de dados.
 class Vacancy(BaseModel):
     """Vaga operacional vinculada ao colaborador que será substituído."""
     __tablename__ = "ad_vagas"

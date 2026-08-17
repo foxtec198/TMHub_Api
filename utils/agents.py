@@ -1,1 +1,2 @@
+# Utilitários de agentes.
 agents = {}

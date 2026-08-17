@@ -1,5 +1,8 @@
+# Rotas HTTP de rescisões.
+# Dependências externas.
 from flask import Blueprint, request
 
+# Módulos internos da aplicação.
 from services.rescisoes import TerminationService
 
 

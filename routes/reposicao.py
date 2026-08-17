@@ -1,4 +1,7 @@
+# Rotas HTTP de reposição.
+# Módulos internos da aplicação.
 from services.reposicoes import HistoryService, RequestService, TimelineService
+# Dependências externas.
 from flask import Blueprint, request as rq
 
 replace_bp = Blueprint("Reposições", __name__)
@@ -8,6 +11,7 @@ rq_service = RequestService()
 timeline_service = TimelineService()
 
 # Approve or reprove a request and persist its history entry.
+# Encaminha a requisição para o fluxo principal do módulo.
 @replace_bp.route("", methods=["POST"])
 def root(): return history_service.create()
 

@@ -1,5 +1,7 @@
+# Regras de negócio de processamento de glosas.
 """Importação conciliada das glosas do departamento 87."""
 
+# Biblioteca padrão.
 import argparse
 import re
 import unicodedata
@@ -9,8 +11,10 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from os import path
 
+# Dependências externas.
 import pandas as pd
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl

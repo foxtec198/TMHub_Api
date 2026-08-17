@@ -1,4 +1,7 @@
+# Rotas HTTP de categorias.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.categorias import CategoryService
 
 categorias_bp = Blueprint("Categorias de Produtos", __name__)

@@ -1,7 +1,11 @@
+# Regras de negócio de autenticação.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Dependências externas.
 from flask import jsonify, request as rq
 
+# Módulos internos da aplicação.
 from models.usuarios import Users, db
 from utils.check_field import check_field
 from utils.password_security import (

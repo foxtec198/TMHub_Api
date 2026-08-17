@@ -1,7 +1,9 @@
+# Modelo de dados de projetos.
+# Módulos internos da aplicação.
 from utils.db import db
 
 
-# COMETARIOA DE TESTE
+# Define a entidade Project persistida no banco de dados.
 class Project(db.Model):
     __tablename__ = "pj_projects"
     

@@ -1,5 +1,8 @@
+# Rotas HTTP de dashboard de rescisões.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.dashboard_rescisoes import TerminationDashboardService
 
 

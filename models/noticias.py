@@ -1,9 +1,13 @@
+# Modelo de dados de notícias.
+# Biblioteca padrão.
 from datetime import datetime
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade LoginNews persistida no banco de dados.
 class LoginNews(BaseModel):
     __tablename__ = "noticias_login"
 

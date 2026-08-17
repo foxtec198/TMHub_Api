@@ -1,5 +1,8 @@
+# Rotas HTTP de TM Ops.
+# Dependências externas.
 from flask import Blueprint, request
 
+# Módulos internos da aplicação.
 from services.tm_ops import TMOpsService
 
 

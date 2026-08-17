@@ -1,3 +1,4 @@
+# Rotinas de importação de colaboradores: colunas da importação.
 """
 Carrega o funcionarios.json (gerado a partir do relatório .htm de colaboradores),
 achata a estrutura em uma lista única de empregados e enriquece cada um com
@@ -33,6 +34,7 @@ Saída (cols["empregados"][i]):
 }
 """
 
+# Biblioteca padrão.
 import json
 from os import getenv
 from pathlib import Path

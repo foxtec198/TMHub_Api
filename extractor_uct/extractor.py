@@ -1,8 +1,11 @@
+# Extrai dados de colaboradores para a UCT.
+# Biblioteca padrão.
 import copy
 import json
 import time
 from pathlib import Path
 
+# Dependências externas.
 import pandas as pd
 import requests
 

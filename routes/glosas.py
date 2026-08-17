@@ -1,5 +1,8 @@
+# Rotas HTTP de glosas.
+# Dependências externas.
 from flask import Blueprint, request
 
+# Módulos internos da aplicação.
 from services.glosas import DisallowanceService
 from services.rocada_glosas import RocadaDisallowanceService
 
@@ -40,6 +43,7 @@ def dashboard():
     return service.dashboard()
 
 
+# Encaminha a requisição para o fluxo principal do módulo.
 @disallowance_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:

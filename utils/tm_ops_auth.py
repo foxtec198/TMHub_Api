@@ -1,8 +1,12 @@
+# Utilitários de autenticação do TM Ops.
+# Biblioteca padrão.
 from functools import wraps
 
+# Dependências externas.
 from flask import jsonify, request
 from jwt import ExpiredSignatureError, InvalidTokenError
 
+# Módulos internos da aplicação.
 from models.colaboradores import Employees
 from models.usuarios import Users
 from utils.db import db

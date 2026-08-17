@@ -1,7 +1,10 @@
+# Modelo de dados de histórico de chamados.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade Ticket persistida no banco de dados.
 class Ticket(BaseModel):
     __tablename__ = "tc_historico"
 

@@ -1,3 +1,5 @@
+# Regras de negócio de importação de colaboradores.
+# Biblioteca padrão.
 import json
 import shutil
 import tempfile
@@ -6,8 +8,10 @@ from threading import Lock, Thread
 from time import time
 from uuid import uuid4
 
+# Dependências externas.
 from flask import current_app, jsonify, request
 
+# Módulos internos da aplicação.
 from import_col.cadInBd import (
     create_cost_centers,
     create_employees,

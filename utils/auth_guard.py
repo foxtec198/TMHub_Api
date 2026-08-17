@@ -1,6 +1,9 @@
+# Utilitários de proteção de autenticação.
+# Dependências externas.
 from flask import jsonify, request
 from jwt import ExpiredSignatureError, InvalidTokenError
 
+# Módulos internos da aplicação.
 from models.usuarios import Users
 from utils.db import db
 from utils.token import decode_token

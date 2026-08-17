@@ -1,9 +1,14 @@
+# Regras de negócio de funcionários.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.situacoes import Situations
 from utils.safe_route import safe_route
+# Dependências externas.
 from sqlalchemy import String, func, or_, cast
+# Módulos internos da aplicação.
 from models.colaboradores import Employees, db
 from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope
 from utils.token import decode_token
