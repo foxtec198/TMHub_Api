@@ -1,8 +1,12 @@
+# Modelo de dados de comentários de cards.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from utils.db import db
 
 
+# Define a entidade ProjectCardComment persistida no banco de dados.
 class ProjectCardComment(db.Model):
     __tablename__ = "pj_card_comment"
 

@@ -1,9 +1,13 @@
+# Modelo de dados de indicadores de ponto 48h.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade Ponto48Import persistida no banco de dados.
 class Ponto48Import(BaseModel):
     __tablename__ = "pt48_importacoes"
 
@@ -16,6 +20,7 @@ class Ponto48Import(BaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
 
 
+# Define a entidade Ponto48Absenteismo persistida no banco de dados.
 class Ponto48Absenteismo(BaseModel):
     __tablename__ = "pt48_absenteismo"
 
@@ -41,6 +46,7 @@ class Ponto48Absenteismo(BaseModel):
     abs_percentual = db.Column(db.Numeric(7, 2), nullable=False, default=0)
 
 
+# Define a entidade Ponto48HorasExtras persistida no banco de dados.
 class Ponto48HorasExtras(BaseModel):
     __tablename__ = "pt48_horas_extras"
 
@@ -76,6 +82,7 @@ class Ponto48HorasExtras(BaseModel):
     irregularidade = db.Column(db.String(500))
 
 
+# Define a entidade Ponto48AjusteImport persistida no banco de dados.
 class Ponto48AjusteImport(BaseModel):
     __tablename__ = "pt48_ajuste_importacoes"
 
@@ -87,6 +94,7 @@ class Ponto48AjusteImport(BaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
 
 
+# Define a entidade Ponto48Ajuste persistida no banco de dados.
 class Ponto48Ajuste(BaseModel):
     __tablename__ = "pt48_ajustes"
 
@@ -122,6 +130,7 @@ class Ponto48Ajuste(BaseModel):
     solicitacao = db.Column(db.Boolean, nullable=False, default=False)
 
 
+# Define a entidade Ponto48EspelhoImport persistida no banco de dados.
 class Ponto48EspelhoImport(BaseModel):
     __tablename__ = "pt48_espelho_importacoes"
 
@@ -133,6 +142,7 @@ class Ponto48EspelhoImport(BaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=dt.now)
 
 
+# Define a entidade Ponto48Espelho persistida no banco de dados.
 class Ponto48Espelho(BaseModel):
     __tablename__ = "pt48_espelho_ponto"
 

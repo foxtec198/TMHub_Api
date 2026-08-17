@@ -1,9 +1,11 @@
-from datetime import date, datetime as dt, timedelta
+# Regras de negócio de controle de faltas.
+# Biblioteca padrão.
+from datetime import datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation
-from io import BytesIO
 from unicodedata import normalize
 from zoneinfo import ZoneInfo
 
+# Dependências externas.
 from dateutil import relativedelta
 from flask import jsonify, request, send_file
 from openpyxl import Workbook
@@ -11,6 +13,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import String, case, cast, or_, extract
 from sqlalchemy.orm import aliased
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
@@ -31,13 +34,6 @@ DECLARATION_PARTIAL_HOURS = Decimal("4")
 
 
 class AbsenceControlService:
-    @staticmethod
-    def _excel_datetime(value):
-        """Converte datetimes com fuso para o formato aceito pelo Excel."""
-        if isinstance(value, dt) and value.tzinfo is not None:
-            return value.astimezone(SAO_PAULO).replace(tzinfo=None)
-        return value
-
     @staticmethod
     def _normalized_reason(reason):
         raw = str(reason or "").strip()

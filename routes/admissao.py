@@ -1,4 +1,7 @@
+# Rotas HTTP de admissões.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.admissao import VacancyService
 
 admissao_bp = Blueprint("Admissão", __name__)

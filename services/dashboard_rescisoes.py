@@ -1,11 +1,15 @@
+# Regras de negócio de dashboard de rescisões.
+# Biblioteca padrão.
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date, datetime as dt
 from decimal import Decimal
 
+# Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import String, cast
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.filiais import Branch, filial_centros_custo, filial_departamentos

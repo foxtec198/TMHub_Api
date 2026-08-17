@@ -1,6 +1,10 @@
+# Utilitários de escopo de filiais.
+# Biblioteca padrão.
 import json
+# Dependências externas.
 from flask import g, has_request_context, request
 from sqlalchemy import or_
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.filiais import Branch, filial_centros_custo, filial_departamentos, filial_usuarios
 from models.usuarios import Users

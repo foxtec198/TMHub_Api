@@ -1,5 +1,8 @@
+# Regras de negócio de estrutura.
+# Dependências externas.
 from flask import current_app, jsonify, request
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.estrutura import StructureAsset, StructureLocation
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure

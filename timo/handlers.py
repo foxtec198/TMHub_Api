@@ -1,5 +1,9 @@
+# Recursos do assistente Timo: tratamento de intenções.
+# Biblioteca padrão.
 from datetime import datetime, time
+# Dependências externas.
 from sqlalchemy import or_
+# Módulos internos da aplicação.
 from models.rp_historico import History
 
 def _get_datetime_range(period):

@@ -1,9 +1,13 @@
+# Utilitários de conexão de voz do Timo.
 """Canal Socket.IO autenticado para o Timo Voice Agent."""
 
+# Biblioteca padrão.
 from datetime import datetime, timezone
 
+# Dependências externas.
 from flask import request
 
+# Módulos internos da aplicação.
 from models.timo_voice_agents import TimoUserPreference, TimoVoiceAgent
 from models.usuarios import Users
 from services.timo_voice_agents import validate_agent_token

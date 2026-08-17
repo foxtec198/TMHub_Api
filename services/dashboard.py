@@ -1,11 +1,18 @@
+# Regras de negócio de dashboard.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from utils.safe_route import safe_route
+# Biblioteca padrão.
 from datetime import datetime as dt
+# Dependências externas.
 from dateutils import relativedelta
 from sqlalchemy import case, func
 from sqlalchemy.orm import aliased
+# Biblioteca padrão.
 from calendar import monthrange
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
 from models.rp_historico import History

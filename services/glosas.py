@@ -1,3 +1,5 @@
+# Regras de negócio de glosas.
+# Biblioteca padrão.
 from collections import defaultdict
 from datetime import date, datetime as dt
 from decimal import Decimal, InvalidOperation
@@ -5,12 +7,14 @@ from io import BytesIO
 from os import getenv
 from pathlib import Path
 
+# Dependências externas.
 from flask import jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy.orm import aliased
 from werkzeug.utils import secure_filename
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl

@@ -1,8 +1,12 @@
+# Regras de negócio de dashboard PCD.
+# Biblioteca padrão.
 from json import JSONDecodeError, loads
 
+# Dependências externas.
 from flask import jsonify, request as rq
 from sqlalchemy import or_
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
 from models.filiais import Branch,filial_centros_custo,filial_departamentos,filial_usuarios

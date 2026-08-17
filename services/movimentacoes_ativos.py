@@ -1,6 +1,9 @@
+# Regras de negócio de movimentações de ativos.
+# Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import or_
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.estrutura import StructureAsset, StructureLocation
 from models.movimentacoes_ativos import StructureAssetMovement

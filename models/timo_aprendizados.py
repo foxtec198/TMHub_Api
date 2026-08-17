@@ -1,9 +1,13 @@
+# Modelo de dados de aprendizados do Timo.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade TimoLearningExample persistida no banco de dados.
 class TimoLearningExample(BaseModel):
     """Frases sem entendimento que aguardam revisão humana antes do treino."""
 

@@ -1,4 +1,7 @@
+# Rotas HTTP de produtos.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.produtos import ProductService
 
 produtos_bp = Blueprint("Produtos", __name__)

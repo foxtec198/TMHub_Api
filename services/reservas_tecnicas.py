@@ -1,7 +1,11 @@
+# Regras de negócio de reservas técnicas.
+# Biblioteca padrão.
 from datetime import datetime as dt
 from zoneinfo import ZoneInfo
 
+# Dependências externas.
 from flask import jsonify, request
+# Módulos internos da aplicação.
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.controle_faltas import AbsenceControl
