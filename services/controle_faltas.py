@@ -1,6 +1,7 @@
 # Regras de negócio de controle de faltas.
 # Biblioteca padrão.
-from datetime import datetime as dt, timedelta
+from datetime import date, datetime as dt, timedelta
+from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from unicodedata import normalize
 from zoneinfo import ZoneInfo
@@ -32,8 +33,14 @@ SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO")
 DECLARATION_PARTIAL_HOURS = Decimal("4")
 
-
 class AbsenceControlService:
+    @staticmethod
+    def _excel_datetime(value):
+        """Converte datetimes com fuso para o formato aceito pelo Excel."""
+        if isinstance(value, dt) and value.tzinfo is not None:
+            return value.astimezone(SAO_PAULO).replace(tzinfo=None)
+        return value
+
     @staticmethod
     def _normalized_reason(reason):
         raw = str(reason or "").strip()
