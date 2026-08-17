@@ -1,9 +1,13 @@
+# Regras de negócio de movimentações de estoque.
+# Biblioteca padrão.
 from collections import defaultdict
 from datetime import datetime as dt, timedelta
 
+# Dependências externas.
 from flask import jsonify, request as rq
 from sqlalchemy.orm import selectinload
 
+# Módulos internos da aplicação.
 from models.categorias import Category
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees

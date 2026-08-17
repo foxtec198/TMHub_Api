@@ -1,7 +1,11 @@
+# Modelo de dados de movimentações de estoque.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Movement persistida no banco de dados.
 class Movement(BaseModel):
     __tablename__ = "es_movimentos"
 
@@ -27,6 +31,7 @@ class Movement(BaseModel):
     )
 
 
+# Define a entidade MovementRecipient persistida no banco de dados.
 class MovementRecipient(BaseModel):
     __tablename__ = "es_movimento_destinatarios"
     __table_args__ = (

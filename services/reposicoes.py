@@ -1,4 +1,6 @@
+# Regras de negócio de reposições.
 # Models
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, db
 from models.rp_requisicao import Requisicao
 from models.rp_timeline import Timeline
@@ -12,18 +14,29 @@ from models.situacoes import Situations
 from models.medidas_disciplinares import DisciplinaryMeasure
 
 # Utils
+# Biblioteca padrão.
 from datetime import date, datetime as dt, timedelta
+# Dependências externas.
 from dateutils import relativedelta
 from flask import jsonify, request, send_file
+# Módulos internos da aplicação.
 from utils.socket import socketio
+# Biblioteca padrão.
 from calendar import monthrange
+# Dependências externas.
 from sqlalchemy import and_, case, func, or_
+# Módulos internos da aplicação.
 from utils.check_field import check_field
 from utils.safe_route import safe_route
+# Dependências externas.
 from sqlalchemy.orm import aliased
+# Biblioteca padrão.
 from io import BytesIO
+# Dependências externas.
 from openpyxl import Workbook, load_workbook
+# Biblioteca padrão.
 from zoneinfo import ZoneInfo
+# Módulos internos da aplicação.
 from utils.filial_scope import (
     apply_active_department_scope,
     apply_cost_center_scope,

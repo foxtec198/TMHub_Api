@@ -1,7 +1,10 @@
+# Modelo de dados de comentários de chamados.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade TicketComment persistida no banco de dados.
 class TicketComment(BaseModel):
     __tablename__ = "tc_comentarios"
 

@@ -1,9 +1,13 @@
+# Modelo de dados de rotinas agendadas.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade SchedularRoutine persistida no banco de dados.
 class SchedularRoutine(BaseModel):
     __tablename__ = "schedular_rotinas"
 
@@ -38,6 +42,7 @@ class SchedularRoutine(BaseModel):
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, onupdate=dt.now)
 
 
+# Define a entidade SchedularRoutineStructure persistida no banco de dados.
 class SchedularRoutineStructure(BaseModel):
     __tablename__ = "schedular_rotina_estruturas"
     __table_args__ = (db.UniqueConstraint("rotina_id", "estrutura_id", name="uq_schedular_rotina_estrutura"),)
@@ -54,6 +59,7 @@ class SchedularRoutineStructure(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
 
 
+# Define a entidade SchedularRoutineCollaborator persistida no banco de dados.
 class SchedularRoutineCollaborator(BaseModel):
     __tablename__ = "schedular_rotina_colaboradores"
     __table_args__ = (

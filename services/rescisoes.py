@@ -1,13 +1,17 @@
+# Regras de negócio de rescisões.
+# Biblioteca padrão.
 from calendar import monthrange
 from datetime import date, datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from unicodedata import normalize
 
+# Dependências externas.
 from flask import jsonify, request
 from openpyxl import load_workbook
 from sqlalchemy import String, cast, or_
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.filiais import Branch, filial_centros_custo, filial_departamentos

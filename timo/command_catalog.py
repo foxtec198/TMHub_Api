@@ -1,3 +1,4 @@
+# Recursos do assistente Timo: catálogo de comandos.
 """Resolução determinística das frases conhecidas do Timo.
 
 O classificador é útil para variações novas, mas sua probabilidade entre muitas
@@ -5,12 +6,14 @@ intenções não é uma medida boa para frases que já constam no catálogo. Est
 módulo resolve primeiro as frases oficiais e as frases históricas do CSV.
 """
 
+# Biblioteca padrão.
 from difflib import SequenceMatcher
 from pathlib import Path
 import csv
 import re
 import unicodedata
 
+# Módulos internos da aplicação.
 from timo.analytics_catalog import ANALYTICS_COMMANDS
 from timo.navigation_catalog import NAVIGATION_COMMANDS
 

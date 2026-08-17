@@ -1,9 +1,13 @@
+# Rotas HTTP de usuários.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.usuarios import UserServices
 
 user_bp = Blueprint("Usuarios", __name__)
 service = UserServices()
 
+# Encaminha a requisição para o fluxo principal do módulo.
 @user_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:

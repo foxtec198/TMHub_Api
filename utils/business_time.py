@@ -1,3 +1,5 @@
+# Utilitários de cálculo de horário comercial.
+# Biblioteca padrão.
 from datetime import datetime as dt, time, timedelta
 from zoneinfo import ZoneInfo
 

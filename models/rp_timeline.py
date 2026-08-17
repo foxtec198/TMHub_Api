@@ -1,7 +1,12 @@
+# Modelo de dados de linha do tempo de reposições.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
+# Módulos internos da aplicação.
 from utils.db import db
 
+# Define a entidade Timeline persistida no banco de dados.
 class Timeline(BaseModel):
     __tablename__ = "rp_timeline"
 

@@ -1,12 +1,16 @@
+# Regras de negócio de assistente Timo.
+# Biblioteca padrão.
 import re
 import unicodedata
 from datetime import datetime, time, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+# Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import func, or_
 
+# Módulos internos da aplicação.
 from models.admissao import Vacancy
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees

@@ -1,7 +1,10 @@
+# Modelo de dados de cargos.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade Cargos persistida no banco de dados.
 class Cargos(BaseModel):
     __tablename__ = "cargos"
 

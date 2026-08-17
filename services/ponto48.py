@@ -1,3 +1,5 @@
+# Regras de negócio de ponto 48h.
+# Biblioteca padrão.
 import csv
 import json
 import re
@@ -9,8 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+# Dependências externas.
 from flask import current_app, jsonify, request as rq
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.pt48 import (

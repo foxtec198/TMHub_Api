@@ -1,7 +1,11 @@
+# Modelo de dados de produtos.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Product persistida no banco de dados.
 class Product(BaseModel):
     __tablename__ = "es_produtos"
 

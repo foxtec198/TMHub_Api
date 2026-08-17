@@ -1,7 +1,11 @@
+# Modelo de dados de reservas técnicas.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Floaters persistida no banco de dados.
 class Floaters(BaseModel):
     __tablename__ = "volantes"
 

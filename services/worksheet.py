@@ -1,10 +1,17 @@
+# Regras de negócio de planilhas.
+# Dependências externas.
 from openpyxl import load_workbook
+# Biblioteca padrão.
 from string import ascii_uppercase
 from os import path
+# Dependências externas.
 from flask import jsonify, request
+# Módulos internos da aplicação.
 from utils.safe_route import safe_route
+# Dependências externas.
 from pandas import read_excel
 
+# Módulos internos da aplicação.
 from models.colaboradores import Employees, db
 from models.supervisores import Supervisors
 from models.centros_de_custo import CostCenters

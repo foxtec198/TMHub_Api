@@ -1,7 +1,10 @@
+# Modelo de dados de estrutura.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
 
 
+# Define a entidade StructureLocation persistida no banco de dados.
 class StructureLocation(BaseModel):
     __tablename__ = "estrutura_locais"
 
@@ -23,6 +26,7 @@ class StructureLocation(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), nullable=False)
 
 
+# Define a entidade StructureAsset persistida no banco de dados.
 class StructureAsset(BaseModel):
     __tablename__ = "estrutura_ativos"
 

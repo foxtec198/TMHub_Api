@@ -1,9 +1,13 @@
+# Modelo de dados de configurações do Timo.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade TimoIntentConfiguration persistida no banco de dados.
 class TimoIntentConfiguration(BaseModel):
     """Resposta visual e ação permitida para cada intenção reconhecida pelo Timo."""
 
@@ -32,6 +36,7 @@ class TimoIntentConfiguration(BaseModel):
     )
 
 
+# Define a entidade TimoCommandTrigger persistida no banco de dados.
 class TimoCommandTrigger(BaseModel):
     """Frase de ativação cadastrada para uma automação personalizada."""
 

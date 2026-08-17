@@ -1,9 +1,13 @@
+# Modelo de dados de permissões.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade UserPermission persistida no banco de dados.
 class UserPermission(BaseModel):
     __tablename__ = "usuario_permissoes"
     __table_args__ = (

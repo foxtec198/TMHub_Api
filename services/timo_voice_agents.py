@@ -1,14 +1,18 @@
+# Regras de negócio de agentes de voz do Timo.
 """Pareamento, credenciais e controle do Timo Voice Agent."""
 
+# Biblioteca padrão.
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from os import getenv
 from secrets import token_urlsafe
 from uuid import uuid4
 
+# Dependências externas.
 from flask import jsonify, request
 from jwt import decode, encode
 
+# Módulos internos da aplicação.
 from models.timo_voice_agents import TimoUserPreference, TimoVoiceAgent, TimoVoicePairing
 from models.usuarios import Users
 from utils.db import db

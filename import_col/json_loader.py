@@ -1,3 +1,5 @@
+# Rotinas de importação de colaboradores: leitura de JSON.
+# Módulos internos da aplicação.
 from import_col.cols import _cidade_para
 
 

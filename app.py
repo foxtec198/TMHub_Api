@@ -1,11 +1,16 @@
+# Inicializa a aplicação Flask do TM Hub.
+# Dependências externas.
 from gevent import monkey; monkey.patch_all()  # Importante manter em primeira instancia
 
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
+# Biblioteca padrão.
 from os import getenv
+# Dependências externas.
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
+# Módulos internos da aplicação.
 from utils.blueprints import blueprints
 from utils.socket import socketio
 from utils.db import db

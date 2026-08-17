@@ -1,8 +1,11 @@
+# Regras de negócio de atualizações do GitHub.
+# Biblioteca padrão.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import getenv
 from threading import Lock
 from time import monotonic
 
+# Dependências externas.
 import requests
 from flask import current_app, jsonify, make_response
 

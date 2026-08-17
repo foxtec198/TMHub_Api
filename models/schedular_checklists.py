@@ -1,9 +1,13 @@
+# Modelo de dados de checklists agendados.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade SchedularChecklist persistida no banco de dados.
 class SchedularChecklist(BaseModel):
     __tablename__ = "schedular_checklists"
 
@@ -15,6 +19,7 @@ class SchedularChecklist(BaseModel):
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, onupdate=dt.now)
 
 
+# Define a entidade SchedularChecklistItem persistida no banco de dados.
 class SchedularChecklistItem(BaseModel):
     __tablename__ = "schedular_checklist_itens"
 

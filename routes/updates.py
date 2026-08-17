@@ -1,5 +1,8 @@
+# Rotas HTTP de atualizações.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.github_updates import GitHubUpdatesService
 from services.noticias import LoginNewsService
 

@@ -1,8 +1,14 @@
+# Regras de negócio de usuários.
+# Dependências externas.
 from flask import request as rq, jsonify, send_file
+# Módulos internos da aplicação.
 from models.usuarios import Users, db
 from utils.check_field import check_field
+# Biblioteca padrão.
 from hashlib import sha256
+# Módulos internos da aplicação.
 from utils.safe_route import safe_route
+# Biblioteca padrão.
 from datetime import datetime as dt, timedelta
 from email.message import EmailMessage
 from os import getenv
@@ -10,7 +16,9 @@ import re
 import secrets
 import smtplib
 from io import BytesIO
+# Dependências externas.
 from openpyxl import Workbook, load_workbook
+# Módulos internos da aplicação.
 from models.filiais import Branch, filial_usuarios
 from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions

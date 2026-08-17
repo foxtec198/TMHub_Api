@@ -1,5 +1,8 @@
+# Modelo de dados de membros de projeto.
+# Módulos internos da aplicação.
 from utils.db import db
 
+# Define a entidade ProjectMember persistida no banco de dados.
 class ProjectMember(db.Model):
     __tablename__ = 'pj_member'
 
