@@ -18,3 +18,6 @@ def dashboard(): return service.dashboard()
 
 @absence_control_bp.get("/tt")
 def tt(): return service.total()
+
+@absence_control_bp.get("/export")
+def export(): return service.export()
