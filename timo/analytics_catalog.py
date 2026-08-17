@@ -1,9 +1,11 @@
+# Recursos do assistente Timo: catálogo analítico.
 """Intenções analíticas operacionais do Timo.
 
 As consultas ficam declaradas aqui para que o catálogo exibido aos admins e
 as frases usadas pelo classificador sempre evoluam juntos.
 """
 
+# Biblioteca padrão.
 import re
 import unicodedata
 

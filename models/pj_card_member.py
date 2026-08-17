@@ -1,5 +1,8 @@
+# Modelo de dados de membros de cards.
+# Módulos internos da aplicação.
 from utils.db import db
 
+# Define a entidade ProjectCardMember persistida no banco de dados.
 class ProjectCardMember(db.Model):
     __tablename__ = 'pj_card_member'
     

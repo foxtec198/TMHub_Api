@@ -1,3 +1,5 @@
+# Regras de negócio de TM Ops.
+# Biblioteca padrão.
 from datetime import datetime as dt, timedelta
 from math import asin, cos, radians, sin, sqrt
 from os import getenv
@@ -5,10 +7,12 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+# Dependências externas.
 from flask import jsonify, request, send_from_directory
 from sqlalchemy import and_, case, func, or_
 from werkzeug.utils import secure_filename
 
+# Módulos internos da aplicação.
 from models.colaboradores import Employees
 from models.schedular_rotinas import (
     SchedularRoutine,

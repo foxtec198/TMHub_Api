@@ -1,6 +1,9 @@
+# Modelo de dados de supervisores.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
 
+# Define a entidade Supervisors persistida no banco de dados.
 class Supervisors(BaseModel):
     __tablename__ = "supervisores"
 

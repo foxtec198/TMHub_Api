@@ -1,6 +1,9 @@
+# Modelo de dados de centros de custo.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
 
+# Define a entidade CostCenters persistida no banco de dados.
 class CostCenters(BaseModel):
     __tablename__ = "centro_de_custo"
 
@@ -22,6 +25,7 @@ class CostCenters(BaseModel):
     filiais = db.relationship("Branch", secondary="filial_centros_custo", back_populates="centros_custo")
 
 
+# Define a entidade DepartmentConfiguration persistida no banco de dados.
 class DepartmentConfiguration(BaseModel):
     __tablename__ = "configuracoes_departamentos"
 

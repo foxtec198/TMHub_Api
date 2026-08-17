@@ -1,7 +1,12 @@
+# Modelo de dados de histórico de reposições.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
+# Módulos internos da aplicação.
 from utils.db import db
 
+# Define a entidade History persistida no banco de dados.
 class History(BaseModel):
     __tablename__ = "rp_historico"
 

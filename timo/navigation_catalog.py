@@ -1,9 +1,11 @@
+# Recursos do assistente Timo: catálogo de navegação.
 """Catálogo único das telas que o Timo pode abrir por comando de voz.
 
 Manter as frases de treinamento no mesmo lugar da rota evita que uma tela
 apareça na configuração sem que o classificador consiga reconhecê-la.
 """
 
+# Biblioteca padrão.
 import re
 import unicodedata
 

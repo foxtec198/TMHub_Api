@@ -1,4 +1,7 @@
+# Rotinas de importação de colaboradores: análise de dados.
+# Biblioteca padrão.
 import re, json
+# Dependências externas.
 from bs4 import BeautifulSoup
 
 with open('/mnt/user-data/uploads/cc.html', 'r', encoding='latin-1') as f:

@@ -1,5 +1,8 @@
+# Rotas HTTP de chamados.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.tickets import TicketService
 
 

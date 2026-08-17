@@ -1,4 +1,7 @@
+# Rotas HTTP de planilhas.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.worksheet import WorkSheet
 
 worksheet_bp = Blueprint("WorkSheet", __name__)

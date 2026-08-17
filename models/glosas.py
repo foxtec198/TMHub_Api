@@ -1,10 +1,14 @@
+# Modelo de dados de glosas.
+# Biblioteca padrão.
 from datetime import datetime as dt
 from decimal import Decimal
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade Disallowance persistida no banco de dados.
 class Disallowance(BaseModel):
     __tablename__ = "controle_glosas"
 

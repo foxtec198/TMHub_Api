@@ -1,9 +1,12 @@
+# Utilitários de segurança de senhas.
+# Biblioteca padrão.
 import base64
 import hashlib
 import hmac
 import re
 from os import getenv
 
+# Dependências externas.
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 

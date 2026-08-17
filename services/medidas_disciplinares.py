@@ -1,9 +1,12 @@
+# Regras de negócio de medidas disciplinares.
+# Biblioteca padrão.
 import hashlib
 import re
 import unicodedata
 from datetime import date, datetime
 from zipfile import BadZipFile
 
+# Dependências externas.
 from flask import jsonify, request
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -12,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from werkzeug.utils import secure_filename
 
+# Módulos internos da aplicação.
 from models.colaboradores import Employees
 from models.centros_de_custo import CostCenters
 from models.medidas_disciplinares import DisciplinaryMeasure

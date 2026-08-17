@@ -1,7 +1,11 @@
+# Modelo de dados de tarefas.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Task persistida no banco de dados.
 class Task(BaseModel):
     __tablename__ = "tasks"
 

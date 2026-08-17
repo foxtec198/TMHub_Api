@@ -1,7 +1,11 @@
+# Modelo de dados de colaboradores.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Employees persistida no banco de dados.
 class Employees(BaseModel):
     __tablename__ = "colaboradores"
 

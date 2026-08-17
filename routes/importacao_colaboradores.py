@@ -1,5 +1,8 @@
+# Rotas HTTP de importação de colaboradores.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.importacao_colaboradores import CollaboratorImportService
 
 

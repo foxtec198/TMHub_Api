@@ -1,9 +1,13 @@
+# Rotas HTTP de centros de custo.
+# Dependências externas.
 from flask import request, Blueprint
+# Módulos internos da aplicação.
 from services.centros import CostsCenterService
 
 center_bp = Blueprint("Centros de Custo", __name__)
 service = CostsCenterService()
 
+# Encaminha a requisição para o fluxo principal do módulo.
 @center_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match request.method:

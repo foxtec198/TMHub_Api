@@ -1,8 +1,12 @@
+# Modelo de dados de arquivos de cards.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from utils.db import db
 
 
+# Define a entidade ProjectCardFile persistida no banco de dados.
 class ProjectCardFile(db.Model):
     __tablename__ = "pj_card_file"
 

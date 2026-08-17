@@ -1,10 +1,14 @@
+# Regras de negócio de filiais.
+# Dependências externas.
 from flask import jsonify, request
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.filiais import Branch, filial_departamentos
 from models.usuarios import Users
 from utils.db import db
 from utils.filial_scope import is_admin, is_matrix_user
 from utils.safe_route import safe_route
+# Dependências externas.
 from sqlalchemy.orm import selectinload
 
 class BranchService:

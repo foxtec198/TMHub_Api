@@ -1,11 +1,15 @@
+# Regras de negócio de projetos.
+# Biblioteca padrão.
 from collections import defaultdict
 from datetime import datetime as dt
 from os import getenv
 from pathlib import Path
 from uuid import uuid4
 
+# Dependências externas.
 from flask import current_app, jsonify, request as rq, send_from_directory
 from werkzeug.utils import secure_filename
+# Módulos internos da aplicação.
 from models.usuarios import Users
 from models.pj_card import ProjectCard
 from models.pj_card_comment import ProjectCardComment
@@ -18,6 +22,7 @@ from utils.db import db
 from utils.safe_route import safe_route
 from utils.permissions import has_permission
 from utils.project_notifications import notify_card_members
+# Dependências externas.
 from sqlalchemy import or_
 
 DEFAULT_COLUMNS = ("A Fazer", "Em Andamento", "Concluido")
