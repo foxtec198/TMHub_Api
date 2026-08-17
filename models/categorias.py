@@ -1,6 +1,9 @@
+# Modelo de dados de categorias.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
 
+# Define a entidade Category persistida no banco de dados.
 class Category(BaseModel):
     __tablename__ = "es_categorias"
 

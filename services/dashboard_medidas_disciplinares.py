@@ -1,9 +1,13 @@
+# Regras de negócio de dashboard de medidas disciplinares.
+# Biblioteca padrão.
 from collections import defaultdict
 from datetime import date, datetime
 
+# Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import String, cast
 
+# Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl

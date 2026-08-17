@@ -1,3 +1,4 @@
+# Recursos do assistente Timo: armazenamento de modelo.
 """Caminhos do modelo de intenções do Timo.
 
 O modelo distribuído com o código é somente leitura em produção. Treinamentos
@@ -5,6 +6,7 @@ aprovados devem ser salvos fora de ``timo/models`` para não depender da posse
 dos arquivos criados pelo deploy.
 """
 
+# Biblioteca padrão.
 from os import getenv
 from pathlib import Path
 

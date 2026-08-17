@@ -1,3 +1,5 @@
+# Utilitários de registro de blueprints.
+# Módulos internos da aplicação.
 from routes.supervisores import supervisores_bp
 from routes.worksheet import worksheet_bp
 from routes.auth import auth_bp

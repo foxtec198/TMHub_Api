@@ -1,7 +1,11 @@
+# Modelo de dados de usuários.
+# Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade Users persistida no banco de dados.
 class Users(BaseModel):
     __tablename__ = "usuarios"
 

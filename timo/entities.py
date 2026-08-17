@@ -1,5 +1,8 @@
+# Recursos do assistente Timo: extração de entidades.
+# Biblioteca padrão.
 import re
 from datetime import datetime, timedelta
+# Dependências externas.
 from dateutil.relativedelta import relativedelta
 
 def normalize_text(text: str): return text.lower().strip()

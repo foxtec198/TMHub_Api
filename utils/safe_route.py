@@ -1,9 +1,13 @@
+# Utilitários de tratamento seguro de rotas.
+# Biblioteca padrão.
 import inspect
 from functools import wraps
 
+# Dependências externas.
 from flask import jsonify, request as rq
 from jwt import ExpiredSignatureError
 
+# Módulos internos da aplicação.
 from utils.socket import socketio
 from utils.token import decode_token
 

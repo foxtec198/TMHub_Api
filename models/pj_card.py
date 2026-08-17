@@ -1,6 +1,10 @@
+# Modelo de dados de cards de projeto.
+# Módulos internos da aplicação.
 from utils.db import db
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Define a entidade ProjectCard persistida no banco de dados.
 class ProjectCard(db.Model):
     __tablename__ = 'pj_card'
     

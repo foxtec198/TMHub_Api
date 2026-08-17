@@ -1,4 +1,7 @@
+# Regras de negócio de centros de custo.
+# Dependências externas.
 from flask import request as rq, jsonify
+# Módulos internos da aplicação.
 from utils.safe_route import safe_route
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.colaboradores import Employees

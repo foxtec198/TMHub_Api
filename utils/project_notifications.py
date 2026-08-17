@@ -1,3 +1,5 @@
+# Utilitários de notificações de projetos.
+# Biblioteca padrão.
 import logging
 import smtplib
 from email.message import EmailMessage

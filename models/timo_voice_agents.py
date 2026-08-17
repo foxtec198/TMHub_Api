@@ -1,10 +1,14 @@
+# Modelo de dados de agentes de voz do Timo.
+# Biblioteca padrão.
 from datetime import datetime as dt
 from uuid import uuid4
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade TimoVoiceAgent persistida no banco de dados.
 class TimoVoiceAgent(BaseModel):
     """Dispositivo desktop pareado, com credencial exclusiva para o Timo."""
 
@@ -29,6 +33,7 @@ class TimoVoiceAgent(BaseModel):
     )
 
 
+# Define a entidade TimoVoicePairing persistida no banco de dados.
 class TimoVoicePairing(BaseModel):
     """Código efêmero de uso único. O código puro jamais é persistido."""
 
@@ -53,6 +58,7 @@ class TimoVoicePairing(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
 
 
+# Define a entidade TimoUserPreference persistida no banco de dados.
 class TimoUserPreference(BaseModel):
     """Preferências sincronizadas por conta, independentes do computador."""
 

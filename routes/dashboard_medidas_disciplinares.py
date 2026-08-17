@@ -1,5 +1,8 @@
+# Rotas HTTP de dashboard de medidas disciplinares.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.dashboard_medidas_disciplinares import (
     DisciplinaryMeasuresDashboardService,
 )

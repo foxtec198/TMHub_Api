@@ -1,5 +1,8 @@
+# Rotas HTTP de ponto 48h.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.ponto48 import Ponto48Service
 
 

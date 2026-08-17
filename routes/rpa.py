@@ -1,4 +1,7 @@
+# Rotas HTTP de automação RPA.
+# Dependências externas.
 from flask import Blueprint, jsonify, request as rq
+# Módulos internos da aplicação.
 from utils.socket import socketio
 
 rpa_bp = Blueprint("RPAs", __name__)

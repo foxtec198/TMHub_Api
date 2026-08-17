@@ -1,5 +1,8 @@
+# Rotas HTTP de agentes de voz do Timo.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.timo_voice_agents import TimoVoiceAgentService
 
 

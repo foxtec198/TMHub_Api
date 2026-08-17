@@ -1,5 +1,8 @@
+# Modelo de dados de filiais.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
@@ -48,6 +51,7 @@ filial_departamentos = db.Table(
 )
 
 
+# Define a entidade Branch persistida no banco de dados.
 class Branch(BaseModel):
     __tablename__ = "filiais"
 

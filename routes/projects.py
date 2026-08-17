@@ -1,4 +1,7 @@
+# Rotas HTTP de projetos.
+# Dependências externas.
 from flask import Blueprint, request as rq
+# Módulos internos da aplicação.
 from services.projetos import ProjectService
 
 project_bp = Blueprint("Projetos", __name__)
@@ -9,6 +12,7 @@ service = ProjectService()
 def dashboard():
     return service.dashboard()
 
+# Encaminha a requisição para o fluxo principal do módulo.
 @project_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
     match rq.method:

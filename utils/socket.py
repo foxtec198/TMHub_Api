@@ -1,6 +1,9 @@
+# Utilitários de eventos Socket.IO.
+# Dependências externas.
 from flask import request
 from flask_socketio import SocketIO, join_room
 
+# Módulos internos da aplicação.
 from utils.token import decode_token
 from models.usuarios import Users
 from utils.db import db
