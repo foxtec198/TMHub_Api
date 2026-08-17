@@ -1,3 +1,5 @@
+# Utilitários de permissões.
+# Módulos internos da aplicação.
 from models.permissoes import UserPermission
 from models.usuarios import Users
 from utils.db import db

@@ -1,9 +1,13 @@
+# Modelo de dados de movimentações de ativos.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade StructureAssetMovement persistida no banco de dados.
 class StructureAssetMovement(BaseModel):
     __tablename__ = "estrutura_ativo_movimentacoes"
     __table_args__ = (

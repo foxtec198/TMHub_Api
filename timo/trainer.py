@@ -1,10 +1,14 @@
+# Recursos do assistente Timo: treinamento do modelo.
+# Biblioteca padrão.
 from pathlib import Path
+# Dependências externas.
 import joblib
 import pandas as pd
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
+# Módulos internos da aplicação.
 from timo.analytics_catalog import ANALYTICS_TRAINING_EXAMPLES
 from timo.model_storage import ensure_trained_model_directory
 from timo.navigation_catalog import NAVIGATION_TRAINING_EXAMPLES

@@ -1,9 +1,13 @@
+# Regras de negócio de chamados.
+# Biblioteca padrão.
 from datetime import datetime, timedelta, timezone
 from secrets import choice
 
+# Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import or_
 
+# Módulos internos da aplicação.
 from models.tc_comentarios import TicketComment
 from models.tc_historico import Ticket
 from models.tc_motivos import TicketReason

@@ -1,4 +1,7 @@
+# Regras de negócio de produtos.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from models.produtos import Product, db
 from utils.safe_route import safe_route
 from utils.check_field import check_field

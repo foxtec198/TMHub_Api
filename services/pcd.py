@@ -1,6 +1,9 @@
+# Regras de negócio de PCD.
+# Dependências externas.
 from flask import jsonify, request as rq
 from openpyxl import load_workbook
 
+# Módulos internos da aplicação.
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees, db

@@ -1,7 +1,10 @@
+# Modelo de dados de medidas disciplinares.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade DisciplinaryMeasure persistida no banco de dados.
 class DisciplinaryMeasure(BaseModel):
     __tablename__ = "medidas_disciplinares"
     __table_args__ = (

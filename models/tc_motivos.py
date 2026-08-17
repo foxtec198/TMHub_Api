@@ -1,7 +1,10 @@
+# Modelo de dados de motivos de chamados.
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade TicketReason persistida no banco de dados.
 class TicketReason(BaseModel):
     __tablename__ = "tc_motivos"
 

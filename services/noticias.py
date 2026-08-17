@@ -1,5 +1,8 @@
+# Regras de negócio de notícias.
+# Dependências externas.
 from flask import jsonify, request
 
+# Módulos internos da aplicação.
 from models.noticias import LoginNews
 from models.usuarios import Users
 from utils.db import db

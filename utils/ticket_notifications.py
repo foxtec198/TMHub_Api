@@ -1,3 +1,5 @@
+# Utilitários de notificações de chamados.
+# Biblioteca padrão.
 import logging
 import smtplib
 from email.message import EmailMessage

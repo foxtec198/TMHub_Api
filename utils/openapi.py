@@ -1,6 +1,9 @@
+# Utilitários de documentação OpenAPI.
+# Biblioteca padrão.
 import inspect
 import re
 
+# Dependências externas.
 from flask import request
 from werkzeug.routing import IntegerConverter, FloatConverter, UUIDConverter
 

@@ -1,4 +1,7 @@
+# Regras de negócio de categorias.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from models.categorias import Category, db
 from utils.safe_route import safe_route
 from utils.check_field import check_field

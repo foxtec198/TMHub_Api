@@ -1,9 +1,13 @@
+# Modelo de dados de tarefas agendadas.
+# Biblioteca padrão.
 from datetime import datetime as dt
 
+# Módulos internos da aplicação.
 from models.base_model import BaseModel
 from utils.db import db
 
 
+# Define a entidade SchedularTask persistida no banco de dados.
 class SchedularTask(BaseModel):
     __tablename__ = "schedular_tarefas"
 
@@ -31,6 +35,7 @@ class SchedularTask(BaseModel):
     __table_args__ = (db.UniqueConstraint("rotina_estrutura_id", "ocorrencia_em", name="uq_schedular_tarefa_ocorrencia"),)
 
 
+# Define a entidade SchedularTaskResponse persistida no banco de dados.
 class SchedularTaskResponse(BaseModel):
     __tablename__ = "schedular_tarefa_respostas"
     __table_args__ = (db.UniqueConstraint("tarefa_id", "checklist_item_id", name="uq_schedular_resposta_item"),)
@@ -43,6 +48,7 @@ class SchedularTaskResponse(BaseModel):
     respondido_em = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
 
 
+# Define a entidade SchedularTaskCollaborator persistida no banco de dados.
 class SchedularTaskCollaborator(BaseModel):
     __tablename__ = "schedular_tarefa_colaboradores"
     __table_args__ = (
@@ -55,6 +61,7 @@ class SchedularTaskCollaborator(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
 
 
+# Define a entidade SchedularTaskHistory persistida no banco de dados.
 class SchedularTaskHistory(BaseModel):
     __tablename__ = "schedular_tarefa_historico"
 
@@ -65,6 +72,7 @@ class SchedularTaskHistory(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now, index=True)
 
 
+# Define a entidade SchedularTaskGeolocation persistida no banco de dados.
 class SchedularTaskGeolocation(BaseModel):
     __tablename__ = "schedular_tarefa_geolocalizacoes"
 
@@ -93,6 +101,7 @@ class SchedularTaskGeolocation(BaseModel):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
 
 
+# Define a entidade SchedularTaskEvidence persistida no banco de dados.
 class SchedularTaskEvidence(BaseModel):
     __tablename__ = "schedular_tarefa_evidencias"
 

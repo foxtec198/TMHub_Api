@@ -1,13 +1,20 @@
+# Regras de negócio de admissões.
+# Dependências externas.
 from flask import jsonify, request as rq
+# Módulos internos da aplicação.
 from utils.safe_route import safe_route
 from utils.check_field import check_field
+# Biblioteca padrão.
 from datetime import date, datetime as dt, time
 import re
+# Dependências externas.
 from sqlalchemy import String, cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
+# Biblioteca padrão.
 from zoneinfo import ZoneInfo
 
+# Módulos internos da aplicação.
 from models.colaboradores import Employees
 from models.cargos import Cargos
 from models.centros_de_custo import CostCenters

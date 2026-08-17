@@ -1,5 +1,8 @@
+# Rotas HTTP de medidas disciplinares.
+# Dependências externas.
 from flask import Blueprint
 
+# Módulos internos da aplicação.
 from services.medidas_disciplinares import DisciplinaryMeasureService
 
 
@@ -7,6 +10,7 @@ disciplinary_measures_bp = Blueprint("Controle de Medidas Disciplinares", __name
 service = DisciplinaryMeasureService()
 
 
+# Encaminha a requisição para o fluxo principal do módulo.
 @disciplinary_measures_bp.get("")
 def root():
     return service.read()

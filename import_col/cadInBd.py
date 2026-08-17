@@ -1,3 +1,4 @@
+# Rotinas de importação de colaboradores: persistência da importação.
 r"""Sincroniza centros de custo e colaboradores vindos do arquivo ``cols``.
 
 A matricula e a chave primaria de colaboradores. Quando uma matricula aparece
@@ -8,12 +9,14 @@ Uso:
     venv\Scripts\python.exe import_col\cadInBd.py --centros
 """
 
+# Biblioteca padrão.
 from argparse import ArgumentParser
 from datetime import date, datetime
 from os import getenv
 from re import fullmatch, sub
 from unicodedata import combining, normalize
 
+# Dependências externas.
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
