@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from secrets import choice
 
 from flask import jsonify, request
 from sqlalchemy import or_
@@ -21,6 +22,25 @@ OPEN_STATUSES = {"ABERTO", "EM_ANDAMENTO", "ATRASADO"}
 FINAL_STATUSES = {"RESOLVIDO", "FECHADO", "CANCELADO"}
 VALID_STATUSES = OPEN_STATUSES | FINAL_STATUSES
 SLA = timedelta(days=1)
+TIMO_RESOLUTION_ORIGIN = "timo:ticket-resolution"
+TIMO_USER = {
+    "id": None,
+    "nome": "Timo Bot",
+    "email": None,
+    "avatar_type": "timo",
+}
+TIMO_RESOLUTION_MESSAGES = (
+    "Gotcha! Seu chamado foi atendido e finalizado com sucesso!\nMuito obrigado por participar de nosso projeto! ❤️🚀",
+    "Tudo certo por aqui! Seu chamado foi concluído com sucesso.\nObrigado por construir o TM Hub com a gente! ✨",
+    "Missão cumprida! A tratativa deste chamado foi finalizada.\nConte sempre com a gente. 🤖💚",
+    "Chamado resolvido! Espero que agora esteja tudo fluindo por aí.\nObrigado pelo aviso e pela parceria! 🚀",
+    "Prontinho! Finalizamos o atendimento deste chamado com sucesso.\nSeu feedback ajuda o TM Hub a evoluir. 💚",
+    "Boas notícias: a solicitação foi atendida e encerrada!\nMuito obrigado por fazer parte do projeto. ✨",
+    "Atendimento concluído com sucesso!\nSe precisar de algo mais, é só abrir um novo chamado. 🤝",
+    "Tudo resolvido! Este chamado já recebeu a tratativa necessária.\nObrigado pela confiança no TM Hub. 💚",
+    "Fechamos por aqui com sucesso!\nAgradecemos por registrar sua solicitação e ajudar a melhorar a operação. 🚀",
+    "Chamado finalizado! Espero que a solução deixe seu dia um pouco mais leve.\nObrigado por estar com a gente. ✨",
+)
 
 
 def _now():
@@ -30,7 +50,12 @@ def _now():
 def _serialize_user(user):
     if not user:
         return None
-    return {"id": user.id, "nome": user.nome, "email": user.email}
+    return {
+        "id": user.id,
+        "nome": user.nome,
+        "email": user.email,
+        "foto_perfil": user.foto_perfil,
+    }
 
 
 def _serialize_reason(reason):
@@ -45,7 +70,8 @@ def _serialize_branch(branch):
     return {"id": branch.id, "nome": branch.nome}
 
 
-def _serialize_comment(comment):
+def _serialize_comment(comment, requester_id=None):
+    is_timo = comment.descricao_origem == TIMO_RESOLUTION_ORIGIN
     return {
         "id": comment.id,
         "title": comment.titulo,
@@ -53,7 +79,16 @@ def _serialize_comment(comment):
         "description_origin": comment.descricao_origem,
         "file": comment.arquivo,
         "status": comment.status,
-        "created_by": _serialize_user(comment.criador),
+        "created_by": (
+            _serialize_user(comment.criador)
+            if is_timo and comment.criador
+            else TIMO_USER if is_timo else _serialize_user(comment.criador)
+        ),
+        "is_requester": bool(
+            not is_timo
+            and requester_id is not None
+            and comment.created_by == requester_id
+        ),
         "created_at": comment.created_at.isoformat() if comment.created_at else None,
         "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
         "read_at": comment.read_at.isoformat() if comment.read_at else None,
@@ -90,7 +125,10 @@ def _serialize_ticket(ticket, include_comments=False):
         "overdue": ticket.status == "ATRASADO",
     }
     if include_comments:
-        payload["comments"] = [_serialize_comment(item) for item in ticket.comentarios]
+        payload["comments"] = [
+            _serialize_comment(item, ticket.created_by)
+            for item in ticket.comentarios
+        ]
     return payload
 
 
@@ -171,6 +209,29 @@ class TicketService:
                 ]
             ),
         )
+
+    @staticmethod
+    def _add_timo_resolution_message(ticket):
+        """Registra uma única despedida do Timo quando o chamado é resolvido."""
+        already_sent = TicketComment.query.filter_by(
+            ticket_id=ticket.id,
+            descricao_origem=TIMO_RESOLUTION_ORIGIN,
+        ).first()
+        if already_sent:
+            return None
+
+        timo_user = Users.query.filter(
+            db.func.lower(Users.nome) == "timo bot"
+        ).first()
+        comment = TicketComment(
+            ticket_id=ticket.id,
+            descricao=choice(TIMO_RESOLUTION_MESSAGES),
+            descricao_origem=TIMO_RESOLUTION_ORIGIN,
+            status="ENVIADO",
+            created_by=timo_user.id if timo_user else None,
+        )
+        db.session.add(comment)
+        return comment
 
     @staticmethod
     def _refresh_overdue():
@@ -358,6 +419,7 @@ class TicketService:
             status = str(body.get("status") or "").strip().upper()
             if status not in VALID_STATUSES:
                 return jsonify("Status de chamado inválido."), 400
+            was_resolved = ticket.status == "RESOLVIDO"
             ticket.status = status
             if status in FINAL_STATUSES:
                 ticket.resolved_at = _now()
@@ -365,6 +427,8 @@ class TicketService:
             else:
                 ticket.resolved_at = None
                 ticket.resolved_by = None
+            if status == "RESOLVIDO" and not was_resolved:
+                self._add_timo_resolution_message(ticket)
             changes.append(f"Status alterado para {status}")
         if not changes:
             return jsonify("Nenhuma alteração válida foi informada."), 400
@@ -372,7 +436,7 @@ class TicketService:
         db.session.commit()
         self._notify(ticket, "Chamado atualizado", ". ".join(changes) + ".")
         socketio.emit("ticket_update", {"action": "updated", "id": ticket.id, "status": ticket.status})
-        return jsonify(_serialize_ticket(ticket))
+        return jsonify(_serialize_ticket(ticket, include_comments=True))
 
     @safe_route
     def add_comment(self, ticket_id, token_data):
@@ -399,7 +463,7 @@ class TicketService:
         db.session.commit()
         self._notify(ticket, "Novo comentário", description)
         socketio.emit("ticket_update", {"action": "commented", "id": ticket.id, "comment_id": comment.id})
-        return jsonify(_serialize_comment(comment)), 201
+        return jsonify(_serialize_comment(comment, ticket.created_by)), 201
 
     @safe_route
     def test_email(self, token_data):

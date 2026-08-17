@@ -1,9 +1,13 @@
-from datetime import datetime as dt, timedelta
+from datetime import date, datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from unicodedata import normalize
 from zoneinfo import ZoneInfo
 
 from dateutil import relativedelta
-from flask import jsonify, request
+from flask import jsonify, request, send_file
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import String, case, cast, or_, extract
 from sqlalchemy.orm import aliased
 
@@ -22,15 +26,35 @@ from utils.safe_route import safe_route
 from utils.socket import socketio
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
-JUSTIFIED_REASON_TERMS = ("ATESTADO", "AFASTAMENTO", "DECLARAÇÃO", "DECLARAÃ‡ÃƒO")
-NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FÉRIAS", "FERIAS", "POSTO VAGO")
+NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO")
+DECLARATION_PARTIAL_HOURS = Decimal("4")
 
 
 class AbsenceControlService:
     @staticmethod
-    def _requires_document_deadline(reason):
-        normalized = str(reason or "").strip().upper()
-        return "ATESTADO" in normalized or "DECLARA" in normalized
+    def _excel_datetime(value):
+        """Converte datetimes com fuso para o formato aceito pelo Excel."""
+        if isinstance(value, dt) and value.tzinfo is not None:
+            return value.astimezone(SAO_PAULO).replace(tzinfo=None)
+        return value
+
+    @staticmethod
+    def _normalized_reason(reason):
+        raw = str(reason or "").strip()
+        return "".join(
+            character
+            for character in normalize("NFD", raw)
+            if ord(character) < 0x300 or ord(character) > 0x36F
+        ).upper()
+
+    @classmethod
+    def _requires_document_deadline(cls, reason):
+        normalized = cls._normalized_reason(reason)
+        return "ATESTADO" in normalized or "DECLARACAO" in normalized
+
+    @classmethod
+    def _is_declaration(cls, reason):
+        return "DECLARACAO" in cls._normalized_reason(reason)
     
     @staticmethod
     def _is_historical(value):
@@ -55,18 +79,18 @@ class AbsenceControlService:
         user = db.session.get(Users, (token_data or {}).get("id"))
         return bool(user and user.gerencia_faltas)
 
-    @staticmethod
-    def _initial_classification(reason):
-        normalized = str(reason or "").strip().upper()
+    @classmethod
+    def _initial_classification(cls, reason):
+        normalized = cls._normalized_reason(reason)
         if normalized == "INJUSTIFICADA":
             return "injustificada"
-        if any(term in normalized for term in JUSTIFIED_REASON_TERMS):
+        if "ATESTADO" in normalized or "AFASTAMENTO" in normalized or "DECLARACAO" in normalized:
             return "justificada"
         return "em_analise"
 
-    @staticmethod
-    def _is_absence_reason(reason):
-        normalized = str(reason or "").strip().upper()
+    @classmethod
+    def _is_absence_reason(cls, reason):
+        normalized = cls._normalized_reason(reason)
         return not any(term in normalized for term in NON_ABSENCE_REASON_TERMS)
 
     @staticmethod
@@ -105,8 +129,13 @@ class AbsenceControlService:
         absence.centro_custo_id = req.cc
         absence.supervisor_id = req.supervisor_id
         absence.motivo = req.motivo
-        if not absence.tipo_ausencia:
+        if cls._is_declaration(req.motivo):
+            absence.tipo_ausencia = "parcial"
+            if absence.quantidade_horas is None:
+                absence.quantidade_horas = DECLARATION_PARTIAL_HOURS
+        else:
             absence.tipo_ausencia = "integral"
+            absence.quantidade_horas = None
         absence.data_falta = req.created_at
         if is_new and req.obs:
             absence.observacao = req.obs
@@ -449,6 +478,219 @@ class AbsenceControlService:
             "emitted_at": dt.now(SAO_PAULO).isoformat(),
         })
         return jsonify("Registro de falta atualizado."), 200
+
+    @safe_route
+    def export(self, token_data):
+        # A exportação usa a mesma permissão de visualização da tela principal.
+        if not has_permission(token_data, "controle_faltas", "view"):
+            return jsonify("Você não possui acesso ao Controle de Faltas."), 403
+
+        # Atualiza classificações vencidas antes de consultar os registros.
+        self._expire_certificates()
+        try:
+            start = dt.fromisoformat(request.args["inicio"]) if request.args.get("inicio") else None
+            end = dt.fromisoformat(request.args["fim"]) if request.args.get("fim") else None
+        except ValueError:
+            return jsonify("Período inválido."), 400
+
+        if start and start.tzinfo is None:
+            start = start.replace(tzinfo=SAO_PAULO)
+        if end:
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=SAO_PAULO)
+            end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        # Mantém o usuário que tratou a falta separado dos demais vínculos.
+        Tratador = aliased(Users)
+        query = (
+            db.session.query(
+                AbsenceControl.data_falta,
+                AbsenceControl.motivo,
+                AbsenceControl.tipo_ausencia,
+                AbsenceControl.quantidade_horas,
+                AbsenceControl.prazo_atestado,
+                AbsenceControl.classificacao,
+                AbsenceControl.status,
+                AbsenceControl.observacao,
+                AbsenceControl.tratado_em,
+                db.func.coalesce(Employees.nome, AbsenceControl.colaborador_nome).label("colaborador"),
+                db.func.coalesce(
+                    cast(Employees.matricula, String),
+                    AbsenceControl.colaborador_matricula,
+                ).label("matricula"),
+                CostCenters.local.label("contrato"),
+                CostCenters.departamento,
+                Supervisors.nome.label("supervisor"),
+                Tratador.nome.label("tratado_por"),
+            )
+            .select_from(AbsenceControl)
+            .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
+            .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
+            .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
+            .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
+            .order_by(
+                case((AbsenceControl.status == "pendente", 0), else_=1),
+                AbsenceControl.prazo_atestado.asc().nullslast(),
+                AbsenceControl.data_falta.desc(),
+            )
+        )
+        if start:
+            query = query.filter(AbsenceControl.data_falta >= start)
+        if end:
+            query = query.filter(AbsenceControl.data_falta <= end)
+        rows = apply_cost_center_scope(query, AbsenceControl.centro_custo_id, token_data).all()
+
+        # Aceita filtros repetidos ou valores separados por vírgula.
+        def selected_values(name):
+            return {
+                value.strip()
+                for raw in request.args.getlist(name)
+                for value in str(raw).split(",")
+                if value.strip() and value.strip() != "__all__"
+            }
+
+        departments = selected_values("departamento")
+        supervisors = selected_values("supervisor")
+        reasons = selected_values("motivo")
+        contracts = selected_values("contrato")
+        collaborators = selected_values("colaborador")
+        statuses = selected_values("status")
+        classifications = selected_values("classificacao")
+        rows = [
+            row for row in rows
+            if (not departments or str(row.departamento) in departments)
+            and (not supervisors or row.supervisor in supervisors)
+            and (not reasons or row.motivo in reasons)
+            and (not contracts or row.contrato in contracts)
+            and (not collaborators or row.colaborador in collaborators)
+            and (not statuses or row.status in statuses)
+            and (not classifications or row.classificacao in classifications)
+        ]
+
+        # Os cartões do topo refletem apenas as linhas filtradas para exportação.
+        summary = {
+            "total": len(rows),
+            "pendentes": sum(row.status == "pendente" for row in rows),
+            "tratadas": sum(row.status == "tratada" for row in rows),
+            "justificadas": sum(row.classificacao == "justificada" for row in rows),
+            "injustificadas": sum(row.classificacao == "injustificada" for row in rows),
+            "horas": sum(
+                float(row.quantidade_horas or (8 if row.tipo_ausencia == "integral" else 0))
+                for row in rows
+            ),
+        }
+
+        # Cria uma planilha independente, sem grade visual, como a de Glosas.
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Controle de Faltas"
+        sheet.sheet_view.showGridLines = False
+        green, dark, light, red, amber, white = (
+            "20A65A", "173925", "EAF6EF", "D64545", "D99000", "FFFFFF"
+        )
+        thin = Side(style="thin", color="DDE7E1")
+
+        sheet.merge_cells("A1:M2")
+        title = sheet["A1"]
+        title.value = "CONTROLE DE FALTAS"
+        title.font = Font(size=20, bold=True, color=white)
+        title.fill = PatternFill("solid", fgColor=dark)
+        title.alignment = Alignment(vertical="center", horizontal="left")
+
+        # Exibe os indicadores principais antes da tabela detalhada.
+        cards = [
+            ("REGISTROS", summary["total"], dark),
+            ("PENDENTES", summary["pendentes"], amber),
+            ("TRATADAS", summary["tratadas"], green),
+            ("JUSTIFICADAS", summary["justificadas"], "2E8B57"),
+            ("INJUSTIFICADAS", summary["injustificadas"], red),
+            ("HORAS AFASTADAS", summary["horas"], dark),
+        ]
+        for (label, value, color), start_column in zip(cards, (1, 3, 5, 7, 9, 12)):
+            end_column = start_column + 1
+            sheet.merge_cells(start_row=4, start_column=start_column, end_row=4, end_column=end_column)
+            sheet.merge_cells(start_row=5, start_column=start_column, end_row=6, end_column=end_column)
+            for row in range(4, 7):
+                for column in range(start_column, end_column + 1):
+                    cell = sheet.cell(row, column)
+                    cell.fill = PatternFill("solid", fgColor=light)
+                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            label_cell = sheet.cell(4, start_column, label)
+            value_cell = sheet.cell(5, start_column, value)
+            label_cell.font = Font(size=9, bold=True, color=color)
+            value_cell.font = Font(size=14, bold=True, color=dark)
+            label_cell.alignment = value_cell.alignment = Alignment(
+                horizontal="center", vertical="center"
+            )
+
+        # As colunas priorizam identificação, classificação e andamento da tratativa.
+        headers = [
+            "Data da falta", "Colaborador", "Matrícula", "Departamento", "Contrato",
+            "Supervisor", "Motivo", "Tipo de ausência", "Horas", "Classificação",
+            "Status", "Prazo do documento", "Observação",
+        ]
+        header_row = 8
+        for column, label in enumerate(headers, 1):
+            cell = sheet.cell(header_row, column, label)
+            cell.font = Font(bold=True, color=white)
+            cell.fill = PatternFill("solid", fgColor=dark)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        # Traduz valores persistidos para os rótulos exibidos ao usuário.
+        classification_labels = {
+            "em_analise": "Em análise",
+            "justificada": "Justificada",
+            "injustificada": "Injustificada",
+        }
+        status_labels = {"pendente": "Pendente", "tratada": "Tratada"}
+        type_labels = {"integral": "Integral", "parcial": "Parcial"}
+        for row_index, row in enumerate(rows, header_row + 1):
+            hours = float(row.quantidade_horas or (8 if row.tipo_ausencia == "integral" else 0))
+            values = [
+                self._excel_datetime(row.data_falta),
+                row.colaborador,
+                row.matricula,
+                row.departamento,
+                row.contrato,
+                row.supervisor,
+                row.motivo,
+                type_labels.get(row.tipo_ausencia, row.tipo_ausencia),
+                hours,
+                classification_labels.get(row.classificacao, row.classificacao),
+                status_labels.get(row.status, row.status),
+                self._excel_datetime(row.prazo_atestado),
+                row.observacao,
+            ]
+            for column, value in enumerate(values, 1):
+                cell = sheet.cell(row_index, column, value)
+                cell.fill = PatternFill("solid", fgColor="FFFFFF" if row_index % 2 else "F5F9F7")
+                cell.border = Border(bottom=thin)
+                cell.alignment = Alignment(vertical="center", wrap_text=column == 13)
+            for column in (1, 12):
+                sheet.cell(row_index, column).number_format = "dd/mm/yyyy hh:mm"
+            sheet.cell(row_index, 9).number_format = "0.00"
+
+        # Mantém o cabeçalho visível e permite filtrar qualquer coluna da tabela.
+        sheet.freeze_panes = "A9"
+        sheet.auto_filter.ref = f"A8:M{max(header_row, header_row + len(rows))}"
+        widths = [18, 34, 14, 15, 40, 28, 24, 18, 12, 18, 14, 21, 48]
+        for index, width in enumerate(widths, 1):
+            sheet.column_dimensions[chr(64 + index)].width = width
+        sheet.row_dimensions[1].height = 25
+        sheet.row_dimensions[5].height = 24
+        sheet.row_dimensions[8].height = 32
+
+        # Mantém o arquivo em memória para enviá-lo diretamente na resposta HTTP.
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f"controle_faltas_{date.today().isoformat()}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @safe_route
     def dashboard(self, token_data):
