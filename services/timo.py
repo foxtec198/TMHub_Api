@@ -12,7 +12,7 @@ from sqlalchemy import func, or_
 
 # Módulos internos da aplicação.
 from models.admissao import Vacancy
-from models.centros_de_custo import CostCenters
+from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.rp_historico import History
@@ -383,12 +383,16 @@ class TimoCommandService:
         )
         query = (
             db.session.query(
-                CostCenters.id,
-                CostCenters.local,
-                CostCenters.capacidade_pessoas,
-                func.coalesce(active_by_center.c.ativos, 0).label("ativos"),
+                CostCenters.departamento.label("departamento"),
+                DepartmentConfiguration.capacidade_pessoas,
+                func.coalesce(func.sum(active_by_center.c.ativos), 0).label("ativos"),
             )
             .outerjoin(active_by_center, active_by_center.c.centro_id == CostCenters.id)
+            .outerjoin(
+                DepartmentConfiguration,
+                DepartmentConfiguration.departamento == CostCenters.departamento,
+            )
+            .group_by(CostCenters.departamento, DepartmentConfiguration.capacidade_pessoas)
         )
         return apply_cost_center_scope(query, CostCenters.id, token_data).all()
 
@@ -402,7 +406,7 @@ class TimoCommandService:
         excess = sum(max(0, int(row.ativos or 0) - int(row.capacidade_pessoas)) for row in planned)
         critical = sorted(
             (
-                (row.local or f"Centro {row.id}", int(row.capacidade_pessoas) - int(row.ativos or 0))
+                (f"DPTO. {row.departamento}", int(row.capacidade_pessoas) - int(row.ativos or 0))
                 for row in planned
                 if int(row.capacidade_pessoas) > int(row.ativos or 0)
             ),

@@ -29,6 +29,7 @@ from routes.estrutura import structure_bp
 from routes.importacao_colaboradores import collaborator_import_bp
 from routes.updates import updates_bp
 from routes.dashboard_pcd import dashboard_pcd_bp
+from routes.dashboard_ql import dashboard_ql_bp
 from routes.schedular import schedular_bp
 from routes.dashboard_rescisoes import termination_dashboard_bp
 from routes.tm_ops import tm_ops_bp
@@ -81,6 +82,7 @@ blueprints = {
 
     #Dashboards PCD
     dashboard_pcd_bp: "/dash/pcd",
+    dashboard_ql_bp: "/dash/ql",
     schedular_bp: "/schedular",
     tm_ops_bp: "/tm-ops",
     timo_bp: "/timo",

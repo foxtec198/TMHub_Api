@@ -19,6 +19,7 @@ from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
 from services.tickets import TicketService
 from services.avaliacoes_experiencia import ExperienceEvaluationService
+from services.dashboard_ql import QLDashboardService
 
 load_dotenv()  # Carrega o dotenv
 
@@ -88,6 +89,40 @@ with app.app_context():
             }
             if "timo_ativo" not in refreshed_columns:
                 raise
+
+    department_configuration_tables = set(inspect(db.engine).get_table_names())
+    if "configuracoes_departamentos" in department_configuration_tables:
+        department_columns = {
+            column["name"]
+            for column in inspect(db.engine).get_columns("configuracoes_departamentos")
+        }
+        if "capacidade_pessoas" not in department_columns:
+            # A meta passou a pertencer ao departamento. Mantemos a coluna
+            # legada nos centros e aproveitamos sua soma como ponto de partida.
+            try:
+                with db.engine.begin() as connection:
+                    connection.execute(text(
+                        "ALTER TABLE configuracoes_departamentos "
+                        "ADD COLUMN capacidade_pessoas INTEGER"
+                    ))
+                    connection.execute(text(
+                        "INSERT INTO configuracoes_departamentos "
+                        "(departamento, ativo, capacidade_pessoas) "
+                        "SELECT departamento, TRUE, SUM(capacidade_pessoas)::INTEGER "
+                        "FROM centro_de_custo "
+                        "WHERE departamento IS NOT NULL AND capacidade_pessoas IS NOT NULL "
+                        "GROUP BY departamento "
+                        "ON CONFLICT (departamento) DO UPDATE SET "
+                        "capacidade_pessoas = EXCLUDED.capacidade_pessoas "
+                        "WHERE configuracoes_departamentos.capacidade_pessoas IS NULL"
+                    ))
+            except SQLAlchemyError:
+                refreshed_columns = {
+                    column["name"]
+                    for column in inspect(db.engine).get_columns("configuracoes_departamentos")
+                }
+                if "capacidade_pessoas" not in refreshed_columns:
+                    raise
 
     tables = set(inspect(db.engine).get_table_names())
     if "timo_configuracoes" in tables:
@@ -178,6 +213,7 @@ def ticket_sla_monitor():
 
 socketio.start_background_task(ticket_sla_monitor)
 
+
 def experience_evaluation_monitor():
     """Abre tarefas de experiência e marca atrasos sem depender da interface."""
     while True:
@@ -190,6 +226,20 @@ def experience_evaluation_monitor():
 
 
 socketio.start_background_task(experience_evaluation_monitor)
+
+
+def ql_snapshot_monitor():
+    """Mantém a fotografia do dia atual até o fechamento do dia útil."""
+    while True:
+        try:
+            with app.app_context():
+                QLDashboardService.capture_daily()
+        except Exception:
+            app.logger.exception("Falha ao registrar histórico diário de QL")
+        socketio.sleep(900)
+
+
+socketio.start_background_task(ql_snapshot_monitor)
 
 @app.route("/")
 @app.route("/docs")

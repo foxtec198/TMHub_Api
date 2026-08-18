@@ -15,18 +15,20 @@ from flask import current_app, jsonify, request
 from import_col.cadInBd import (
     create_cost_centers,
     create_employees,
+    ensure_companies,
     ensure_positions,
     latest_employees,
     link_supervisors_to_employees,
 )
 from import_col.json_loader import prepare_uploaded_json
+from services.employee_spreadsheet_parser import parse_employee_spreadsheet
 from utils.db import db
 from utils.filial_scope import is_admin
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
 
-MAX_JSON_SIZE = 60 * 1024 * 1024
+MAX_IMPORT_SIZE = 100 * 1024 * 1024
 MAX_CHUNK_SIZE = 768 * 1024
 JOB_TTL_SECONDS = 60 * 60
 UPLOAD_ROOT = Path(tempfile.gettempdir()) / "tmhub-importacao-colaboradores"
@@ -104,6 +106,7 @@ def _create_processing_job(employees, invalid, duplicates, job_id=None, user_id=
             "percentual": 0,
             "registros_invalidos": len(invalid),
             "duplicidades": duplicates,
+            "empresas": sorted({str(item.get("empresa_nome") or "COSTA OESTE") for item in employees}),
             "user_id": current.get("user_id", user_id),
             "created_at": current.get("created_at", now),
             "updated_at": now,
@@ -123,6 +126,8 @@ def _run_import(app, job_id, employees, invalid, duplicates):
         try:
             _update_job(job_id, status="processing", phase="cargos")
             with db.engine.begin() as connection:
+                _, companies_created = ensure_companies(connection, employees)
+                _update_job(job_id, empresas_criadas=companies_created)
                 positions, positions_created = ensure_positions(connection, employees)
                 _update_job(job_id, phase="centros", cargos_criados=positions_created)
                 centers_created, centers_updated = create_cost_centers(connection, employees)
@@ -136,6 +141,8 @@ def _run_import(app, job_id, employees, invalid, duplicates):
                 total = len(employees)
 
                 def progress(processed):
+                    if processed % 100 and processed != total:
+                        return
                     _update_job(
                         job_id,
                         processados=processed,
@@ -184,6 +191,19 @@ def _run_import(app, job_id, employees, invalid, duplicates):
             )
 
 
+def _prepare_import_file(file_path, filename, centro_forcado=None):
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".json":
+        with Path(file_path).open("r", encoding="utf-8-sig") as stream:
+            payload = json.load(stream)
+        return latest_employees(prepare_uploaded_json(payload))
+    if suffix in {".xls", ".xlsx"}:
+        parsed = parse_employee_spreadsheet(file_path, filename, centro_forcado=centro_forcado)
+        employees, dedupe_errors, duplicates = latest_employees(parsed["employees"])
+        return employees, [*parsed["invalid"], *dedupe_errors], duplicates
+    raise ValueError("Envie o relatório no formato .json, .xls ou .xlsx.")
+
+
 class CollaboratorImportService:
     @safe_route
     def create(self, token_data):
@@ -191,20 +211,28 @@ class CollaboratorImportService:
             return jsonify("Apenas administradores podem importar colaboradores."), 403
 
         uploaded = request.files.get("file")
-        if not uploaded or not uploaded.filename.lower().endswith(".json"):
-            return jsonify("Envie o relatório no formato .json."), 400
-        if request.content_length and request.content_length > MAX_JSON_SIZE:
-            return jsonify("O arquivo JSON deve ter no máximo 60 MB."), 413
+        if not uploaded or Path(uploaded.filename).suffix.lower() not in {".json", ".xls", ".xlsx"}:
+            return jsonify("Envie o relatório no formato .json, .xls ou .xlsx."), 400
+        if request.content_length and request.content_length > MAX_IMPORT_SIZE:
+            return jsonify("O arquivo deve ter no máximo 100 MB."), 413
 
         try:
-            payload = json.load(uploaded.stream)
-            employees, invalid, duplicates = latest_employees(
-                prepare_uploaded_json(payload)
-            )
+            suffix = Path(uploaded.filename).suffix.lower()
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
+                temporary.write(uploaded.read())
+                temporary_path = Path(temporary.name)
+            try:
+                employees, invalid, duplicates = _prepare_import_file(
+                    temporary_path,
+                    uploaded.filename,
+                    request.form.get("centro_forcado"),
+                )
+            finally:
+                temporary_path.unlink(missing_ok=True)
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
-            return jsonify(f"Não foi possível ler o JSON: {error}"), 400
+            return jsonify(f"Não foi possível ler o arquivo: {error}"), 400
         if not employees:
-            return jsonify("O JSON não contém colaboradores válidos."), 400
+            return jsonify("O arquivo não contém colaboradores válidos."), 400
 
         _cleanup_jobs()
         return jsonify(_create_processing_job(
@@ -222,10 +250,11 @@ class CollaboratorImportService:
         filename = str(data.get("filename") or "")
         size = int(data.get("size") or 0)
         chunks = int(data.get("chunks") or 0)
-        if not filename.lower().endswith(".json"):
-            return jsonify("Envie o relatório no formato .json."), 400
-        if size <= 0 or size > MAX_JSON_SIZE:
-            return jsonify("O arquivo JSON deve ter no máximo 60 MB."), 413
+        centro_forcado = data.get("centro_forcado")
+        if Path(filename).suffix.lower() not in {".json", ".xls", ".xlsx"}:
+            return jsonify("Envie o relatório no formato .json, .xls ou .xlsx."), 400
+        if size <= 0 or size > MAX_IMPORT_SIZE:
+            return jsonify("O arquivo deve ter no máximo 100 MB."), 413
         if chunks <= 0:
             return jsonify("Quantidade de partes inválida."), 400
 
@@ -239,6 +268,7 @@ class CollaboratorImportService:
                 "status": "uploading",
                 "phase": "upload",
                 "filename": filename,
+                "centro_forcado": centro_forcado,
                 "file_size": size,
                 "chunks": chunks,
                 "chunks_recebidos": [],
@@ -292,24 +322,25 @@ class CollaboratorImportService:
             return jsonify("Ainda existem partes do arquivo pendentes."), 409
 
         upload_dir = UPLOAD_ROOT / job_id
-        assembled_path = upload_dir / "arquivo.json"
+        suffix = Path(job["filename"]).suffix.lower()
+        assembled_path = upload_dir / f"arquivo{suffix}"
         try:
             with assembled_path.open("wb") as assembled:
                 for index in range(job["chunks"]):
                     assembled.write((upload_dir / f"{index:06d}.part").read_bytes())
             if assembled_path.stat().st_size != job["file_size"]:
                 return jsonify("O arquivo recebido está incompleto."), 409
-            with assembled_path.open("r", encoding="utf-8-sig") as stream:
-                payload = json.load(stream)
-            employees, invalid, duplicates = latest_employees(
-                prepare_uploaded_json(payload)
+            employees, invalid, duplicates = _prepare_import_file(
+                assembled_path,
+                job["filename"],
+                job.get("centro_forcado"),
             )
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
-            return jsonify(f"Não foi possível ler o JSON: {error}"), 400
+            return jsonify(f"Não foi possível ler o arquivo: {error}"), 400
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)
         if not employees:
-            return jsonify("O JSON não contém colaboradores válidos."), 400
+            return jsonify("O arquivo não contém colaboradores válidos."), 400
 
         return jsonify(
             _create_processing_job(

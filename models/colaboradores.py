@@ -9,10 +9,12 @@ from datetime import datetime as dt
 class Employees(BaseModel):
     __tablename__ = "colaboradores"
 
-    # A matricula e a identidade canonica do colaborador. O banco possui uma
-    # constraint que garante que os dois campos continuem iguais.
-    id = db.Column(db.Integer, primary_key=True, autoincrement=False)
-    matricula = db.Column(db.Integer, nullable=False, unique=True)
+    # O id continua como ponte para os relacionamentos antigos. A matrícula
+    # pode se repetir entre empresas; a identidade de importação é composta
+    # por empresa + matrícula e o uid prepara a troca definitiva de chave.
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    uid = db.Column(db.BigInteger, unique=True, index=True)
+    matricula = db.Column(db.Integer, nullable=False, index=True)
     cpf = db.Column(db.String(20), index=True)
     nome = db.Column(db.String)
     data_admissao = db.Column(db.DateTime, default=dt.now())
@@ -21,6 +23,7 @@ class Employees(BaseModel):
     # A coluna ja e preenchida pela importacao de colaboradores e e usada
     # somente como base da provisao no Controle de Rescisoes.
     salario = db.Column(db.Numeric(14, 2))
+    empresa_id = db.Column(db.Integer, db.ForeignKey("empresas.id", ondelete="RESTRICT"), index=True)
 
     # Controle de PCD (Pessoa com Deficiência)
     pcd = db.Column(db.Boolean, nullable=False, default=False)
@@ -34,6 +37,12 @@ class Employees(BaseModel):
             ondelete="SET NULL"
         )
     )
+    centro_uid = db.Column(
+        db.BigInteger,
+        db.ForeignKey("centro_de_custo.uid", ondelete="SET NULL"),
+        index=True,
+    )
+    empresa = db.relationship("Company")
     
     situacao = db.Column(
         db.Integer,
@@ -41,6 +50,10 @@ class Employees(BaseModel):
             "situacoes.id",
             ondelete="SET NULL"
         ),
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("empresa_id", "matricula", name="uq_colaborador_empresa_matricula"),
     )
 
     # Credencial independente para o TM Ops. Estes campos nunca compartilham a
