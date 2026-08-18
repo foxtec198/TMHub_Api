@@ -1,5 +1,8 @@
 ﻿annotated-types==0.7.0
 argon2-cffi==25.1.0
+reportlab==4.4.10
+pypdfium2>=4.30,<5
+Pillow>=10,<13
 anyio==4.14.1
 bidict==0.23.1
 blinker==1.9.0

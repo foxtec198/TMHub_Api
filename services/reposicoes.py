@@ -1,6 +1,4 @@
-# Regras de negócio de reposições.
-# Models
-# Módulos internos da aplicação.
+# Modelos
 from models.centros_de_custo import CostCenters, db
 from models.rp_requisicao import Requisicao
 from models.rp_timeline import Timeline
@@ -13,30 +11,19 @@ from models.reservas_tecnicas import Floaters
 from models.situacoes import Situations
 from models.medidas_disciplinares import DisciplinaryMeasure
 
-# Utils
-# Biblioteca padrão.
+# Utilitários
 from datetime import date, datetime as dt, timedelta
-# Dependências externas.
 from dateutils import relativedelta
 from flask import jsonify, request, send_file
-# Módulos internos da aplicação.
 from utils.socket import socketio
-# Biblioteca padrão.
 from calendar import monthrange
-# Dependências externas.
 from sqlalchemy import and_, case, func, or_
-# Módulos internos da aplicação.
 from utils.check_field import check_field
 from utils.safe_route import safe_route
-# Dependências externas.
 from sqlalchemy.orm import aliased
-# Biblioteca padrão.
 from io import BytesIO
-# Dependências externas.
 from openpyxl import Workbook, load_workbook
-# Biblioteca padrão.
 from zoneinfo import ZoneInfo
-# Módulos internos da aplicação.
 from utils.filial_scope import (
     apply_active_department_scope,
     apply_cost_center_scope,
@@ -75,8 +62,8 @@ class RequestService:
     ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "AFASTAMENTO"]
 
     @staticmethod
-    def _disciplinary_context(employee_id, reason, new_measure_informed):
-        """Retorna somente totais e orientações depois que a requisição foi validada."""
+    def _disciplinary_context(employee_id):
+        """Retorna totais e orientações persistentes para o colaborador selecionado."""
         summary = (
             db.session.query(
                 func.sum(case((DisciplinaryMeasure.tipo == "advertencia", 1), else_=0)).label("advertencias"),
@@ -89,13 +76,25 @@ class RequestService:
             "advertencias": int(summary.advertencias or 0),
             "suspensoes": int(summary.suspensoes or 0),
         }
-        reason_code = "falta_injustificada" if str(reason or "").strip().upper() == "INJUSTIFICADA" else None
         warnings = disciplinary_guidance(
-            reason_code,
+            "falta_injustificada",
             counts["advertencias"],
             counts["suspensoes"],
-        ) if new_measure_informed else []
+        )
         return {"contagens": counts, "avisos": warnings}
+
+    def disciplinary_context(self):
+        """Expõe somente os totais e avisos do colaborador no fluxo público de reposição."""
+        try:
+            body = request.get_json(silent=True) or {}
+            employee_id = int(body.get("colaborador_id"))
+        except (TypeError, ValueError):
+            return jsonify("Colaborador inválido."), 400
+
+        if not db.session.get(Employees, employee_id):
+            return jsonify("Colaborador não encontrado."), 404
+
+        return jsonify(self._disciplinary_context(employee_id)), 200
 
     @staticmethod
     def _parse_datetime(value):
@@ -357,8 +356,6 @@ class RequestService:
 
         disciplinary_context = self._disciplinary_context(
             absent_employee.id,
-            motivo,
-            new_measure_informed=adv,
         )
 
         TimelineService().create_event(
@@ -554,7 +551,7 @@ class RequestService:
             return jsonify({"message": "Planilha fora do padrão.", "errors": [f"Colunas obrigatórias: {', '.join(required)}."]}), 400
 
         indexes = {header: position for position, header in enumerate(headers)}
-        # Cache valid foreign keys once to avoid one database round trip per spreadsheet row.
+        # Armazena chaves estrangeiras válidas para evitar uma consulta por linha da planilha.
         center_ids = {row[0] for row in apply_cost_center_scope(db.session.query(CostCenters.id), CostCenters.id, token_data).all()}
         supervisor_ids = {
             row[0] for row in db.session.query(CostCenters.supervisor_id)
@@ -627,14 +624,14 @@ class RequestService:
             db.session.add(requisition)
             created.append(requisition)
 
-        # Any invalid row cancels the complete batch; partial operational queues are unsafe.
+        # Qualquer linha inválida cancela o lote completo; filas operacionais parciais são inseguras.
         if errors:
             db.session.rollback()
             return jsonify({"message": "A importação foi cancelada; nenhuma requisição foi criada.", "errors": errors}), 400
         if not created:
             return jsonify("A planilha não contém requisições para importar."), 400
 
-        # Flush IDs first so each request and its initial timeline event share one transaction.
+        # Gera os IDs antes para que a requisição e o evento inicial da timeline usem a mesma transação.
         db.session.flush()
         for requisition in created:
             AbsenceControlService.ensure_for_request(requisition)

@@ -34,6 +34,8 @@ PERMISSION_CATALOG = [
     {"key": "dashboard_rescisoes","label": "Dashboard de Rescisões","group": "Dashboards","actions": ["view"],},
     {"key": "tickets", "label": "Chamados", "group": "Operação", "actions": ["view", "create", "edit"]},
     {"key": "dashboard_medidas_disciplinares","label": "Dashboard de Medidas Disciplinares","group": "Dashboards","actions": ["view"],},
+    {"key": "avaliacao_experiencia_supervisor","label": "Avaliações de experiência - Supervisor","group": "Operação","actions": ["view", "edit"],},
+    {"key": "controle_experiencia_rh","label": "Controle de período de experiência - RH","group": "Operação","actions": ["view", "edit"],},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
