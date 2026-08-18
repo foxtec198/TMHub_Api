@@ -59,6 +59,8 @@ def _data_channel(path, method):
         return "configuracoes"
     if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/centro/configuracoes", "/supervisores", "/funcionarios"}:
         return "configuracoes"
+    if path.startswith("/avaliacoes-experiencia"):
+        return "avaliacoes_experiencia"
     return None
 
 
