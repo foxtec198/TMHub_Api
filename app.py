@@ -18,6 +18,7 @@ from utils.permissions import enforce_request_permission
 from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
 from services.tickets import TicketService
+from services.avaliacoes_experiencia import ExperienceEvaluationService
 
 load_dotenv()  # Carrega o dotenv
 
@@ -176,6 +177,19 @@ def ticket_sla_monitor():
 
 
 socketio.start_background_task(ticket_sla_monitor)
+
+def experience_evaluation_monitor():
+    """Abre tarefas de experiência e marca atrasos sem depender da interface."""
+    while True:
+        try:
+            with app.app_context():
+                ExperienceEvaluationService.process_pending_tasks()
+        except Exception:
+            app.logger.exception("Falha ao processar avaliações de experiência")
+        socketio.sleep(60 * 60)
+
+
+socketio.start_background_task(experience_evaluation_monitor)
 
 @app.route("/")
 @app.route("/docs")

@@ -37,6 +37,7 @@ from routes.timo import timo_bp
 from routes.timo_voice_agents import timo_voice_agents_bp
 from routes.tickets import tickets_bp
 from routes.dashboard_medidas_disciplinares import disciplinary_measures_dashboard_bp
+from routes.avaliacoes_experiencia import experience_evaluations_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -88,4 +89,7 @@ blueprints = {
 
     #Medidas Disciplinares
     disciplinary_measures_bp: "/medidas-disciplinares",
+    
+    # Período de experiência
+    experience_evaluations_bp: "/avaliacoes-experiencia",
 }
