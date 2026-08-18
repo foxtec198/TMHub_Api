@@ -21,8 +21,13 @@ class Termination(BaseModel):
     id = db.Column(db.Integer, primary_key=True)
     matricula = db.Column(
         db.Integer,
-        db.ForeignKey("colaboradores.matricula", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+    colaborador_uid = db.Column(
+        db.BigInteger,
+        db.ForeignKey("colaboradores.uid", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     motivo_rescisao = db.Column(db.String(500), nullable=False)

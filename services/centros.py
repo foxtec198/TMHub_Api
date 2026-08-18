@@ -7,6 +7,7 @@ from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.colaboradores import Employees
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
+from utils.socket import socketio
 
 class CostsCenterService():
     @staticmethod
@@ -15,41 +16,33 @@ class CostsCenterService():
             CostCenters.departamento,
             CostCenters.local,
         ).all()
-        department_numbers = sorted({
-            center.departamento for center in centers if center.departamento is not None
-        })
         configured = {
             item.departamento: item
-            for item in DepartmentConfiguration.query.filter(
-                DepartmentConfiguration.departamento.in_(department_numbers)
-            ).all()
-        } if department_numbers else {}
+            for item in DepartmentConfiguration.query.all()
+        }
+        department_numbers = sorted({
+            *(center.departamento for center in centers if center.departamento is not None),
+            *configured.keys(),
+        })
 
-        employee_counts = {
-            center_id: total
-            for center_id, total in (
-                db.session.query(Employees.centro_id, db.func.count(Employees.id))
-                .filter(Employees.centro_id.isnot(None))
-                .group_by(Employees.centro_id)
+        department_counts = {
+            department: total
+            for department, total in (
+                db.session.query(CostCenters.departamento, db.func.count(Employees.id))
+                .outerjoin(Employees, Employees.centro_id == CostCenters.id)
+                .filter(CostCenters.departamento.isnot(None), Employees.situacao == 1)
+                .group_by(CostCenters.departamento)
                 .all()
             )
         }
 
         return {
-            "centros_custo": [
-                {
-                    "id": center.id,
-                    "local": center.local,
-                    "departamento": center.departamento,
-                    "capacidade_pessoas": center.capacidade_pessoas,
-                    "colaboradores_cadastrados": employee_counts.get(center.id, 0),
-                }
-                for center in centers
-            ],
             "departamentos": [
                 {
                     "departamento": department,
                     "ativo": configured.get(department).ativo if department in configured else True,
+                    "capacidade_pessoas": configured.get(department).capacidade_pessoas if department in configured else None,
+                    "colaboradores_cadastrados": department_counts.get(department, 0),
                 }
                 for department in department_numbers
             ],
@@ -85,18 +78,29 @@ class CostsCenterService():
             return jsonify("Apenas administradores podem configurar departamentos e contratos."), 403
 
         body = rq.get_json(silent=True) or {}
-        capacities = body.get("capacidades") or []
+        department_capacities = body.get("capacidades_departamentos") or []
         departments = body.get("departamentos") or []
-        if not isinstance(capacities, list) or not isinstance(departments, list):
+        if not isinstance(department_capacities, list) or not isinstance(departments, list):
             return jsonify("Formato de configuração inválido."), 400
 
-        changed_centers = []
         changed_departments = []
         try:
-            for item in capacities:
+            valid_departments = {
+                value for value, in db.session.query(CostCenters.departamento)
+                .filter(CostCenters.departamento.isnot(None))
+                .distinct()
+                .all()
+            }
+            valid_departments.update(
+                value for value, in db.session.query(DepartmentConfiguration.departamento).all()
+            )
+            changed_by_department = {}
+            for item in department_capacities:
                 if not isinstance(item, dict):
                     raise ValueError
-                center_id = int(item.get("centro_custo_id"))
+                department = int(item.get("departamento"))
+                if department not in valid_departments:
+                    return jsonify("Departamento não encontrado."), 404
                 capacity = item.get("capacidade_pessoas")
                 if capacity in (None, ""):
                     normalized_capacity = None
@@ -104,18 +108,13 @@ class CostsCenterService():
                     normalized_capacity = int(capacity)
                     if normalized_capacity < 0:
                         raise ValueError
-                center = db.session.get(CostCenters, center_id)
-                if not center:
-                    return jsonify("Centro de custo não encontrado."), 404
-                center.capacidade_pessoas = normalized_capacity
-                changed_centers.append(center)
+                configuration = db.session.get(DepartmentConfiguration, department)
+                if not configuration:
+                    configuration = DepartmentConfiguration(departamento=department)
+                    db.session.add(configuration)
+                configuration.capacidade_pessoas = normalized_capacity
+                changed_by_department[department] = configuration
 
-            valid_departments = {
-                value for value, in db.session.query(CostCenters.departamento)
-                .filter(CostCenters.departamento.isnot(None))
-                .distinct()
-                .all()
-            }
             for item in departments:
                 if not isinstance(item, dict):
                     raise ValueError
@@ -127,7 +126,8 @@ class CostsCenterService():
                     configuration = DepartmentConfiguration(departamento=department)
                     db.session.add(configuration)
                 configuration.ativo = bool(item.get("ativo", True))
-                changed_departments.append(configuration)
+                changed_by_department[department] = configuration
+            changed_departments = list(changed_by_department.values())
             db.session.commit()
         except (TypeError, ValueError):
             db.session.rollback()
@@ -137,17 +137,14 @@ class CostsCenterService():
             {
                 "departamento": configuration.departamento,
                 "ativo": configuration.ativo,
+                "capacidade_pessoas": configuration.capacidade_pessoas,
             }
             for configuration in changed_departments
         ]
 
+        if changed_departments:
+            socketio.emit("ql_update", {"action": "planning_updated"})
+
         return jsonify({
-            "centros_custo": [
-                {
-                    "id": center.id,
-                    "capacidade_pessoas": center.capacidade_pessoas,
-                }
-                for center in changed_centers
-            ],
             "departamentos": serialized_departments,
         }), 200
