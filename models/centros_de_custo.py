@@ -2,6 +2,7 @@
 # Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+from models.empresas import Company
 
 # Define a entidade CostCenters persistida no banco de dados.
 class CostCenters(BaseModel):
@@ -29,7 +30,9 @@ class CostCenters(BaseModel):
     )
     valor_diaria_glosa = db.Column(db.Numeric(12, 2), nullable=True)
     filiais = db.relationship("Branch", secondary="filial_centros_custo", back_populates="centros_custo")
-    empresa = db.relationship("Company")
+    # Import explícito evita que o mapper dependa da ordem em que os módulos
+    # são carregados pelo Gunicorn.
+    empresa = db.relationship(Company)
 
     __table_args__ = (
         db.UniqueConstraint("empresa_id", "centro_id", name="uq_centro_empresa_codigo"),

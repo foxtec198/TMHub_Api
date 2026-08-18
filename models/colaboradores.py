@@ -2,6 +2,7 @@
 # Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+from models.empresas import Company
 # Biblioteca padrão.
 from datetime import datetime as dt
 
@@ -42,7 +43,7 @@ class Employees(BaseModel):
         db.ForeignKey("centro_de_custo.uid", ondelete="SET NULL"),
         index=True,
     )
-    empresa = db.relationship("Company")
+    empresa = db.relationship(Company)
     
     situacao = db.Column(
         db.Integer,
