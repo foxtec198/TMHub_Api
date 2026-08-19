@@ -18,6 +18,8 @@ class Users(BaseModel):
     last_login = db.Column(db.DateTime)
     role = db.Column(db.String, default="USER")
     foto_perfil = db.Column(db.Text)
+    # Nome do arquivo privado da assinatura padrão cadastrada para o usuário.
+    assinatura_cadastrada = db.Column(db.Text)
     # Identidade visual. Valores light/dark legados continuam aceitos na API
     # e são migrados pelo frontend para TMHub + modo de luminosidade.
     tema = db.Column(db.String(10), default="tmhub")
