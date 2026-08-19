@@ -78,9 +78,9 @@ EXPERIENCE_SIGNATURE_DIR = Path(
     getenv("EXPERIENCE_SIGNATURE_DIR")
     or Path(__file__).resolve().parents[1] / "storage" / "avaliacoes_experiencia"
 )
-REGISTERED_RH_SIGNATURE_DIR = Path(
-    getenv("REGISTERED_RH_SIGNATURE_DIR")
-    or Path(__file__).resolve().parents[1] / "assets" / "assinaturas_rh"
+REGISTERED_SIGNATURE_DIR = Path(
+    getenv("REGISTERED_SIGNATURE_DIR")
+    or Path(__file__).resolve().parents[1] / "storage" / "assinaturas_cadastradas"
 )
 MAX_EXPERIENCE_SIGNATURE_SIZE = 2 * 1024 * 1024
 SIGNATURE_EXTENSION = ".png"
@@ -380,12 +380,12 @@ class ExperienceEvaluationService:
         return EXPERIENCE_SIGNATURE_DIR / safe_name
 
     @staticmethod
-    def _registered_rh_signature_path(filename):
-        """Resolve a assinatura cadastrada sem aceitar caminhos externos ao diretório privado."""
+    def _registered_signature_path(filename):
+        """Resolve a assinatura cadastrada sem aceitar caminhos externos."""
         safe_name = Path(str(filename or "")).name
         if not safe_name or safe_name != filename or Path(safe_name).suffix.lower() != SIGNATURE_EXTENSION:
             return None
-        return REGISTERED_RH_SIGNATURE_DIR / safe_name
+        return REGISTERED_SIGNATURE_DIR / safe_name
 
     @classmethod
     def _remove_signature_file(cls, filename):
@@ -924,7 +924,7 @@ class ExperienceEvaluationService:
         if evaluation.decisao_rh not in DECISION_LABELS:
             return jsonify("Salve a decisão do RH antes de assinar."), 400
 
-        source = self._registered_rh_signature_path(signer.assinatura_cadastrada)
+        source = self._registered_signature_path(signer.assinatura_cadastrada)
         if not source or not source.is_file():
             return jsonify("A assinatura cadastrada do usuário selecionado não foi encontrada."), 409
         try:
@@ -960,7 +960,7 @@ class ExperienceEvaluationService:
         ).order_by(Users.nome).all()
         options = []
         for user in users:
-            signature_path = self._registered_rh_signature_path(user.assinatura_cadastrada)
+            signature_path = self._registered_signature_path(user.assinatura_cadastrada)
             if signature_path and signature_path.is_file():
                 options.append({"id": user.id, "nome": user.nome})
         return jsonify(options), 200
