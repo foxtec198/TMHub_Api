@@ -4,12 +4,36 @@ from flask import request as rq, jsonify
 # Módulos internos da aplicação.
 from utils.safe_route import safe_route
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
+from models.empresas import Company
 from models.colaboradores import Employees
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
 from utils.socket import socketio
 
 class CostsCenterService():
+    @staticmethod
+    def _serialize_center(center):
+        return {
+            "id": center.id,
+            "uid": center.uid,
+            "numero": center.centro_id,
+            "nome": center.nome,
+            "local": center.local,
+            "departamento": center.departamento,
+            "capacidade_pessoas": center.capacidade_pessoas,
+            "empresa_id": center.empresa_id,
+            "empresa_nome": center.empresa.nome if center.empresa else None,
+        }
+
+    @safe_route
+    def companies(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem consultar empresas."), 403
+        return jsonify([
+            {"id": company.id, "nome": company.nome, "ativa": bool(company.ativa)}
+            for company in Company.query.order_by(Company.ativa.desc(), Company.nome).all()
+        ])
+
     @staticmethod
     def _settings_payload():
         centers = CostCenters.query.order_by(
@@ -53,17 +77,69 @@ class CostsCenterService():
         id = rq.args.get("id")
 
         if id:
-            if not can_access_cost_center(token_data, int(id)):
+            try:
+                center_id = int(id)
+            except (TypeError, ValueError):
+                return jsonify("Identificador de centro de custo inválido."), 400
+            if not can_access_cost_center(token_data, center_id):
                 return jsonify("Você não possui acesso à filial deste centro de custo"), 403
-            cost = CostCenters().query.filter_by(id=id).first()
-            return jsonify(cost), 200 if cost else jsonify("Centro de custo não encontrado"), 404
+            cost = db.session.get(CostCenters, center_id)
+            if not cost:
+                return jsonify("Centro de custo não encontrado."), 404
+            return jsonify(self._serialize_center(cost)), 200
         
         costs_query = CostCenters.query
         costs_query = apply_cost_center_scope(
             costs_query, CostCenters.id, token_data
         )
         costs = costs_query.all()
-        return jsonify([c.to_dict() for c in costs])
+        return jsonify([self._serialize_center(cost) for cost in costs])
+
+    @safe_route
+    def create(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem cadastrar centros de custo."), 403
+
+        body = rq.get_json(silent=True) or {}
+        name = " ".join(str(body.get("nome") or "").strip().split()).upper()
+        try:
+            number = int(body.get("numero"))
+            company_id = int(body.get("empresa_id"))
+        except (TypeError, ValueError):
+            return jsonify("Informe o número e a empresa do centro de custo."), 400
+        if not name:
+            return jsonify("Informe o nome do centro de custo."), 400
+        if number <= 0:
+            return jsonify("O número do centro de custo deve ser maior que zero."), 400
+        capacity = body.get("capacidade_pessoas")
+        try:
+            capacity = None if capacity in (None, "") else int(capacity)
+        except (TypeError, ValueError):
+            return jsonify("A capacidade deve ser um número inteiro igual ou maior que zero."), 400
+        if capacity is not None and capacity < 0:
+            return jsonify("A capacidade deve ser um número inteiro igual ou maior que zero."), 400
+
+        company = db.session.get(Company, company_id)
+        if not company:
+            return jsonify("Empresa não encontrada."), 404
+        if not company.ativa:
+            return jsonify("A empresa selecionada está inativa."), 409
+        if CostCenters.query.filter_by(empresa_id=company.id, centro_id=number).first():
+            return jsonify("Já existe um centro com este número para a empresa selecionada."), 409
+
+        center = CostCenters(
+            empresa_id=company.id,
+            centro_id=number,
+            nome=name,
+            local=name,
+            capacidade_pessoas=capacity,
+        )
+        db.session.add(center)
+        db.session.commit()
+        return jsonify({
+            "message": "Centro de custo cadastrado com sucesso.",
+            "centro": self._serialize_center(center),
+        }), 201
 
     @safe_route
     def settings(self, token_data):

@@ -10,6 +10,11 @@ collaborator_import_bp = Blueprint("Importação de Colaboradores", __name__)
 service = CollaboratorImportService()
 
 
+@collaborator_import_bp.get("/empresas")
+def companies():
+    return service.companies()
+
+
 @collaborator_import_bp.post("")
 def create_import():
     return service.create()
