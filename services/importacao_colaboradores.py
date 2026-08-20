@@ -94,7 +94,16 @@ def _emit_import_outcome(job_id, severity, summary, detail, broadcast_change=Fal
         return
 
 
-def _create_processing_job(employees, invalid, duplicates, company_name, job_id=None, user_id=None):
+def _create_processing_job(
+    employees,
+    invalid,
+    duplicates,
+    company_name,
+    *,
+    sync_catalog=False,
+    job_id=None,
+    user_id=None,
+):
     job_id = job_id or uuid4().hex
     now = time()
     with _jobs_lock:
@@ -111,6 +120,7 @@ def _create_processing_job(employees, invalid, duplicates, company_name, job_id=
             "duplicidades": duplicates,
             "empresas": [company_name],
             "empresa_nome": company_name,
+            "sincronizar_catalogo_centros": bool(sync_catalog),
             "user_id": current.get("user_id", user_id),
             "created_at": current.get("created_at", now),
             "updated_at": now,
@@ -118,14 +128,14 @@ def _create_processing_job(employees, invalid, duplicates, company_name, job_id=
     app = current_app._get_current_object()
     Thread(
         target=_run_import,
-        args=(app, job_id, employees, invalid, duplicates),
+        args=(app, job_id, employees, invalid, duplicates, bool(sync_catalog)),
         daemon=True,
         name=f"importacao-colaboradores-{job_id[:8]}",
     ).start()
     return _job_snapshot(job_id)
 
 
-def _run_import(app, job_id, employees, invalid, duplicates):
+def _run_import(app, job_id, employees, invalid, duplicates, sync_catalog=False):
     with app.app_context():
         try:
             _update_job(job_id, status="processing", phase="cargos")
@@ -134,7 +144,11 @@ def _run_import(app, job_id, employees, invalid, duplicates):
                 _update_job(job_id, empresas_criadas=companies_created)
                 positions, positions_created = ensure_positions(connection, employees)
                 _update_job(job_id, phase="centros", cargos_criados=positions_created)
-                centers_created, centers_updated = create_cost_centers(connection, employees)
+                centers_created, centers_updated = create_cost_centers(
+                    connection,
+                    employees,
+                    sync_catalog=sync_catalog,
+                )
                 _update_job(
                     job_id,
                     phase="colaboradores",
@@ -210,6 +224,10 @@ def _selected_company_name(value):
     return company.nome
 
 
+def _as_bool(value):
+    return str(value or "").strip().lower() in {"1", "true", "sim", "on"}
+
+
 def _prepare_import_file(file_path, filename, company_name, centro_forcado=None):
     suffix = Path(filename).suffix.lower()
     if suffix == ".json":
@@ -268,6 +286,7 @@ class CollaboratorImportService:
             return jsonify("O arquivo deve ter no máximo 100 MB."), 413
         try:
             company_name = _selected_company_name(request.form.get("empresa_nome"))
+            sync_catalog = _as_bool(request.form.get("sincronizar_catalogo_centros"))
         except ValueError as error:
             return jsonify(str(error)), 400
 
@@ -296,6 +315,7 @@ class CollaboratorImportService:
             invalid,
             duplicates,
             company_name,
+            sync_catalog=sync_catalog,
             user_id=token_data.get("id"),
         )), 202
 
@@ -316,6 +336,7 @@ class CollaboratorImportService:
             return jsonify("Quantidade de partes inválida."), 400
         try:
             company_name = _selected_company_name(data.get("empresa_nome"))
+            sync_catalog = _as_bool(data.get("sincronizar_catalogo_centros"))
         except ValueError as error:
             return jsonify(str(error)), 400
 
@@ -331,6 +352,7 @@ class CollaboratorImportService:
                 "filename": filename,
                 "empresa_nome": company_name,
                 "centro_forcado": centro_forcado,
+                "sincronizar_catalogo_centros": sync_catalog,
                 "file_size": size,
                 "chunks": chunks,
                 "chunks_recebidos": [],
@@ -411,6 +433,7 @@ class CollaboratorImportService:
                 invalid,
                 duplicates,
                 job["empresa_nome"],
+                sync_catalog=bool(job.get("sincronizar_catalogo_centros")),
                 job_id=job_id,
                 user_id=token_data.get("id"),
             )

@@ -9,9 +9,6 @@ class CostCenters(BaseModel):
     __tablename__ = "centro_de_custo"
 
     id = db.Column(db.Integer, primary_key=True)
-    # Identidade interna multiempresa. O id atual permanece temporariamente
-    # como código legado até todos os consumidores migrarem para centro_uid.
-    uid = db.Column(db.BigInteger, unique=True, index=True)
     empresa_id = db.Column(db.Integer, db.ForeignKey("empresas.id", ondelete="RESTRICT"), index=True)
     centro_id = db.Column(db.Integer, nullable=True, index=True)
     nome = db.Column(db.String)

@@ -10,11 +10,9 @@ from datetime import datetime as dt
 class Employees(BaseModel):
     __tablename__ = "colaboradores"
 
-    # O id continua como ponte para os relacionamentos antigos. A matrícula
-    # pode se repetir entre empresas; a identidade de importação é composta
-    # por empresa + matrícula e o uid prepara a troca definitiva de chave.
+    # O id mantém os relacionamentos internos atuais. A importação usa a
+    # matrícula em conjunto com a empresa para localizar o colaborador.
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    uid = db.Column(db.BigInteger, unique=True, index=True)
     matricula = db.Column(db.Integer, nullable=False, index=True)
     cpf = db.Column(db.String(20), index=True)
     nome = db.Column(db.String)
@@ -37,11 +35,6 @@ class Employees(BaseModel):
             "centro_de_custo.id",
             ondelete="SET NULL"
         )
-    )
-    centro_uid = db.Column(
-        db.BigInteger,
-        db.ForeignKey("centro_de_custo.uid", ondelete="SET NULL"),
-        index=True,
     )
     empresa = db.relationship(Company)
     

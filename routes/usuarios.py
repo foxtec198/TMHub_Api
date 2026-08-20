@@ -29,6 +29,12 @@ def register_signature(user_id): return service.register_signature(user_id)
 @user_bp.get("/perfil")
 def profile(): return service.profile()
 
+@user_bp.get("/manutencao")
+def maintenance(): return service.maintenance()
+
+@user_bp.patch("/manutencao")
+def update_maintenance(): return service.update_maintenance()
+
 @user_bp.get("/suporte")
 def support_admins(): return service.support_admins()
 

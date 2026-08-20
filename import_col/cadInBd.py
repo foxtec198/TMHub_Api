@@ -119,104 +119,117 @@ def ensure_companies(connection, employees):
 
 
 def validate_cost_center_identities(employees):
-    """Impede que um código reutilizado sobrescreva outro centro da empresa.
+    """Valida a chave operacional de centros usada pela importação diária.
 
-    ``centro_id`` é uma integração externa e só é único dentro da empresa.
-    Logo, receber duas descrições diferentes para a mesma dupla empresa/código
-    é uma inconsistência da origem que precisa ser corrigida antes do commit.
+    A identidade de resolução é ``empresa + centro_id``. Ela permite, por
+    exemplo, que 44000 da Facilities seja Scherer e 44000 da Costa Oeste seja
+    Copel, sem qualquer colisão. O nome do centro é catálogo: não é requisito
+    da carga diária e não pode alterar o cadastro já aprovado.
     """
-    names_by_identity = {}
+    invalid = []
     for item in employees:
         company = item.get("_empresa_id") or normalize_name(item.get("empresa_nome"))
         center_code = item.get("centro_custo_num")
-        center_name = normalize_name(item.get("centro_custo"))
-        if company is None or center_code is None or not center_name:
+        if company is None or center_code in (None, ""):
+            invalid.append(item)
             continue
-        names_by_identity.setdefault((company, int(center_code)), set()).add(center_name)
-
-    conflicts = [
-        (identity, sorted(names))
-        for identity, names in names_by_identity.items()
-        if len(names) > 1
-    ]
-    if not conflicts:
-        return
-
-    preview = "; ".join(
-        f"empresa {company}, centro {code}: {', '.join(names[:2])}"
-        for (company, code), names in conflicts[:5]
-    )
-    raise ValueError(
-        "A planilha possui códigos de centro de custo repetidos com nomes diferentes "
-        f"na mesma empresa ({len(conflicts)} conflito(s)). {preview}. "
-        "Separe o arquivo por empresa ou corrija os códigos antes de importar."
-    )
+        try:
+            int(center_code)
+        except (TypeError, ValueError):
+            invalid.append(item)
+    if invalid:
+        raise ValueError(
+            "Existem colaboradores sem empresa ou centro de custo numérico. "
+            "Corrija o relatório antes de importar."
+        )
 
 
-def create_cost_centers(connection, employees):
+def create_cost_centers(connection, employees, *, sync_catalog=False):
+    """Resolve centros por empresa + código para a importação.
+
+    No modo normal a importação diária **não cria nem altera** centros. No
+    modo ``sync_catalog`` (planilha completa, confirmado pelo administrador),
+    os nomes/localizações informados atualizam o catálogo corporativo antes do
+    vínculo dos colaboradores. Isso impede que relatórios cotidianos mudem
+    nomes de contratos por acidente.
+    """
     validate_cost_center_identities(employees)
-    centers = {}
     requested_centers = {}
+    catalog_entries = {}
     for item in employees:
-        center_id = item.get("centro_custo_num")
-        if center_id is None:
-            continue
-        key = (item["_empresa_id"], int(center_id))
+        key = (item["_empresa_id"], int(item["centro_custo_num"]))
         requested_centers.setdefault(key[0], set()).add(key[1])
-        center_name = str(item.get("centro_custo") or "").strip()
-        # O relatório padrão diário traz o código do centro, mas não o nome.
-        # Nesse caso usamos o cadastro corporativo já sincronizado e nunca
-        # sobrescrevemos local/nome por uma string vazia.
-        if not center_name:
-            continue
-        centers[key] = {
-            "empresa_id": item["_empresa_id"],
-            "centro_id": key[1],
-            "local": center_name,
-            "nome": center_name,
-            "dpto": item.get("departamento_codigo") or 0,
-            "cidade_id": item.get("cidade_id") or None,
-        }
+        center_name = " ".join(str(item.get("centro_custo") or "").split())
+        # Um código isolado (ex.: "44000") não é um nome de catálogo e não
+        # pode substituir um contrato já cadastrado caso a opção seja marcada
+        # por engano. O catálogo exige uma descrição de fato.
+        if sync_catalog and center_name and not fullmatch(r"\d+", center_name):
+            catalog_entries[key] = {
+                "empresa_id": key[0],
+                "centro_id": key[1],
+                "local": center_name,
+                "nome": center_name,
+                "departamento": item.get("departamento_codigo"),
+                "cidade_id": item.get("cidade_id") or None,
+            }
 
-    created = updated = 0
-    statement = text("""
-        INSERT INTO centro_de_custo
-            (empresa_id, centro_id, local, nome, departamento, cidade_id)
-        VALUES (:empresa_id, :centro_id, :local, :nome, :dpto, :cidade_id)
-        ON CONFLICT (empresa_id, centro_id) DO UPDATE
-        SET local = CASE
-                WHEN trim(coalesce(EXCLUDED.local, '')) ~ '^[0-9]+$'
-                    AND trim(coalesce(centro_de_custo.local, '')) <> ''
-                    THEN centro_de_custo.local
-                WHEN EXCLUDED.local IS NULL
-                    THEN centro_de_custo.local
-                ELSE EXCLUDED.local
-            END,
-            nome = COALESCE(EXCLUDED.nome, centro_de_custo.nome),
-            departamento = EXCLUDED.departamento,
-            cidade_id = EXCLUDED.cidade_id
-        RETURNING id, uid, (xmax = 0) AS inserted
-    """)
     resolved_centers = {}
-    for center in tqdm(centers.values(), desc="Sincronizando centros de custo"):
-        result = connection.execute(statement, center).mappings().one()
-        resolved_centers[(center["empresa_id"], center["centro_id"])] = result
-        created += int(result["inserted"])
-        updated += int(not result["inserted"])
-
     for company_id, center_codes in requested_centers.items():
-        if not center_codes:
-            continue
         rows = connection.execute(
             text("""
-                SELECT id, uid, empresa_id, centro_id
+                SELECT id, empresa_id, centro_id, nome, local, departamento, cidade_id
                 FROM centro_de_custo
                 WHERE empresa_id = :empresa_id AND centro_id = ANY(:center_codes)
             """),
             {"empresa_id": company_id, "center_codes": sorted(center_codes)},
         ).mappings()
         for row in rows:
-            resolved_centers[(row["empresa_id"], row["centro_id"])] = row
+            resolved_centers[(row["empresa_id"], row["centro_id"])] = dict(row)
+
+    created = updated = 0
+    if sync_catalog:
+        for key, center in tqdm(catalog_entries.items(), desc="Sincronizando catálogo de centros"):
+            existing = resolved_centers.get(key)
+            if existing is None:
+                inserted = connection.execute(
+                    text("""
+                        INSERT INTO centro_de_custo
+                            (empresa_id, centro_id, local, nome, departamento, cidade_id)
+                        VALUES (:empresa_id, :centro_id, :local, :nome, :departamento, :cidade_id)
+                        RETURNING id, empresa_id, centro_id, nome, local
+                    """),
+                    center,
+                ).mappings().one()
+                resolved_centers[key] = dict(inserted)
+                created += 1
+                continue
+
+            changed = {
+                field: value
+                for field, value in center.items()
+                if field in {"nome", "local", "departamento", "cidade_id"}
+                and value is not None
+                and value != existing.get(field)
+            }
+            if changed:
+                connection.execute(
+                    text("""
+                        UPDATE centro_de_custo
+                        SET nome = :nome,
+                            local = :local,
+                            departamento = :departamento,
+                            cidade_id = :cidade_id
+                        WHERE id = :id
+                    """),
+                    {
+                        "nome": changed.get("nome", existing["nome"]),
+                        "local": changed.get("local", existing["local"]),
+                        "departamento": changed.get("departamento", existing["departamento"]),
+                        "cidade_id": changed.get("cidade_id", existing["cidade_id"]),
+                        "id": existing["id"],
+                    },
+                )
+                updated += 1
 
     missing_centers = [
         key for company_id, center_codes in requested_centers.items()
@@ -229,15 +242,15 @@ def create_cost_centers(connection, employees):
             for company_id, center_id in missing_centers[:8]
         )
         raise ValueError(
-            "O relatório diário possui centro(s) sem cadastro de nome/local: "
-            f"{preview}. Cadastre ou sincronize os centros antes de importar colaboradores."
+            "Centro(s) não encontrado(s) no catálogo corporativo: "
+            f"{preview}. Use uma planilha completa e marque 'Sincronizar catálogo de centros' "
+            "antes da importação diária."
         )
 
     for item in employees:
-        center = resolved_centers.get((item["_empresa_id"], item.get("centro_custo_num")))
-        if center:
-            item["_centro_db_id"] = center["id"]
-            item["_centro_uid"] = center["uid"]
+        key = (item["_empresa_id"], int(item["centro_custo_num"]))
+        center = resolved_centers[key]
+        item["_centro_db_id"] = center["id"]
     return created, updated
 
 
@@ -271,7 +284,7 @@ def create_employees(connection, employees, positions=None, progress_callback=No
     company_ids = sorted({item["_empresa_id"] for item in employees})
     existing_rows = connection.execute(
         text(
-            "SELECT id, empresa_id, matricula, nome, centro_id, centro_uid, "
+            "SELECT id, empresa_id, matricula, nome, centro_id, "
             "data_admissao, situacao, cargo, carga_horaria, salario, cpf "
             "FROM colaboradores WHERE empresa_id = ANY(:company_ids)"
         ),
@@ -296,7 +309,6 @@ def create_employees(connection, employees, positions=None, progress_callback=No
             "empresa_id": item["_empresa_id"],
             "nome": name,
             "centro_id": item.get("_centro_db_id"),
-            "centro_uid": item.get("_centro_uid"),
             "data_admissao": item["_admissao"],
             "situacao": item.get("situacao"),
             "cargo": positions.get(normalize_name(item.get("cargo"))),
@@ -321,7 +333,7 @@ def create_employees(connection, employees, positions=None, progress_callback=No
                 changed_fields = tuple(
                     field
                     for field in (
-                        "nome", "centro_id", "centro_uid", "data_admissao",
+                        "nome", "centro_id", "data_admissao",
                         "situacao", "cargo", "carga_horaria", "salario", "cpf",
                     )
                     if comparable(field, current.get(field)) != comparable(field, values.get(field))
@@ -339,9 +351,9 @@ def create_employees(connection, employees, positions=None, progress_callback=No
         connection.execute(
             text(
                 "INSERT INTO colaboradores "
-                "(matricula, empresa_id, nome, centro_id, centro_uid, data_admissao, "
+                "(matricula, empresa_id, nome, centro_id, data_admissao, "
                 "situacao, cargo, carga_horaria, salario, cpf) "
-                "VALUES (:matricula, :empresa_id, :nome, :centro_id, :centro_uid, "
+                "VALUES (:matricula, :empresa_id, :nome, :centro_id, "
                 ":data_admissao, :situacao, :cargo, :carga_horaria, :salario, :cpf)"
             ),
             insert_rows,
