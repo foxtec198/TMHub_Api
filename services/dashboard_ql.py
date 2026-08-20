@@ -216,6 +216,141 @@ class QLDashboardService:
             for day, values in sorted(by_day.items())
         ]
 
+    @classmethod
+    def _resolve_reference_month(cls, raw_value):
+        today = _today()
+        if not raw_value:
+            return today.replace(day=1), None
+        text = str(raw_value).strip()
+        for fmt in ("%Y-%m", "%m/%Y", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text, fmt).date()
+                return parsed.replace(day=1), None
+            except ValueError:
+                continue
+        return today.replace(day=1), "Mês inválido. Use o formato AAAA-MM."
+
+    @staticmethod
+    def _month_days(reference):
+        if reference.month == 12:
+            next_month = reference.replace(year=reference.year + 1, month=1)
+        else:
+            next_month = reference.replace(month=reference.month + 1)
+        return [(reference + timedelta(days=offset)).date()
+                for offset in range((next_month - reference).days)]
+
+    @staticmethod
+    def _situacao_dia(ativos, meta):
+        if meta is None:
+            return "SEM_META"
+        if ativos < meta:
+            return "DEFICIT"
+        if ativos == meta:
+            return "COMPLETO"
+        return "ACIMA"
+
+    @classmethod
+    def _build_daily_payload(cls, departments, month_days, snapshot_lookup):
+        rows = []
+        for department in departments:
+            daily = []
+            for day in month_days:
+                key = day.isoformat()
+                snapshot = snapshot_lookup.get((key, department["departamento"]))
+                ativos = int(snapshot["ativos"]) if snapshot else 0
+                meta = int(snapshot["meta"]) if snapshot and snapshot["meta"] is not None else department["capacidade_esperada"]
+                if meta is not None:
+                    meta = int(meta)
+                daily.append({
+                    "data": key,
+                    "colaboradores_ativos": ativos,
+                    "capacidade_esperada": meta,
+                    "saldo": (ativos - meta) if meta is not None else None,
+                    "situacao": cls._situacao_dia(ativos, meta),
+                })
+
+            dias_com_meta = [d for d in daily if d["capacidade_esperada"] is not None]
+            media = round(sum(d["colaboradores_ativos"] for d in daily) / len(daily), 2) if daily else 0
+            meta_mes = (
+                sum(d["capacidade_esperada"] for d in dias_com_meta)
+                if dias_com_meta
+                else None
+            )
+            if meta_mes is None:
+                situacao_mes = "SEM_META"
+            elif media >= meta_mes:
+                situacao_mes = "NO_QUADRO"
+            else:
+                situacao_mes = "DEFICIT"
+
+            rows.append({
+                "departamento": department["departamento"],
+                "dias": daily,
+                "media": media,
+                "meta_mes": meta_mes,
+                "situacao_mes": situacao_mes,
+            })
+        return rows
+
+    @safe_route
+    def read_diario(self, token_data):
+        if not has_permission(token_data, "dashboard_ql", "view"):
+            return jsonify("Você não possui acesso ao Dashboard de QL."), 403
+
+        self.capture_daily()
+        branches, error = self._visible_branches(token_data)
+        if error:
+            return jsonify(error), 403
+        if not branches:
+            return jsonify({"mes": None, "dias": [], "departamentos": [], "filtros": {"departamentos": []}})
+
+        reference_month, parse_error = self._resolve_reference_month(request.args.get("mes"))
+        if parse_error:
+            return jsonify(parse_error), 400
+
+        allowed_centers = allowed_cost_center_ids(token_data)
+        branch_centers = self._branch_center_map([branch.id for branch in branches])
+        center_ids = set().union(*branch_centers.values())
+        if allowed_centers is not None:
+            center_ids.intersection_update(allowed_centers)
+
+        selected_departments = _selected_values("departamento")
+        departments = [
+            self._serialize_department(row)
+            for row in self._department_rows(center_ids)
+            if not selected_departments or row.departamento in selected_departments
+        ]
+
+        month_days = self._month_days(reference_month)
+        department_filter = [row["departamento"] for row in departments] if departments else [-1]
+        snapshots = QLDailySnapshot.query.filter(
+            QLDailySnapshot.filial_id.in_([branch.id for branch in branches]),
+            QLDailySnapshot.data_referencia >= month_days[0],
+            QLDailySnapshot.data_referencia <= month_days[-1],
+            QLDailySnapshot.departamento.in_(department_filter),
+        ).all()
+
+        lookup = {
+            (row.data_referencia.isoformat(), row.departamento): {
+                "ativos": int(row.colaboradores_ativos or 0),
+                "meta": int(row.capacidade_esperada) if row.capacidade_esperada is not None else None,
+            }
+            for row in snapshots
+        }
+
+        return jsonify({
+            "mes": reference_month.strftime("%Y-%m"),
+            "dias": [day.isoformat() for day in month_days],
+            "departamentos": self._build_daily_payload(departments, month_days, lookup),
+            "filtros": {
+                "departamentos": [
+                    {"label": f"DPTO. {row['departamento']}", "value": row["departamento"]}
+                    for row in departments
+                ],
+            },
+            "atualizado_em": datetime.now(SAO_PAULO).isoformat(),
+        })
+
     @safe_route
     def read(self, token_data):
         if not has_permission(token_data, "dashboard_ql", "view"):

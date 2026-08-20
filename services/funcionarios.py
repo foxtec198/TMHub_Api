@@ -137,12 +137,3 @@ class EmployeesService:
             "total": pagination.total,
             "pages": pagination.pages,
         }), 200
-
-    @safe_route
-    def create(self): ...
-
-    @safe_route
-    def update(self): ...
-
-    @safe_route
-    def delete(self): ...
