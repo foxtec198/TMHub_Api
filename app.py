@@ -233,7 +233,9 @@ def ql_snapshot_monitor():
     while True:
         try:
             with app.app_context():
-                QLDashboardService.capture_daily()
+                changed = QLDashboardService.capture_daily()
+                if changed:
+                    socketio.emit("ql_update", {"action": "snapshot_updated"})
         except Exception:
             app.logger.exception("Falha ao registrar histórico diário de QL")
         socketio.sleep(900)
