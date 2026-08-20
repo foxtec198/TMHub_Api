@@ -63,9 +63,7 @@ DECISION_LABELS = {
     "prorrogar": "Prorrogar",
 }
 OPEN_STATUSES = {"aberta", "em_preenchimento", "atrasada"}
-ADMIN_EDITABLE_STATUSES = {
-    "aberta", "em_preenchimento", "atrasada", "aguardando_rh", "concluida"
-}
+ADMIN_EDITABLE_STATUSES = {"aberta", "em_preenchimento", "atrasada", "aguardando_rh"}
 EXPERIENCE_EVALUATION_TEMPLATE = (
     Path(__file__).resolve().parents[1]
     / "assets"
@@ -984,7 +982,7 @@ class ExperienceEvaluationService:
 
     @safe_route
     def update_status(self, evaluation_id, token_data):
-        """Permite ao administrador ajustar manualmente o estado da tarefa."""
+        """Permite ao administrador devolver uma tarefa para uma etapa anterior."""
         if not is_admin(token_data):
             return jsonify("Somente administradores podem alterar o estado da avaliação."), 403
         evaluation, error = self._get_evaluation_in_scope(evaluation_id, token_data)
@@ -1019,10 +1017,6 @@ class ExperienceEvaluationService:
             evaluation.rh_concluido_em = None
             evaluation.rh_concluido_por_usuario_id = None
             self._clear_signature(evaluation, "assinatura_rh")
-        elif status == "concluida":
-            # Registra a baixa administrativa sem fabricar assinaturas não realizadas.
-            evaluation.rh_concluido_em = dt.now(SAO_PAULO)
-            evaluation.rh_concluido_por_usuario_id = token_data.get("id")
 
         evaluation.status = status
         evaluation.cancelada_em = None
