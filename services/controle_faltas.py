@@ -339,6 +339,7 @@ class AbsenceControlService:
                 cc=employee.centro_id,
                 supervisor_id=supervisor_id,
                 warning=False,
+                origem="controle_faltas",
                 motivo=reason,
                 obs=request_observation,
                 created_at=absence_date,
