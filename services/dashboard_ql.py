@@ -115,16 +115,22 @@ class QLDashboardService:
         """Atualiza somente a fotografia do dia corrente; dias anteriores congelam."""
         day = reference_date or _today()
         branches = Branch.query.filter(Branch.ativa.is_(True)).all()
+        if not branches:
+            return 0
+
         branch_map = cls._branch_center_map([branch.id for branch in branches])
+        existing_snapshots = {
+            (snapshot.filial_id, snapshot.departamento): snapshot
+            for snapshot in QLDailySnapshot.query.filter(
+                QLDailySnapshot.data_referencia == day,
+                QLDailySnapshot.filial_id.in_([branch.id for branch in branches]),
+            ).all()
+        }
         changed = 0
 
         for branch in branches:
             for row in cls._department_rows(branch_map.get(branch.id, set())):
-                snapshot = QLDailySnapshot.query.filter_by(
-                    data_referencia=day,
-                    filial_id=branch.id,
-                    departamento=row.departamento,
-                ).first()
+                snapshot = existing_snapshots.get((branch.id, row.departamento))
                 if not snapshot:
                     snapshot = QLDailySnapshot(
                         data_referencia=day,
@@ -132,14 +138,24 @@ class QLDashboardService:
                         departamento=row.departamento,
                     )
                     db.session.add(snapshot)
-                snapshot.colaboradores_ativos = int(row.colaboradores_ativos or 0)
-                snapshot.capacidade_esperada = (
+                    existing_snapshots[(branch.id, row.departamento)] = snapshot
+
+                ativos = int(row.colaboradores_ativos or 0)
+                meta = (
                     int(row.capacidade_esperada)
                     if row.capacidade_esperada is not None
                     else None
                 )
-                snapshot.centros_quantidade = int(row.centros_quantidade or 0)
-                changed += 1
+                centros = int(row.centros_quantidade or 0)
+                if (
+                    snapshot.colaboradores_ativos != ativos
+                    or snapshot.capacidade_esperada != meta
+                    or snapshot.centros_quantidade != centros
+                ):
+                    snapshot.colaboradores_ativos = ativos
+                    snapshot.capacidade_esperada = meta
+                    snapshot.centros_quantidade = centros
+                    changed += 1
 
         if changed:
             db.session.commit()
@@ -335,7 +351,6 @@ class QLDashboardService:
         if not has_permission(token_data, "dashboard_ql", "view"):
             return jsonify("Você não possui acesso ao Dashboard de QL."), 403
 
-        self.capture_daily()
         branches, error = self._visible_branches(token_data)
         if error:
             return jsonify(error), 403
@@ -396,9 +411,6 @@ class QLDashboardService:
         if not has_permission(token_data, "dashboard_ql", "view"):
             return jsonify("Você não possui acesso ao Dashboard de QL."), 403
 
-        # Mantém o ponto do dia atualizado; dados de dias anteriores não são
-        # recalculados, preservando o histórico real do quadro.
-        self.capture_daily()
         branches, error = self._visible_branches(token_data)
         if error:
             return jsonify(error), 403
