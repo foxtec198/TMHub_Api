@@ -15,6 +15,11 @@ class ServiceSupervisors():
         query = Supervisors.query.join(
             CostCenters, CostCenters.supervisor_id == Supervisors.id
         ).distinct()
+        center_id = rq.args.get("centro_id", type=int)
+        if rq.args.get("centro_id") and not center_id:
+            return jsonify("Local selecionado inválido."), 400
+        if center_id:
+            query = query.filter(CostCenters.id == center_id)
         access_token = rq.headers.get("Access-Token")
         if access_token:
             token_data = decode_token(access_token)
