@@ -19,9 +19,11 @@ from import_col.cadInBd import (
     ensure_positions,
     latest_employees,
     link_supervisors_to_employees,
+    normalize_name,
     validate_cost_center_identities,
 )
 from import_col.json_loader import prepare_uploaded_json
+from models.empresas import Company
 from services.employee_spreadsheet_parser import parse_employee_spreadsheet
 from utils.db import db
 from utils.filial_scope import is_admin
@@ -92,7 +94,7 @@ def _emit_import_outcome(job_id, severity, summary, detail, broadcast_change=Fal
         return
 
 
-def _create_processing_job(employees, invalid, duplicates, job_id=None, user_id=None):
+def _create_processing_job(employees, invalid, duplicates, company_name, job_id=None, user_id=None):
     job_id = job_id or uuid4().hex
     now = time()
     with _jobs_lock:
@@ -107,7 +109,8 @@ def _create_processing_job(employees, invalid, duplicates, job_id=None, user_id=
             "percentual": 0,
             "registros_invalidos": len(invalid),
             "duplicidades": duplicates,
-            "empresas": sorted({str(item.get("empresa_nome") or "COSTA OESTE") for item in employees}),
+            "empresas": [company_name],
+            "empresa_nome": company_name,
             "user_id": current.get("user_id", user_id),
             "created_at": current.get("created_at", now),
             "updated_at": now,
@@ -192,23 +195,61 @@ def _run_import(app, job_id, employees, invalid, duplicates):
             )
 
 
-def _prepare_import_file(file_path, filename, centro_forcado=None):
+def _selected_company_name(value):
+    company_name = " ".join(str(value or "").strip().split()).upper()
+    if not company_name:
+        raise ValueError("Selecione a empresa antes de importar os colaboradores.")
+    if len(company_name) > 160:
+        raise ValueError("O nome da empresa deve ter no máximo 160 caracteres.")
+    return company_name
+
+
+def _prepare_import_file(file_path, filename, company_name, centro_forcado=None):
     suffix = Path(filename).suffix.lower()
     if suffix == ".json":
         with Path(file_path).open("r", encoding="utf-8-sig") as stream:
             payload = json.load(stream)
-        return latest_employees(prepare_uploaded_json(payload))
-    if suffix in {".xls", ".xlsx"}:
+        parsed_employees = prepare_uploaded_json(payload)
+        invalid = []
+    elif suffix in {".xls", ".xlsx"}:
         parsed = parse_employee_spreadsheet(file_path, filename, centro_forcado=centro_forcado)
-        employees, dedupe_errors, duplicates = latest_employees(parsed["employees"])
-        # Faz a validação antes de iniciar a thread para nunca deixar um
-        # centro de mesmo código sobrescrever outro nome no banco.
-        validate_cost_center_identities(employees)
-        return employees, [*parsed["invalid"], *dedupe_errors], duplicates
-    raise ValueError("Envie o relatório no formato .json, .xls ou .xlsx.")
+        parsed_employees = parsed["employees"]
+        invalid = list(parsed["invalid"])
+    else:
+        raise ValueError("Envie o relatório no formato .json, .xls ou .xlsx.")
+
+    source_companies = {
+        normalize_name(item.get("empresa_nome"))
+        for item in parsed_employees
+        if normalize_name(item.get("empresa_nome"))
+    }
+    if len(source_companies) > 1:
+        raise ValueError(
+            "O arquivo possui mais de uma empresa identificada. "
+            "Envie um arquivo separado para cada empresa."
+        )
+
+    # A empresa escolhida no fluxo é a identidade da carga inteira; não
+    # deixamos um cabeçalho eventual da planilha misturar empresas no banco.
+    for employee in parsed_employees:
+        employee["empresa_nome"] = company_name
+
+    employees, dedupe_errors, duplicates = latest_employees(parsed_employees)
+    validate_cost_center_identities(employees)
+    return employees, [*invalid, *dedupe_errors], duplicates
 
 
 class CollaboratorImportService:
+    @safe_route
+    def companies(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem consultar empresas."), 403
+        companies = Company.query.order_by(Company.ativa.desc(), Company.nome.asc()).all()
+        return jsonify([
+            {"id": company.id, "nome": company.nome, "ativa": bool(company.ativa)}
+            for company in companies
+        ]), 200
+
     @safe_route
     def create(self, token_data):
         if not is_admin(token_data):
@@ -219,6 +260,10 @@ class CollaboratorImportService:
             return jsonify("Envie o relatório no formato .json, .xls ou .xlsx."), 400
         if request.content_length and request.content_length > MAX_IMPORT_SIZE:
             return jsonify("O arquivo deve ter no máximo 100 MB."), 413
+        try:
+            company_name = _selected_company_name(request.form.get("empresa_nome"))
+        except ValueError as error:
+            return jsonify(str(error)), 400
 
         try:
             suffix = Path(uploaded.filename).suffix.lower()
@@ -229,6 +274,7 @@ class CollaboratorImportService:
                 employees, invalid, duplicates = _prepare_import_file(
                     temporary_path,
                     uploaded.filename,
+                    company_name,
                     request.form.get("centro_forcado"),
                 )
             finally:
@@ -243,6 +289,7 @@ class CollaboratorImportService:
             employees,
             invalid,
             duplicates,
+            company_name,
             user_id=token_data.get("id"),
         )), 202
 
@@ -261,6 +308,10 @@ class CollaboratorImportService:
             return jsonify("O arquivo deve ter no máximo 100 MB."), 413
         if chunks <= 0:
             return jsonify("Quantidade de partes inválida."), 400
+        try:
+            company_name = _selected_company_name(data.get("empresa_nome"))
+        except ValueError as error:
+            return jsonify(str(error)), 400
 
         _cleanup_jobs()
         job_id = uuid4().hex
@@ -272,6 +323,7 @@ class CollaboratorImportService:
                 "status": "uploading",
                 "phase": "upload",
                 "filename": filename,
+                "empresa_nome": company_name,
                 "centro_forcado": centro_forcado,
                 "file_size": size,
                 "chunks": chunks,
@@ -337,6 +389,7 @@ class CollaboratorImportService:
             employees, invalid, duplicates = _prepare_import_file(
                 assembled_path,
                 job["filename"],
+                job.get("empresa_nome"),
                 job.get("centro_forcado"),
             )
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
@@ -351,6 +404,7 @@ class CollaboratorImportService:
                 employees,
                 invalid,
                 duplicates,
+                job["empresa_nome"],
                 job_id=job_id,
                 user_id=token_data.get("id"),
             )

@@ -7,6 +7,11 @@ from services.centros import CostsCenterService
 center_bp = Blueprint("Centros de Custo", __name__)
 service = CostsCenterService()
 
+
+@center_bp.get("/empresas")
+def companies():
+    return service.companies()
+
 # Encaminha a requisição para o fluxo principal do módulo.
 @center_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():

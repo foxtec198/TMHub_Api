@@ -4,6 +4,8 @@ from flask import current_app, jsonify, request
 
 # Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
+from models.colaboradores import Employees
+from models.empresas import Company
 from models.estrutura import StructureAsset, StructureLocation
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
@@ -63,7 +65,10 @@ class StructureService:
             department = str(center.departamento or "SEM DEPARTAMENTO")
             departments.setdefault(department, []).append({
                 "id": center.id,
+                "numero": center.centro_id,
                 "contrato": center.local,
+                "empresa_id": center.empresa_id,
+                "empresa_nome": center.empresa.nome if center.empresa else "SEM EMPRESA",
                 "supervisor_id": center.supervisor_id,
                 "supervisor": supervisors.get(center.supervisor_id) or "SEM SUPERVISOR",
                 "locais": locations_by_center.get(center.id, []),
@@ -150,6 +155,76 @@ class StructureService:
                 "id": center.id,
                 "supervisor_id": supervisor.id,
                 "supervisor": supervisor.nome,
+            },
+        })
+
+    @safe_route
+    def update_contract_company(self, center_id, token_data):
+        if not is_admin(token_data):
+            return jsonify("Somente administradores podem alterar a empresa de um contrato."), 403
+        center = db.session.get(CostCenters, center_id)
+        if not center:
+            return jsonify("Contrato não encontrado."), 404
+
+        body = request.get_json(silent=True) or {}
+        try:
+            company_id = int(body.get("empresa_id"))
+        except (TypeError, ValueError):
+            return jsonify("Informe uma empresa válida."), 400
+        company = db.session.get(Company, company_id)
+        if not company:
+            return jsonify("Empresa não encontrada."), 404
+        if not company.ativa:
+            return jsonify("A empresa selecionada está inativa."), 409
+        if company.id == center.empresa_id:
+            return jsonify({"message": "O contrato já pertence a esta empresa."})
+
+        duplicate_center = CostCenters.query.filter(
+            CostCenters.empresa_id == company.id,
+            CostCenters.centro_id == center.centro_id,
+            CostCenters.id != center.id,
+        ).first()
+        if duplicate_center:
+            return jsonify("Já existe um contrato com este número na empresa selecionada."), 409
+
+        registrations = [
+            registration for registration, in db.session.query(Employees.matricula)
+            .filter(Employees.centro_id == center.id)
+            .all()
+        ]
+        if registrations:
+            duplicate_registration = Employees.query.filter(
+                Employees.empresa_id == company.id,
+                Employees.matricula.in_(registrations),
+                Employees.centro_id != center.id,
+            ).first()
+            if duplicate_registration:
+                return jsonify(
+                    "Não é possível trocar a empresa: há matrícula duplicada na empresa de destino."
+                ), 409
+
+        previous_company_id = center.empresa_id
+        center.empresa_id = company.id
+        Employees.query.filter(Employees.centro_id == center.id).update(
+            {Employees.empresa_id: company.id},
+            synchronize_session=False,
+        )
+        db.session.commit()
+        current_app.logger.info(
+            "Empresa do contrato alterada",
+            extra={
+                "centro_custo_id": center.id,
+                "empresa_anterior_id": previous_company_id,
+                "empresa_nova_id": company.id,
+                "alterado_por_usuario_id": token_data.get("id"),
+            },
+        )
+        return jsonify({
+            "message": "Empresa do contrato alterada com sucesso.",
+            "contrato": {
+                "id": center.id,
+                "empresa_id": company.id,
+                "empresa_nome": company.nome,
             },
         })
 
