@@ -23,6 +23,9 @@ def import_users(): return service.import_users()
 @user_bp.get("/modelo-importacao")
 def download_import_template(): return service.download_template()
 
+@user_bp.post("/<int:user_id>/assinatura-cadastrada")
+def register_signature(user_id): return service.register_signature(user_id)
+
 @user_bp.get("/perfil")
 def profile(): return service.profile()
 

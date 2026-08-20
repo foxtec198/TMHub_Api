@@ -56,6 +56,11 @@ def active_employees():
     return service.active_employees()
 
 
+@experience_evaluations_bp.get("/assinaturas-cadastradas")
+def registered_signatures():
+    return service.registered_signatures()
+
+
 @experience_evaluations_bp.route("", methods=["GET", "POST"])
 def root():
     return service.read_rh() if request.method == "GET" else service.process()
@@ -94,6 +99,11 @@ def complete_rh(evaluation_id):
 @experience_evaluations_bp.post("/<int:evaluation_id>/rh/assinatura")
 def rh_signature(evaluation_id):
     return service.upload_rh_signature(evaluation_id)
+
+
+@experience_evaluations_bp.post("/<int:evaluation_id>/rh/assinatura-cadastrada")
+def registered_rh_signature(evaluation_id):
+    return service.use_registered_rh_signature(evaluation_id)
 
 
 @experience_evaluations_bp.post("/<int:evaluation_id>/cancelar")
