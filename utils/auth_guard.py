@@ -8,6 +8,7 @@ from models.usuarios import Users
 from utils.db import db
 from utils.token import decode_token
 from utils.user_requirements import auth_requirements
+from utils.maintenance import maintenance_mode_enabled
 
 ONBOARDING_PATHS = {
     "/usuarios/pendencias",
@@ -16,16 +17,37 @@ ONBOARDING_PATHS = {
     "/usuarios/onboarding/senha-padrao/ignorar",
 }
 PUBLIC_PATHS = {"/", "/login", "/docs", "/openapi.json"}
-PUBLIC_PREFIXES = ("/updates/", "/arquivos/glosas/")
+PUBLIC_PREFIXES = ("/updates/",)
 AGENT_ALLOWED_PATHS = {"/timo/process", "/timo/agentes/tema"}
+
+
+def _maintenance_response():
+    return jsonify({
+        "code": "SYSTEM_MAINTENANCE",
+        "message": "O TMHub está em manutenção. Aguarde a liberação da operação.",
+    }), 503
 
 def enforce_auth_state():
     if request.method == "OPTIONS": return None
     normalized_path = request.path.rstrip("/") or "/"
-    if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")): return None
+    if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")):
+        if not maintenance_mode_enabled():
+            return None
+        access_token = request.headers.get("Access-Token")
+        if not access_token:
+            return _maintenance_response()
+        try:
+            token_data = decode_token(access_token)
+        except (ExpiredSignatureError, InvalidTokenError):
+            return _maintenance_response()
+        user = db.session.get(Users, token_data.get("id"))
+        if not user or str(user.role or "").upper() != "ADMIN":
+            return _maintenance_response()
+        return None
     if normalized_path in PUBLIC_PATHS or normalized_path.startswith(PUBLIC_PREFIXES): return None
     access_token = request.headers.get("Access-Token")
-    if not access_token: return None
+    if not access_token:
+        return _maintenance_response() if maintenance_mode_enabled() else None
 
     try: token_data = decode_token(access_token)
     except ExpiredSignatureError: return jsonify("Token de acesso expirado."), 401
@@ -38,6 +60,8 @@ def enforce_auth_state():
     user = db.session.get(Users, token_data.get("id"))
     if not user:
         return jsonify("Usuário da sessão não encontrado."), 401
+    if maintenance_mode_enabled() and str(user.role or "").upper() != "ADMIN":
+        return _maintenance_response()
     # O token do agente possui uma versão própria, diferente da versão de sessão
     # do usuário. A validação completa (agente + proprietário) ocorre no serviço
     # do Timo antes de processar qualquer comando.

@@ -17,6 +17,7 @@ from utils.password_security import (
 from utils.permissions import serialize_permissions
 from utils.token import create_token
 from utils.user_requirements import auth_requirements, normalize_cpf, refresh_user_requirements
+from utils.maintenance import maintenance_mode_enabled
 
 
 def issue_user_token(user):
@@ -50,6 +51,9 @@ class AuthService:
         if not valid:
             return jsonify("Senha incorreta!"), 400
 
+        maintenance_active = maintenance_mode_enabled()
+        maintenance_blocked = maintenance_active and str(user.role or "").upper() != "ADMIN"
+
         hash_migrated = legacy_hash or needs_rehash
         if hash_migrated:
             user.hash = hash_password(password)
@@ -65,7 +69,7 @@ class AuthService:
         return jsonify({
             "id": user.id,
             "display_name": user.nome,
-            "access_token": issue_user_token(user),
+            "access_token": None if maintenance_blocked else issue_user_token(user),
             "role": user.role,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
@@ -83,4 +87,6 @@ class AuthService:
             "hash_migrado": hash_migrated,
             "pendencia_obrigatoria": requirements["pendencia_obrigatoria"],
             "interacao_pendente": requirements["interacao_pendente"],
+            "manutencao_ativa": maintenance_active,
+            "manutencao_bloqueada": maintenance_blocked,
         }), 200
