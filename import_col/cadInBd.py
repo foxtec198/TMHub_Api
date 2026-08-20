@@ -156,16 +156,24 @@ def validate_cost_center_identities(employees):
 def create_cost_centers(connection, employees):
     validate_cost_center_identities(employees)
     centers = {}
+    requested_centers = {}
     for item in employees:
         center_id = item.get("centro_custo_num")
         if center_id is None:
             continue
-        key = (item["_empresa_id"], center_id)
+        key = (item["_empresa_id"], int(center_id))
+        requested_centers.setdefault(key[0], set()).add(key[1])
+        center_name = str(item.get("centro_custo") or "").strip()
+        # O relatório padrão diário traz o código do centro, mas não o nome.
+        # Nesse caso usamos o cadastro corporativo já sincronizado e nunca
+        # sobrescrevemos local/nome por uma string vazia.
+        if not center_name:
+            continue
         centers[key] = {
             "empresa_id": item["_empresa_id"],
-            "centro_id": center_id,
-            "local": item.get("centro_custo"),
-            "nome": item.get("centro_custo"),
+            "centro_id": key[1],
+            "local": center_name,
+            "nome": center_name,
             "dpto": item.get("departamento_codigo") or 0,
             "cidade_id": item.get("cidade_id") or None,
         }
@@ -195,6 +203,36 @@ def create_cost_centers(connection, employees):
         resolved_centers[(center["empresa_id"], center["centro_id"])] = result
         created += int(result["inserted"])
         updated += int(not result["inserted"])
+
+    for company_id, center_codes in requested_centers.items():
+        if not center_codes:
+            continue
+        rows = connection.execute(
+            text("""
+                SELECT id, uid, empresa_id, centro_id
+                FROM centro_de_custo
+                WHERE empresa_id = :empresa_id AND centro_id = ANY(:center_codes)
+            """),
+            {"empresa_id": company_id, "center_codes": sorted(center_codes)},
+        ).mappings()
+        for row in rows:
+            resolved_centers[(row["empresa_id"], row["centro_id"])] = row
+
+    missing_centers = [
+        key for company_id, center_codes in requested_centers.items()
+        for key in ((company_id, center_code) for center_code in center_codes)
+        if key not in resolved_centers
+    ]
+    if missing_centers:
+        preview = ", ".join(
+            f"empresa {company_id}, centro {center_id}"
+            for company_id, center_id in missing_centers[:8]
+        )
+        raise ValueError(
+            "O relatório diário possui centro(s) sem cadastro de nome/local: "
+            f"{preview}. Cadastre ou sincronize os centros antes de importar colaboradores."
+        )
+
     for item in employees:
         center = resolved_centers.get((item["_empresa_id"], item.get("centro_custo_num")))
         if center:

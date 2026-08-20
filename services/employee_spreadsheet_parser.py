@@ -196,24 +196,50 @@ def _xlsx_rows(path: Path) -> Iterable[tuple[Any, ...]]:
 
 
 def _xls_rows(path: Path) -> Iterable[tuple[Any, ...]]:
+    """Lê relatórios XLS legados, inclusive exports OLE aceitos pelo Excel.
+
+    Alguns relatórios ``RELAÇÃO DE EMPREGADOS II`` usam uma variação de XLS
+    que o ``xlrd`` não consegue abrir, apesar de ser aberta normalmente pelo
+    Excel. O Calamine cobre essa variação sem depender de Office no servidor.
+    Mantemos o xlrd como contingência para os XLS convencionais.
+    """
+    calamine_error: Exception | None = None
+    try:
+        from python_calamine import load_workbook
+
+        workbook = load_workbook(path)
+        for sheet_name in workbook.sheet_names:
+            sheet = workbook.get_sheet_by_name(sheet_name)
+            for row in sheet.to_python():
+                yield tuple(row)
+        return
+    except (ImportError, OSError, ValueError, RuntimeError) as error:
+        calamine_error = error
+
     try:
         import xlrd
     except ModuleNotFoundError as error:
         raise ValueError(
-            "Leitura de .xls indisponível. Instale a dependência xlrd no servidor."
+            "Leitura de .xls indisponível. Instale python-calamine ou xlrd no servidor."
         ) from error
 
-    workbook = xlrd.open_workbook(path)
-    for sheet in workbook.sheets():
-        for row_index in range(sheet.nrows):
-            values = []
-            for column_index in range(sheet.ncols):
-                cell = sheet.cell(row_index, column_index)
-                if cell.ctype == xlrd.XL_CELL_DATE:
-                    values.append(xlrd.xldate_as_datetime(cell.value, workbook.datemode))
-                else:
-                    values.append(cell.value)
-            yield tuple(values)
+    try:
+        workbook = xlrd.open_workbook(path)
+        for sheet in workbook.sheets():
+            for row_index in range(sheet.nrows):
+                values = []
+                for column_index in range(sheet.ncols):
+                    cell = sheet.cell(row_index, column_index)
+                    if cell.ctype == xlrd.XL_CELL_DATE:
+                        values.append(xlrd.xldate_as_datetime(cell.value, workbook.datemode))
+                    else:
+                        values.append(cell.value)
+                yield tuple(values)
+    except Exception as error:
+        raise ValueError(
+            "Não foi possível abrir o XLS. Exporte novamente o relatório "
+            "RELAÇÃO DE EMPREGADOS II ou envie em XLSX."
+        ) from (calamine_error or error)
 
 
 def _rows(path: Path) -> Iterable[tuple[Any, ...]]:
