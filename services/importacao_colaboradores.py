@@ -201,7 +201,13 @@ def _selected_company_name(value):
         raise ValueError("Selecione a empresa antes de importar os colaboradores.")
     if len(company_name) > 160:
         raise ValueError("O nome da empresa deve ter no máximo 160 caracteres.")
-    return company_name
+    company = Company.query.filter(
+        db.func.upper(Company.nome) == company_name,
+        Company.ativa.is_(True),
+    ).first()
+    if not company:
+        raise ValueError("Selecione uma empresa ativa já cadastrada no sistema.")
+    return company.nome
 
 
 def _prepare_import_file(file_path, filename, company_name, centro_forcado=None):
