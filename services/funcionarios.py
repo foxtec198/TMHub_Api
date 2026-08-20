@@ -30,6 +30,7 @@ class EmployeesService:
         situation_id = bd.get("situacao", None)
         center_id = bd.get("centro_id", None) or bd.get("centro_custo_id", None)
         supervisor_id = bd.get("supervisor_id", None)
+        excluded_employee_id = bd.get("excluir_id", type=int)
         public_lookup = str(bd.get("publico", "")).strip().lower() in {"1", "true", "sim"}
         require_center = str(bd.get("com_local", "")).strip().lower() in {"1", "true", "sim"}
         limit = bd.get("limit")
@@ -70,6 +71,7 @@ class EmployeesService:
             return jsonify([]), 200
 
         if center_id: emp = emp.filter(Employees.centro_id == int(center_id))
+        if excluded_employee_id: emp = emp.filter(Employees.id != excluded_employee_id)
         if situation_id: emp = emp.filter(Situations.id == int(situation_id))
         if require_center: emp = emp.filter(CostCenters.id.isnot(None))
         if search: emp = emp.filter(or_(*[field.ilike(f"%{search}%") for field in search_fields]))

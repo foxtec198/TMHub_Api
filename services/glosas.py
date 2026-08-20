@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 
 # Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
+from models.cargos import Cargos
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.glosas import Disallowance
@@ -59,6 +60,65 @@ def _money(value):
     return f"R$ {float(value or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 class DisallowanceService:
+    @staticmethod
+    def _coverage_status(absence):
+        """Define a cobertura usando a reserva e a cobertura manual da requisição."""
+        requisition = (
+            db.session.get(Requisicao, absence.requisicao_id)
+            if absence.requisicao_id
+            else None
+        )
+        history = (
+            History.query.filter_by(requisicao_id=absence.requisicao_id)
+            .order_by(History.id.desc())
+            .first()
+            if absence.requisicao_id
+            else None
+        )
+        request_status = (
+            history.status if history else getattr(requisition, "status", None)
+        ) or ""
+        reserve_id = (
+            history.reserva_id if history else getattr(requisition, "reserva_id", 0)
+        ) or 0
+        manual_coverage_id = getattr(requisition, "cobertura_colaborador_id", None)
+        operational_coverage = str(
+            getattr(requisition, "motivo", "") or ""
+        ).strip().upper() == "COBERTURA OPERACIONAL DE ADICIONAL"
+
+        # A ausência operacional representa o posto deixado pela pessoa que
+        # assumiu um cargo de maior valor. Portanto, ela é descoberta.
+        if request_status == "approved" and operational_coverage:
+            return "descoberta"
+        if request_status == "approved" and (reserve_id or manual_coverage_id):
+            return "coberta"
+        if request_status == "reproved":
+            return "descoberta"
+        return "em_analise"
+
+    @staticmethod
+    def _absence_days(absence):
+        """Converte ausência parcial ou integral para a fração de um dia."""
+        if absence.tipo_ausencia == "parcial" and absence.quantidade_horas:
+            return (
+                Decimal(str(absence.quantidade_horas)) / Decimal("8")
+            ).quantize(Decimal("0.0001"))
+        return Decimal("1")
+
+    @staticmethod
+    def _update_values(item, coverage, total_days, daily_value):
+        """Mantém os totais da glosa consistentes após cada mudança de status."""
+        covered_days = total_days if coverage == "coberta" else Decimal("0")
+        total_value = (total_days * daily_value).quantize(Decimal("0.01"))
+        covered_value = (covered_days * daily_value).quantize(Decimal("0.01"))
+        item.cobertura = coverage
+        item.quantidade_dias = total_days
+        item.quantidade_coberta_dias = covered_days
+        item.valor_diaria = daily_value
+        item.valor_total = total_value
+        item.valor_coberto = covered_value
+        item.valor_descoberto = (total_value - covered_value).quantize(Decimal("0.01"))
+
     @safe_route
     def dashboard(self, token_data):
         if not has_permission(token_data, "dashboard_glosas", "view"):
@@ -105,44 +165,17 @@ class DisallowanceService:
         if not absence.id:
             db.session.flush()
 
+        coverage = cls._coverage_status(absence)
+        total_days = cls._absence_days(absence)
+        daily_value = cls.get_default_daily_value(
+            absence.centro_custo_id,
+            absence.colaborador_id,
+        ).quantize(Decimal("0.01"))
         existing = Disallowance.query.filter_by(falta_id=absence.id).first()
         if existing:
+            # Não recria a glosa: apenas sincroniza cobertura e valores da falta.
+            cls._update_values(existing, coverage, total_days, existing.valor_diaria or daily_value)
             return existing, False
-
-        requisition = (
-            db.session.get(Requisicao, absence.requisicao_id)
-            if absence.requisicao_id
-            else None
-        )
-        history = (
-            History.query.filter_by(requisicao_id=absence.requisicao_id)
-            .order_by(History.id.desc())
-            .first()
-            if absence.requisicao_id
-            else None
-        )
-        request_status = (history.status if history else getattr(requisition, "status", None)) or ""
-        reserve_id = (
-            history.reserva_id if history else getattr(requisition, "reserva_id", 0)
-        ) or 0
-        if request_status == "approved" and reserve_id:
-            coverage = "coberta"
-        elif request_status == "reproved":
-            coverage = "descoberta"
-        else:
-            coverage = "em_analise"
-
-        total_days = Decimal("1")
-        if absence.tipo_ausencia == "parcial" and absence.quantidade_horas:
-            total_days = (
-                Decimal(str(absence.quantidade_horas)) / Decimal("8")
-            ).quantize(Decimal("0.0001"))
-        daily_value = cls.get_default_daily_value(absence.centro_custo_id).quantize(
-            Decimal("0.01")
-        )
-        covered_days = total_days if coverage == "coberta" else Decimal("0")
-        total_value = (total_days * daily_value).quantize(Decimal("0.01"))
-        covered_value = (covered_days * daily_value).quantize(Decimal("0.01"))
 
         item = Disallowance(
             competencia=absence.data_falta.date().replace(day=1),
@@ -153,17 +186,11 @@ class DisallowanceService:
             colaborador_matricula=absence.colaborador_matricula,
             falta_id=absence.id,
             requisicao_id=absence.requisicao_id,
-            cobertura=coverage,
-            quantidade_dias=total_days,
-            quantidade_coberta_dias=covered_days,
-            valor_diaria=daily_value,
-            valor_total=total_value,
-            valor_coberto=covered_value,
-            valor_descoberto=(total_value - covered_value).quantize(Decimal("0.01")),
             justificativa="Glosa preventiva gerada ao tratar a falta.",
             observacao="Registro criado automaticamente pelo Controle de Faltas.",
             criado_por_usuario_id=user_id,
         )
+        cls._update_values(item, coverage, total_days, daily_value)
         db.session.add(item)
         db.session.flush()
         return item, True
@@ -377,7 +404,14 @@ class DisallowanceService:
         ), 200
 
     @staticmethod
-    def get_default_daily_value(cost_center_id):
+    def get_default_daily_value(cost_center_id, employee_id=None):
+        """Prioriza o valor diário cadastrado no cargo do colaborador."""
+        employee = db.session.get(Employees, employee_id) if employee_id else None
+        cargo = db.session.get(Cargos, employee.cargo) if employee and employee.cargo else None
+        if cargo and cargo.multa is not None:
+            job_daily_value = Decimal(str(cargo.multa))
+            if job_daily_value > 0:
+                return job_daily_value
         if not cost_center_id:
             return DEFAULT_DAILY_VALUE
         center = db.session.get(CostCenters, cost_center_id)
@@ -471,7 +505,10 @@ class DisallowanceService:
         if creating and not item.centro_custo_id:
             return "O colaborador selecionado não possui contrato/centro de custo vinculado."
 
-        default_rate = self.get_default_daily_value(item.centro_custo_id)
+        default_rate = self.get_default_daily_value(
+            item.centro_custo_id,
+            item.colaborador_id,
+        )
         if "valor_diaria" in body:
             try:
                 item.valor_diaria = _parse_decimal(
