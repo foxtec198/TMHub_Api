@@ -10,3 +10,7 @@ service = QLDashboardService()
 @dashboard_ql_bp.get("")
 def root():
     return service.read()
+
+@dashboard_ql_bp.get("/diario")
+def diario():
+    return service.read_diario()

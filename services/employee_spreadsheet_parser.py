@@ -13,6 +13,8 @@ from re import match, sub
 from typing import Any, Iterable
 from unicodedata import combining, normalize
 
+from import_col.date_normalization import normalize_import_date
+
 
 SUPPORTED_EXTENSIONS = {".xls", ".xlsx"}
 COMPANY_TOKENS = ("COSTA OESTE", "FACILITIES", "GRABIN", "MAG")
@@ -119,7 +121,14 @@ def _xls_rows(path: Path) -> Iterable[tuple[Any, ...]]:
     workbook = xlrd.open_workbook(path)
     for sheet in workbook.sheets():
         for row_index in range(sheet.nrows):
-            yield tuple(sheet.row_values(row_index))
+            values = []
+            for column_index in range(sheet.ncols):
+                cell = sheet.cell(row_index, column_index)
+                if cell.ctype == xlrd.XL_CELL_DATE:
+                    values.append(xlrd.xldate_as_datetime(cell.value, workbook.datemode))
+                else:
+                    values.append(cell.value)
+            yield tuple(values)
 
 
 def _rows(path: Path) -> Iterable[tuple[Any, ...]]:
@@ -173,8 +182,14 @@ def parse_employee_spreadsheet(
 
         registration = _as_int(_cell(row, "codigo"))
         center_code = forced_center or _as_int(_cell(row, "centro_custo_num"))
-        admission = _cell(row, "admissao")
-        if not registration or not center_code or not isinstance(admission, (date, datetime)):
+        try:
+            admission = normalize_import_date(
+                _cell(row, "admissao"),
+                field="data de admissão",
+            )
+        except ValueError:
+            admission = None
+        if not registration or not center_code or admission is None:
             invalid.append(f"Linha {row_number}: matrícula, centro ou admissão inválidos.")
             continue
 
