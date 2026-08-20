@@ -90,6 +90,41 @@ with app.app_context():
             if "timo_ativo" not in refreshed_columns:
                 raise
 
+    requisition_tables = set(inspect(db.engine).get_table_names())
+    if "rp_requisicoes" in requisition_tables:
+        requisition_columns = {
+            column["name"] for column in inspect(db.engine).get_columns("rp_requisicoes")
+        }
+        if "origem" not in requisition_columns:
+            # A origem precisa ser persistida: uma requisição normal também
+            # pode ter registro em controle_faltas, então esse relacionamento
+            # isoladamente não identifica a fonte da solicitação.
+            try:
+                with db.engine.begin() as connection:
+                    connection.execute(text(
+                        "ALTER TABLE rp_requisicoes "
+                        "ADD COLUMN origem VARCHAR(30) NOT NULL DEFAULT 'requisicao'"
+                    ))
+                    connection.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_rp_requisicoes_origem "
+                        "ON rp_requisicoes (origem)"
+                    ))
+                    connection.execute(text(
+                        "UPDATE rp_requisicoes requisicao "
+                        "SET origem = 'controle_faltas' "
+                        "WHERE EXISTS ("
+                        "  SELECT 1 FROM rp_timeline timeline "
+                        "  WHERE timeline.requisicao_id = requisicao.id "
+                        "  AND timeline.tipo = 'Requisição criada através do Controle de Faltas'"
+                        ")"
+                    ))
+            except SQLAlchemyError:
+                refreshed_columns = {
+                    column["name"] for column in inspect(db.engine).get_columns("rp_requisicoes")
+                }
+                if "origem" not in refreshed_columns:
+                    raise
+
     department_configuration_tables = set(inspect(db.engine).get_table_names())
     if "configuracoes_departamentos" in department_configuration_tables:
         department_columns = {
@@ -233,7 +268,9 @@ def ql_snapshot_monitor():
     while True:
         try:
             with app.app_context():
-                QLDashboardService.capture_daily()
+                changed = QLDashboardService.capture_daily()
+                if changed:
+                    socketio.emit("ql_update", {"action": "snapshot_updated"})
         except Exception:
             app.logger.exception("Falha ao registrar histórico diário de QL")
         socketio.sleep(900)

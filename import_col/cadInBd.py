@@ -22,6 +22,8 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from tqdm import tqdm
 
+from import_col.date_normalization import normalize_import_date
+
 load_dotenv()
 
 
@@ -44,17 +46,10 @@ def normalize_registration(value):
 
 
 def parse_admission(value):
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, date):
-        return datetime.combine(value, datetime.min.time())
-    raw = str(value or "").strip()
-    for pattern in ("%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(raw, pattern)
-        except ValueError:
-            continue
-    raise ValueError(f"data de admissao invalida: {value!r}")
+    parsed = normalize_import_date(value, field="data de admissão")
+    if parsed is None:
+        raise ValueError("data de admissão ausente")
+    return parsed
 
 
 def parse_decimal(value, default=0.0):
@@ -79,7 +74,10 @@ def latest_employees(items):
     for item in items:
         try:
             registration = normalize_registration(item.get("codigo"))
-            admission = parse_admission(item.get("admissao"))
+            admission_value = item.get("admissao")
+            if admission_value in (None, ""):
+                admission_value = item.get("data_admissao")
+            admission = parse_admission(admission_value)
         except (TypeError, ValueError) as exc:
             invalid.append(str(exc))
             continue
@@ -210,11 +208,11 @@ def create_employees(connection, employees, positions=None, progress_callback=No
     updates_by_fields = {}
     ignored = 0
 
-    def comparable(value):
+    def comparable(field, value):
         if isinstance(value, Decimal):
             return value.normalize()
-        if isinstance(value, datetime):
-            return value.replace(tzinfo=None)
+        if field == "data_admissao":
+            return normalize_import_date(value, field="data de admissão")
         return value
 
     for processed, item in enumerate(tqdm(employees, desc="Sincronizando colaboradores"), start=1):
@@ -239,7 +237,11 @@ def create_employees(connection, employees, positions=None, progress_callback=No
             # Nunca substitui a fotografia de uma admissão mais recente por
             # um relatório anterior, mas permite atualizar campos de mesma
             # admissão somente quando houver divergência real.
-            if current["data_admissao"] and values["data_admissao"] < current["data_admissao"]:
+            current_admission = normalize_import_date(
+                current.get("data_admissao"),
+                field="data de admissão",
+            )
+            if current_admission and values["data_admissao"] < current_admission:
                 ignored += 1
             else:
                 changed_fields = tuple(
@@ -248,7 +250,7 @@ def create_employees(connection, employees, positions=None, progress_callback=No
                         "nome", "centro_id", "centro_uid", "data_admissao",
                         "situacao", "cargo", "carga_horaria", "salario", "cpf",
                     )
-                    if comparable(current.get(field)) != comparable(values.get(field))
+                    if comparable(field, current.get(field)) != comparable(field, values.get(field))
                 )
                 if changed_fields:
                     updates_by_fields.setdefault(changed_fields, []).append(

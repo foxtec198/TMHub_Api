@@ -27,4 +27,4 @@ jobs: # Jobs will run
             sudo git pull origin main
             venv/bin/pip cache purge || true
             venv/bin/pip install --no-cache-dir -r requirements.txt --upgrade
-            sudo systemctl restart api_tmhub
+            sudo systemctl restart tm
