@@ -30,7 +30,7 @@ from utils.safe_route import safe_route
 from utils.socket import socketio
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
-NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO")
+NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO", "OUTROS")
 DECLARATION_PARTIAL_HOURS = Decimal("4")
 
 class AbsenceControlService:

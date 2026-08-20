@@ -87,31 +87,29 @@ def safe_route(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         access_token = rq.headers.get("Access-Token")
-        if not access_token:
-            return jsonify("Token de acesso obrigatorio"), 400
-        try:
-            token_data = decode_token(access_token)
-            signature = inspect.signature(func)
-            if "token_data" in signature.parameters:
-                kwargs["token_data"] = token_data
+        if not access_token: return jsonify("Token de acesso obrigatorio"), 400
+        # try:
+        token_data = decode_token(access_token)
+        signature = inspect.signature(func)
+        if "token_data" in signature.parameters:
+            kwargs["token_data"] = token_data
 
-            result = func(*args, **kwargs)
-            channel = _data_channel(rq.path, rq.method)
-            if (
-                rq.method in MUTATION_METHODS
-                and _response_status(result) < 400
-                and channel
-            ):
-                _emit_data_change(token_data, channel)
-            return result
-        except ExpiredSignatureError:
-            return jsonify("Token de acesso expirado"), 401
-        except Exception as error:
-            try:
-                from utils.db import db
-                db.session.rollback()
-            except Exception:
-                pass
-            return jsonify("Erro com o servidor: " + str(error)), 500
-
+        result = func(*args, **kwargs)
+        channel = _data_channel(rq.path, rq.method)
+        if (
+            rq.method in MUTATION_METHODS
+            and _response_status(result) < 400
+            and channel
+        ):
+            _emit_data_change(token_data, channel)
+        return result
+        # except ExpiredSignatureError:
+        #     return jsonify("Token de acesso expirado"), 401
+        # except Exception as error:
+        #     try:
+        #         from utils.db import db
+        #         db.session.rollback()
+        #     except Exception:
+        #         pass
+        #     return jsonify("Erro com o servidor: " + str(error)), 500
     return wrapper
