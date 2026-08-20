@@ -12,12 +12,18 @@ from utils.safe_route import safe_route
 from datetime import datetime as dt, timedelta
 from email.message import EmailMessage
 from os import getenv
+from pathlib import Path
+from uuid import uuid4
+import json
 import re
 import secrets
 import smtplib
+from unicodedata import normalize
 from io import BytesIO
 # Dependências externas.
 from openpyxl import Workbook, load_workbook
+import pypdfium2 as pdfium
+from PIL import Image, ImageDraw, ImageOps, ImageStat, UnidentifiedImageError
 # Módulos internos da aplicação.
 from models.filiais import Branch, filial_usuarios
 from utils.filial_scope import is_admin
@@ -38,6 +44,15 @@ from utils.user_requirements import (
 )
 
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+REGISTERED_SIGNATURE_DIR = Path(
+    getenv("REGISTERED_SIGNATURE_DIR")
+    or Path(__file__).resolve().parents[1] / "storage" / "assinaturas_cadastradas"
+)
+MAX_REGISTERED_SIGNATURE_SIZE = 5 * 1024 * 1024
+MAX_REGISTERED_SIGNATURE_PIXELS = 16_000_000
+REGISTERED_SIGNATURE_EXTENSION = ".png"
+ALLOWED_REGISTERED_SIGNATURE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".pdf"}
+ALLOWED_REGISTERED_SIGNATURE_FORMATS = {"PNG", "JPEG", "WEBP"}
 
 class UserServices:
     @staticmethod
@@ -100,6 +115,7 @@ class UserServices:
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
             "permissions": serialize_permissions(user),
+            "assinatura_cadastrada": bool(user.assinatura_cadastrada),
             **({"foto_perfil": user.foto_perfil} if include_photo else {}),
         } for user in users]), 200
 
@@ -148,6 +164,242 @@ class UserServices:
 
         db.session.commit()
         return jsonify(self._serialize_admin(user)), 200
+
+    @staticmethod
+    def _registered_signature_path(filename):
+        """Resolve um nome de arquivo sem aceitar caminhos enviados pelo cliente."""
+        safe_name = Path(str(filename or "")).name
+        if not safe_name or safe_name != filename or Path(safe_name).suffix.lower() != REGISTERED_SIGNATURE_EXTENSION:
+            return None
+        return REGISTERED_SIGNATURE_DIR / safe_name
+
+    @staticmethod
+    def _signature_image_from_upload(upload, extension):
+        """Lê imagem ou primeira página de PDF e valida o conteúdo real do arquivo."""
+        upload.stream.seek(0, 2)
+        size = upload.stream.tell()
+        upload.stream.seek(0)
+        if not size or size > MAX_REGISTERED_SIGNATURE_SIZE:
+            return None, "O arquivo de assinatura deve ter no máximo 5 MB."
+
+        raw_file = upload.stream.read()
+        try:
+            if extension == ".pdf":
+                document = pdfium.PdfDocument(BytesIO(raw_file))
+                if len(document) < 1:
+                    document.close()
+                    return None, "O PDF enviado não possui páginas."
+                page = document[0]
+                image = page.render(scale=2).to_pil().copy()
+                page.close()
+                document.close()
+            else:
+                with Image.open(BytesIO(raw_file)) as source:
+                    if source.format not in ALLOWED_REGISTERED_SIGNATURE_FORMATS:
+                        return None, "O arquivo enviado não é uma imagem de assinatura válida."
+                    width, height = source.size
+                    if not width or not height or width * height > MAX_REGISTERED_SIGNATURE_PIXELS:
+                        return None, "A imagem da assinatura possui dimensões inválidas ou muito grandes."
+                    source.load()
+                    image = ImageOps.exif_transpose(source).copy()
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError, pdfium.PdfiumError):
+            return None, "Não foi possível ler o arquivo de assinatura."
+
+        width, height = image.size
+        if not width or not height or width * height > MAX_REGISTERED_SIGNATURE_PIXELS:
+            return None, "A imagem da assinatura possui dimensões inválidas ou muito grandes."
+        return image, None
+
+    @staticmethod
+    def _normalize_signature(image):
+        """Isola o papel claro, remove o fundo e gera uma PNG transparente."""
+        image = image.convert("RGBA")
+        image.thumbnail((1800, 1200), Image.Resampling.LANCZOS)
+
+        # Fotos feitas sobre uma mesa ou parede escura precisam ser recortadas
+        # primeiro na região clara do papel, antes de identificar o traço.
+        visible_image = Image.alpha_composite(
+            Image.new("RGBA", image.size, "white"),
+            image,
+        )
+        visible_grayscale = ImageOps.grayscale(visible_image.convert("RGB"))
+        paper_mask = visible_grayscale.point(lambda value: 255 if value >= 205 else 0)
+        paper_bounds = paper_mask.getbbox()
+        if paper_bounds:
+            left, top, right, bottom = paper_bounds
+            paper_area = (right - left) * (bottom - top)
+            image_area = image.width * image.height
+            if image_area and paper_area >= image_area * .08:
+                paper_padding = max(12, round(max(image.size) * .015))
+                image = image.crop((
+                    max(0, left - paper_padding),
+                    max(0, top - paper_padding),
+                    min(image.width, right + paper_padding),
+                    min(image.height, bottom + paper_padding),
+                ))
+
+        alpha = image.getchannel("A")
+        grayscale = ImageOps.grayscale(image.convert("RGB"))
+        # Um limite mais baixo evita transformar o papel sombreado em tinta.
+        ink_mask = grayscale.point(lambda value: 255 if value < 150 else 0)
+        if alpha.getextrema()[0] < 255:
+            ink_mask = Image.composite(ink_mask, alpha, alpha)
+
+        # Manchas ligadas à borda normalmente são a mesa, a sombra ou a margem
+        # do papel. O recorte da interface deve manter uma pequena margem ao
+        # redor da assinatura para que o traço real não seja removido aqui.
+        border_points = [
+            *((x, 0) for x in range(ink_mask.width)),
+            *((x, ink_mask.height - 1) for x in range(ink_mask.width)),
+            *((0, y) for y in range(ink_mask.height)),
+            *((ink_mask.width - 1, y) for y in range(ink_mask.height)),
+        ]
+        for point in border_points:
+            if ink_mask.getpixel(point):
+                ImageDraw.floodfill(ink_mask, point, 0)
+
+        bounds = ink_mask.getbbox()
+        if not bounds:
+            return None, "Não foi possível identificar o traço da assinatura."
+
+        left, top, right, bottom = bounds
+        padding = max(12, round(max(image.size) * .02))
+        crop_box = (
+            max(0, left - padding),
+            max(0, top - padding),
+            min(image.width, right + padding),
+            min(image.height, bottom + padding),
+        )
+        signature = Image.new("RGBA", (crop_box[2] - crop_box[0], crop_box[3] - crop_box[1]), (20, 35, 40, 0))
+        signature.putalpha(ink_mask.crop(crop_box))
+        signature.thumbnail((1200, 420), Image.Resampling.LANCZOS)
+        ink_coverage = ImageStat.Stat(signature.getchannel("A")).mean[0] / 255
+        if ink_coverage > .55:
+            return None, "Não foi possível separar a assinatura do fundo. Envie um recorte da assinatura sobre fundo claro."
+        return signature, None
+
+    @staticmethod
+    def _apply_signature_crop(image, crop_data):
+        """Aplica o recorte proporcional selecionado pelo administrador na prévia."""
+        if not crop_data:
+            return image, None
+        try:
+            crop = json.loads(crop_data)
+            x = float(crop.get("x"))
+            y = float(crop.get("y"))
+            width = float(crop.get("width"))
+            height = float(crop.get("height"))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return None, "O recorte da assinatura é inválido."
+
+        if not 0 <= x < 1 or not 0 <= y < 1 or not .03 <= width <= 1 or not .03 <= height <= 1:
+            return None, "Selecione uma área válida para o recorte da assinatura."
+        if x + width > 1 or y + height > 1:
+            return None, "O recorte da assinatura ultrapassa os limites da imagem."
+
+        left = round(image.width * x)
+        top = round(image.height * y)
+        right = round(image.width * (x + width))
+        bottom = round(image.height * (y + height))
+        if right <= left or bottom <= top:
+            return None, "Selecione uma área válida para o recorte da assinatura."
+        return image.crop((left, top, right, bottom)), None
+
+    @classmethod
+    def _registered_signature_filename(cls, user):
+        """Monta um nome legível com primeiro e último nome do titular."""
+        normalized_name = normalize("NFKD", str(user.nome or "")).encode("ascii", "ignore").decode().lower()
+        parts = [part for part in re.sub(r"[^a-z0-9]+", " ", normalized_name).split() if part]
+        first_name = parts[0] if parts else f"usuario_{user.id}"
+        last_name = parts[-1] if len(parts) > 1 else first_name
+        filename = f"{first_name}_{last_name}{REGISTERED_SIGNATURE_EXTENSION}"
+
+        # Evita que nomes iguais substituam a assinatura pertencente a outro usuário.
+        existing_owner = Users.query.filter(
+            Users.assinatura_cadastrada == filename,
+            Users.id != user.id,
+        ).first()
+        return filename if not existing_owner else f"{first_name}_{last_name}_{user.id}{REGISTERED_SIGNATURE_EXTENSION}"
+
+    @classmethod
+    def _store_registered_signature(cls, upload, user):
+        """Normaliza a assinatura e a grava temporariamente antes de nomeá-la."""
+        if not upload or not upload.filename:
+            return None, "Selecione um arquivo de assinatura."
+        extension = Path(upload.filename).suffix.lower()
+        if extension not in ALLOWED_REGISTERED_SIGNATURE_EXTENSIONS:
+            return None, "Envie um arquivo PNG, JPG, JPEG, WEBP ou PDF."
+
+        image, error = cls._signature_image_from_upload(upload, extension)
+        if error:
+            return None, error
+        image, error = cls._apply_signature_crop(image, rq.form.get("recorte"))
+        if error:
+            return None, error
+        signature, error = cls._normalize_signature(image)
+        if error:
+            return None, error
+
+        output = BytesIO()
+        signature.save(output, format="PNG", optimize=True)
+        if output.tell() > MAX_REGISTERED_SIGNATURE_SIZE:
+            return None, "A assinatura processada excedeu o limite de 5 MB."
+
+        REGISTERED_SIGNATURE_DIR.mkdir(parents=True, exist_ok=True)
+        filename = cls._registered_signature_filename(user)
+        temporary_path = REGISTERED_SIGNATURE_DIR / f".{uuid4().hex}.tmp"
+        try:
+            with temporary_path.open("xb") as stored_file:
+                stored_file.write(output.getvalue())
+        except OSError:
+            return None, "Não foi possível salvar a assinatura no servidor."
+        return (filename, temporary_path), None
+
+    @safe_route
+    def register_signature(self, user_id, token_data):
+        """Cadastra ou substitui a assinatura de um usuário somente por administrador."""
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem cadastrar assinaturas."), 403
+
+        user = db.session.get(Users, user_id)
+        if not user:
+            return jsonify("Usuário não encontrado."), 404
+
+        stored_signature, error = self._store_registered_signature(rq.files.get("arquivo"), user)
+        if error:
+            return jsonify(error), 400
+        filename, temporary_path = stored_signature
+
+        previous_filename = user.assinatura_cadastrada
+        user.assinatura_cadastrada = filename
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            if temporary_path.is_file():
+                temporary_path.unlink()
+            raise
+
+        try:
+            temporary_path.replace(self._registered_signature_path(filename))
+        except OSError:
+            user.assinatura_cadastrada = previous_filename
+            db.session.commit()
+            if temporary_path.is_file():
+                temporary_path.unlink()
+            return jsonify("Não foi possível finalizar o salvamento da assinatura."), 500
+
+        previous_path = self._registered_signature_path(previous_filename)
+        if previous_path and previous_path.is_file() and previous_path.name != filename:
+            try:
+                previous_path.unlink()
+            except OSError:
+                pass
+        return jsonify({
+            "message": f"Assinatura de {user.nome} cadastrada com sucesso.",
+            "usuario_id": user.id,
+            "assinatura_cadastrada": True,
+        }), 200
 
     @safe_route
     def delete(self): ...
