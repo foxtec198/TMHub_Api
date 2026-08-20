@@ -166,6 +166,7 @@ class RequestService:
                 CostCenters.local,
                 Supervisors.nome.label("supervisor"),
                 Requisicao.warning,
+                Requisicao.origem,
                 Requisicao.motivo,
                 Requisicao.status,
             )

@@ -16,6 +16,10 @@ class Requisicao(BaseModel):
     cc = db.Column(db.Integer, nullable=True)
     supervisor_id = db.Column(db.Integer, nullable=False)
     warning = db.Column(db.Boolean, default=False)
+    # Distingue a solicitação aberta na operação daquela criada manualmente
+    # pelo Controle de Faltas. O vínculo com controle_faltas não serve para
+    # isso, pois requisições normais de ausência também possuem esse vínculo.
+    origem = db.Column(db.String(30), nullable=False, default="requisicao", index=True)
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)
