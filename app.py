@@ -17,6 +17,7 @@ from utils.db import db
 from utils.permissions import enforce_request_permission
 from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
+from models.configuracoes_sistema import SystemConfiguration
 from services.tickets import TicketService
 from services.avaliacoes_experiencia import ExperienceEvaluationService
 from services.dashboard_ql import QLDashboardService

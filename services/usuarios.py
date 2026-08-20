@@ -35,6 +35,7 @@ from utils.password_security import (
     verify_password,
 )
 from utils.token import create_token
+from utils.maintenance import maintenance_mode_enabled, update_maintenance_mode
 from utils.user_requirements import (
     auth_requirements,
     is_valid_cpf,
@@ -606,6 +607,22 @@ class UserServices:
         if not user:
             return jsonify("Usuário não encontrado."), 404
         return jsonify(self._serialize(user))
+
+    @safe_route
+    def maintenance(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem consultar a manutenção."), 403
+        return jsonify({"manutencao_ativa": maintenance_mode_enabled()}), 200
+
+    @safe_route
+    def update_maintenance(self, token_data):
+        if not self._is_admin(token_data):
+            return jsonify("Apenas administradores podem alterar a manutenção."), 403
+        active = (rq.get_json(silent=True) or {}).get("manutencao_ativa")
+        if not isinstance(active, bool):
+            return jsonify("Informe um valor válido para manutenção."), 400
+        update_maintenance_mode(active, token_data.get("id"))
+        return jsonify({"manutencao_ativa": maintenance_mode_enabled()}), 200
 
     @safe_route
     def support_admins(self, token_data):

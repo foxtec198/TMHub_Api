@@ -15,7 +15,6 @@ class CostsCenterService():
     def _serialize_center(center):
         return {
             "id": center.id,
-            "uid": center.uid,
             "numero": center.centro_id,
             "nome": center.nome,
             "local": center.local,

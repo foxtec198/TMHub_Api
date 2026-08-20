@@ -24,12 +24,6 @@ class Termination(BaseModel):
         nullable=False,
         index=True,
     )
-    colaborador_uid = db.Column(
-        db.BigInteger,
-        db.ForeignKey("colaboradores.uid", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     motivo_rescisao = db.Column(db.String(500), nullable=False)
     data_admissao = db.Column(db.Date, nullable=False)
 
