@@ -236,8 +236,10 @@ class QLDashboardService:
             next_month = reference.replace(year=reference.year + 1, month=1)
         else:
             next_month = reference.replace(month=reference.month + 1)
-        return [(reference + timedelta(days=offset)).date()
-                for offset in range((next_month - reference).days)]
+        return [
+            reference + timedelta(days=offset)
+            for offset in range((next_month - reference).days)
+        ]
 
     @staticmethod
     def _situacao_dia(ativos, meta):
@@ -257,37 +259,73 @@ class QLDashboardService:
             for day in month_days:
                 key = day.isoformat()
                 snapshot = snapshot_lookup.get((key, department["departamento"]))
-                ativos = int(snapshot["ativos"]) if snapshot else 0
-                meta = int(snapshot["meta"]) if snapshot and snapshot["meta"] is not None else department["capacidade_esperada"]
+                ativos = int(snapshot["ativos"]) if snapshot else None
+                meta = (
+                    int(snapshot["meta"])
+                    if snapshot and snapshot["meta"] is not None
+                    else department["capacidade_esperada"]
+                )
                 if meta is not None:
                     meta = int(meta)
                 daily.append({
                     "data": key,
                     "colaboradores_ativos": ativos,
                     "capacidade_esperada": meta,
-                    "saldo": (ativos - meta) if meta is not None else None,
-                    "situacao": cls._situacao_dia(ativos, meta),
+                    "saldo": (ativos - meta) if ativos is not None and meta is not None else None,
+                    "situacao": (
+                        cls._situacao_dia(ativos, meta)
+                        if ativos is not None
+                        else "SEM_DADOS"
+                    ),
                 })
 
-            dias_com_meta = [d for d in daily if d["capacidade_esperada"] is not None]
-            media = round(sum(d["colaboradores_ativos"] for d in daily) / len(daily), 2) if daily else 0
-            meta_mes = (
-                sum(d["capacidade_esperada"] for d in dias_com_meta)
-                if dias_com_meta
+            days_with_data = [day for day in daily if day["colaboradores_ativos"] is not None]
+            days_with_target = [
+                day
+                for day in days_with_data
+                if day["capacidade_esperada"] is not None
+            ]
+            media_real = (
+                round(
+                    sum(day["colaboradores_ativos"] for day in days_with_data)
+                    / len(days_with_data),
+                    2,
+                )
+                if days_with_data
                 else None
             )
-            if meta_mes is None:
+            media_meta = (
+                round(
+                    sum(day["capacidade_esperada"] for day in days_with_target)
+                    / len(days_with_target),
+                    2,
+                )
+                if days_with_target
+                else None
+            )
+            total_real = sum(day["colaboradores_ativos"] for day in days_with_target)
+            total_meta = sum(day["capacidade_esperada"] for day in days_with_target)
+            if not days_with_data:
+                percentual = None
+                situacao_mes = "SEM_DADOS"
+            elif not days_with_target:
+                percentual = None
                 situacao_mes = "SEM_META"
-            elif media >= meta_mes:
-                situacao_mes = "NO_QUADRO"
+            elif total_meta <= 0:
+                # Meta zero não representa divisão impossível: qualquer
+                # efetivo atende o quadro, seguindo a situação já calculada.
+                percentual = 100
+                situacao_mes = cls._situacao_dia(total_real, total_meta)
             else:
-                situacao_mes = "DEFICIT"
+                percentual = round((total_real / total_meta) * 100, 2)
+                situacao_mes = cls._situacao_dia(total_real, total_meta)
 
             rows.append({
                 "departamento": department["departamento"],
                 "dias": daily,
-                "media": media,
-                "meta_mes": meta_mes,
+                "media_real": media_real,
+                "media_meta": media_meta,
+                "percentual": percentual,
                 "situacao_mes": situacao_mes,
             })
         return rows
@@ -330,13 +368,15 @@ class QLDashboardService:
             QLDailySnapshot.departamento.in_(department_filter),
         ).all()
 
-        lookup = {
-            (row.data_referencia.isoformat(), row.departamento): {
-                "ativos": int(row.colaboradores_ativos or 0),
-                "meta": int(row.capacidade_esperada) if row.capacidade_esperada is not None else None,
-            }
-            for row in snapshots
-        }
+        lookup = {}
+        for row in snapshots:
+            key = (row.data_referencia.isoformat(), row.departamento)
+            values = lookup.setdefault(key, {"ativos": 0, "meta": None})
+            values["ativos"] += int(row.colaboradores_ativos or 0)
+            if row.capacidade_esperada is not None:
+                # A meta é configurada por departamento; em uma seleção de
+                # filiais ela não deve ser somada uma vez por filial.
+                values["meta"] = max(values["meta"] or 0, int(row.capacidade_esperada))
 
         return jsonify({
             "mes": reference_month.strftime("%Y-%m"),
