@@ -13,21 +13,46 @@ from re import match, sub
 from typing import Any, Iterable
 from unicodedata import combining, normalize
 
+from import_col.cols import _cidade_para
 from import_col.date_normalization import normalize_import_date
 
 
 SUPPORTED_EXTENSIONS = {".xls", ".xlsx"}
 COMPANY_TOKENS = ("COSTA OESTE", "FACILITIES", "GRABIN", "MAG")
+# Índices do relatório legado. Arquivos novos são resolvidos pelo texto do
+# cabeçalho para não dependerem da posição escolhida na exportação.
 HEADER_COLUMNS = {
     "codigo": 0,
     "nome": 4,
     "cargo": 11,
     "centro_custo_num": 18,
+    "centro_custo": 19,
     "hor": 20,
     "admissao": 22,
     "situacao": 26,
     "cpf": 28,
     "salario": 32,
+}
+
+HEADER_ALIASES = {
+    "codigo": {"CODIGO", "MATRICULA", "MATRICULA COLABORADOR", "CODIGO COLABORADOR"},
+    "nome": {"NOME", "NOME COLABORADOR", "COLABORADOR", "NOME FUNCIONARIO"},
+    "cargo": {"CARGO", "FUNCAO", "FUNCAO COLABORADOR"},
+    "centro_custo_num": {
+        "CODIGO CENTRO DE CUSTO", "COD CENTRO DE CUSTO", "CODIGO C CENTRO",
+        "C CUSTO", "CCUSTO", "CENTRO CUSTO CODIGO",
+    },
+    "centro_custo": {
+        "CENTRO DE CUSTO", "CENTRO CUSTO", "NOME CENTRO DE CUSTO",
+        "CONTRATO", "LOCAL", "LOCAL DE TRABALHO",
+    },
+    "empresa": {"EMPRESA", "RAZAO SOCIAL", "EMPREGADOR"},
+    "hor": {"HOR", "CARGA HORARIA", "CARGA HORARIA MENSAL"},
+    "admissao": {"ADMISSAO", "DATA ADMISSAO", "DT ADMISSAO"},
+    "situacao": {"SITUACAO", "STATUS", "SITUACAO COLABORADOR"},
+    "cpf": {"CPF"},
+    "salario": {"SALARIO", "SALARIO BASE"},
+    "departamento": {"DEPARTAMENTO", "DPTO", "DEPARTAMENTO CODIGO"},
 }
 
 
@@ -38,6 +63,26 @@ def _clean(value: Any) -> str:
 def _normalized(value: Any) -> str:
     decomposed = normalize("NFKD", _clean(value).upper())
     return "".join(char for char in decomposed if not combining(char))
+
+
+def _header_key(value: Any) -> str:
+    """Normaliza títulos de planilha sem confundir texto de linhas de dados."""
+    return sub(r"[^A-Z0-9]+", " ", _normalized(value)).strip()
+
+
+def _header_mapping(row: tuple[Any, ...]) -> dict[str, int] | None:
+    """Detecta a linha de cabeçalho da exportação nova sem perder o legado."""
+    available = {_header_key(value): index for index, value in enumerate(row) if _header_key(value)}
+    mapped = {}
+    for field, aliases in HEADER_ALIASES.items():
+        for alias in aliases:
+            if alias in available:
+                mapped[field] = available[alias]
+                break
+
+    required = {"codigo", "nome"}
+    has_center = "centro_custo" in mapped or "centro_custo_num" in mapped
+    return mapped if required.issubset(mapped) and has_center else None
 
 
 def _known_company(value: Any) -> str | None:
@@ -90,13 +135,53 @@ def _as_int(value: Any) -> int | None:
         return int(digits) if digits else None
 
 
-def _cell(row: tuple[Any, ...], key: str) -> Any:
-    index = HEADER_COLUMNS[key]
+def _cell(row: tuple[Any, ...], key: str, columns: dict[str, int] | None = None) -> Any:
+    index = (columns or {}).get(key, HEADER_COLUMNS.get(key))
+    if index is None:
+        return None
     return row[index] if len(row) > index else None
 
 
-def _is_employee_row(row: tuple[Any, ...]) -> bool:
-    return _as_int(_cell(row, "codigo")) is not None and bool(_clean(_cell(row, "nome")))
+def _is_employee_row(row: tuple[Any, ...], columns: dict[str, int] | None = None) -> bool:
+    return (
+        _as_int(_cell(row, "codigo", columns)) is not None
+        and bool(_clean(_cell(row, "nome", columns)))
+    )
+
+
+def _center_code(value: Any) -> int | None:
+    """Extrai o código somente quando ele abre o nome do centro de custo."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = int(value)
+        return numeric if numeric == value else None
+    cleaned = _clean(value)
+    if match(r"^\d+$", cleaned):
+        return int(cleaned)
+    prefix = match(r"\s*(\d+)\s*(?:-|/|$)", cleaned)
+    return int(prefix.group(1)) if prefix else None
+
+
+def _department_code(value: Any) -> int | None:
+    direct = _as_int(value)
+    if direct is not None:
+        return direct
+    prefix = match(r"\s*(\d+)", _clean(value))
+    return int(prefix.group(1)) if prefix else None
+
+
+def _center_details(row: tuple[Any, ...]) -> tuple[str, int | None] | None:
+    """Lê o cabeçalho de grupo do relatório: ``Centro de Custo: 87 - ...``."""
+    values = [_clean(value) for value in row]
+    label_index = next(
+        (index for index, value in enumerate(values) if "CENTRO DE CUSTO" in _normalized(value)),
+        None,
+    )
+    if label_index is None:
+        return None
+    center_name = next((value for value in values[label_index + 1:] if value), "")
+    if not center_name:
+        return None
+    return center_name, _center_code(center_name)
 
 
 def _xlsx_rows(path: Path) -> Iterable[tuple[Any, ...]]:
@@ -162,55 +247,90 @@ def parse_employee_spreadsheet(
     current_company = fallback_company
     current_department = ""
     current_department_code: int | None = None
+    current_columns: dict[str, int] | None = None
+    current_center_name: str | None = None
+    current_center_code: int | None = None
     employees: list[dict[str, Any]] = []
     invalid: list[str] = []
     companies: set[str] = set()
 
     for row_number, raw_row in enumerate(_rows(source_path), start=1):
         row = tuple(raw_row)
+        detected_header = _header_mapping(row)
+        if detected_header:
+            current_columns = detected_header
+            continue
         first_cell = _clean(row[0] if row else None)
-        if first_cell and "SERVICOS" in _normalized(first_cell):
+        identified_company = _known_company(first_cell)
+        if identified_company:
+            current_company = identified_company
+        elif first_cell and "SERVICOS" in _normalized(first_cell):
             current_company = _company_name(first_cell, fallback_company)
+
+        center = _center_details(row)
+        if center:
+            current_center_name, current_center_code = center
+            continue
 
         department = _department_details(row)
         if department:
             current_department, current_department_code = department
             current_company = _known_company(current_department) or current_company
             continue
-        if not _is_employee_row(row):
+        if not _is_employee_row(row, current_columns):
             continue
 
-        registration = _as_int(_cell(row, "codigo"))
-        center_code = forced_center or _as_int(_cell(row, "centro_custo_num"))
+        registration = _as_int(_cell(row, "codigo", current_columns))
+        center_name = (
+            _clean(_cell(row, "centro_custo", current_columns))
+            or current_center_name
+        )
+        center_code = forced_center or _center_code(
+            _cell(row, "centro_custo_num", current_columns)
+        ) or _center_code(center_name) or current_center_code
+        admission_value = _cell(row, "admissao", current_columns)
+        # O RELAÇÃO DE EMPREGADOS II mescla visualmente o cabeçalho de
+        # admissão uma coluna à direita do valor. Quando isso ocorre, a célula
+        # apontada pelo cabeçalho fica vazia e o índice legado é o valor real.
+        if admission_value in (None, "") and current_columns is not None:
+            admission_value = _cell(row, "admissao")
         try:
             admission = normalize_import_date(
-                _cell(row, "admissao"),
+                admission_value,
                 field="data de admissão",
             )
         except ValueError:
             admission = None
-        if not registration or not center_code or admission is None:
-            invalid.append(f"Linha {row_number}: matrícula, centro ou admissão inválidos.")
+        if not registration or (not center_code and not center_name) or admission is None:
+            invalid.append(f"Linha {row_number}: matrícula, centro/nome do centro ou admissão inválidos.")
             continue
 
-        company = _company_name(current_company, fallback_company)
+        company = _company_name(
+            _cell(row, "empresa", current_columns) or current_company,
+            fallback_company,
+        )
+        department_value = _clean(_cell(row, "departamento", current_columns))
+        department_code = _department_code(department_value) or current_department_code
+        mapped_department, city_id, city_name = _cidade_para(center_code)
+        if department_code is None:
+            department_code = mapped_department
         companies.add(company)
         employees.append(
             {
                 "codigo": registration,
-                "nome": _clean(_cell(row, "nome")),
-                "cargo": _clean(_cell(row, "cargo")),
+                "nome": _clean(_cell(row, "nome", current_columns)),
+                "cargo": _clean(_cell(row, "cargo", current_columns)),
                 "centro_custo_num": center_code,
-                # O relatório não entrega o nome do centro. O importador só
-                # atualiza "local" quando vier uma descrição verdadeira.
-                "centro_custo": None,
-                "hor": _cell(row, "hor"),
+                "centro_custo": center_name,
+                "hor": _cell(row, "hor", current_columns),
                 "admissao": admission,
-                "situacao": _as_int(_cell(row, "situacao")),
-                "cpf": _clean(_cell(row, "cpf")) or None,
-                "salario": _cell(row, "salario"),
-                "departamento": current_department,
-                "departamento_codigo": current_department_code,
+                "situacao": _as_int(_cell(row, "situacao", current_columns)),
+                "cpf": _clean(_cell(row, "cpf", current_columns)) or None,
+                "salario": _cell(row, "salario", current_columns),
+                "departamento": department_value or current_department,
+                "departamento_codigo": department_code,
+                "cidade_id": city_id,
+                "cidade": city_name,
                 "empresa_nome": company,
             }
         )

@@ -19,6 +19,7 @@ from import_col.cadInBd import (
     ensure_positions,
     latest_employees,
     link_supervisors_to_employees,
+    validate_cost_center_identities,
 )
 from import_col.json_loader import prepare_uploaded_json
 from services.employee_spreadsheet_parser import parse_employee_spreadsheet
@@ -200,6 +201,9 @@ def _prepare_import_file(file_path, filename, centro_forcado=None):
     if suffix in {".xls", ".xlsx"}:
         parsed = parse_employee_spreadsheet(file_path, filename, centro_forcado=centro_forcado)
         employees, dedupe_errors, duplicates = latest_employees(parsed["employees"])
+        # Faz a validação antes de iniciar a thread para nunca deixar um
+        # centro de mesmo código sobrescrever outro nome no banco.
+        validate_cost_center_identities(employees)
         return employees, [*parsed["invalid"], *dedupe_errors], duplicates
     raise ValueError("Envie o relatório no formato .json, .xls ou .xlsx.")
 

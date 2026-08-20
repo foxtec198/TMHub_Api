@@ -118,7 +118,43 @@ def ensure_companies(connection, employees):
     return companies, created
 
 
+def validate_cost_center_identities(employees):
+    """Impede que um código reutilizado sobrescreva outro centro da empresa.
+
+    ``centro_id`` é uma integração externa e só é único dentro da empresa.
+    Logo, receber duas descrições diferentes para a mesma dupla empresa/código
+    é uma inconsistência da origem que precisa ser corrigida antes do commit.
+    """
+    names_by_identity = {}
+    for item in employees:
+        company = item.get("_empresa_id") or normalize_name(item.get("empresa_nome"))
+        center_code = item.get("centro_custo_num")
+        center_name = normalize_name(item.get("centro_custo"))
+        if company is None or center_code is None or not center_name:
+            continue
+        names_by_identity.setdefault((company, int(center_code)), set()).add(center_name)
+
+    conflicts = [
+        (identity, sorted(names))
+        for identity, names in names_by_identity.items()
+        if len(names) > 1
+    ]
+    if not conflicts:
+        return
+
+    preview = "; ".join(
+        f"empresa {company}, centro {code}: {', '.join(names[:2])}"
+        for (company, code), names in conflicts[:5]
+    )
+    raise ValueError(
+        "A planilha possui códigos de centro de custo repetidos com nomes diferentes "
+        f"na mesma empresa ({len(conflicts)} conflito(s)). {preview}. "
+        "Separe o arquivo por empresa ou corrija os códigos antes de importar."
+    )
+
+
 def create_cost_centers(connection, employees):
+    validate_cost_center_identities(employees)
     centers = {}
     for item in employees:
         center_id = item.get("centro_custo_num")
