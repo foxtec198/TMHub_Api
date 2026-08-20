@@ -4,6 +4,7 @@ from datetime import date, datetime as dt, time, timedelta
 from io import BytesIO
 from pathlib import Path
 from os import getenv
+from shutil import copyfile
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,7 @@ from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.medidas_disciplinares import DisciplinaryMeasure
 from models.supervisores import Supervisors
+from models.usuarios import Users
 from utils.db import db
 from utils.filial_scope import apply_cost_center_scope, can_access_supervisor, is_admin
 from utils.permissions import has_permission
@@ -75,6 +77,10 @@ PDF_PAGE_HEIGHT = 841.89
 EXPERIENCE_SIGNATURE_DIR = Path(
     getenv("EXPERIENCE_SIGNATURE_DIR")
     or Path(__file__).resolve().parents[1] / "storage" / "avaliacoes_experiencia"
+)
+REGISTERED_SIGNATURE_DIR = Path(
+    getenv("REGISTERED_SIGNATURE_DIR")
+    or Path(__file__).resolve().parents[1] / "storage" / "assinaturas_cadastradas"
 )
 MAX_EXPERIENCE_SIGNATURE_SIZE = 2 * 1024 * 1024
 SIGNATURE_EXTENSION = ".png"
@@ -372,6 +378,14 @@ class ExperienceEvaluationService:
         if not safe_name or safe_name != filename:
             return None
         return EXPERIENCE_SIGNATURE_DIR / safe_name
+
+    @staticmethod
+    def _registered_signature_path(filename):
+        """Resolve a assinatura cadastrada sem aceitar caminhos externos."""
+        safe_name = Path(str(filename or "")).name
+        if not safe_name or safe_name != filename or Path(safe_name).suffix.lower() != SIGNATURE_EXTENSION:
+            return None
+        return REGISTERED_SIGNATURE_DIR / safe_name
 
     @classmethod
     def _remove_signature_file(cls, filename):
@@ -879,6 +893,79 @@ class ExperienceEvaluationService:
         return jsonify(self._serialize(evaluation, detailed=True)), 200
 
     @safe_route
+    def use_registered_rh_signature(self, evaluation_id, token_data):
+        """Copia a assinatura própria do usuário ou a escolhida pelo administrador."""
+        if not has_permission(token_data, "controle_experiencia_rh", "edit"):
+            return jsonify("Você não possui permissão para assinar esta avaliação."), 403
+        authenticated_user_id = (token_data or {}).get("id")
+        body = request.get_json(silent=True) or {}
+        requested_user_id = body.get("usuario_id")
+        if is_admin(token_data):
+            try:
+                signer_id = int(requested_user_id)
+            except (TypeError, ValueError):
+                return jsonify("Selecione um usuário com assinatura cadastrada."), 400
+        else:
+            signer_id = authenticated_user_id
+            if requested_user_id not in (None, "", authenticated_user_id, str(authenticated_user_id)):
+                return jsonify("Você pode utilizar somente a sua própria assinatura."), 403
+
+        signer = db.session.get(Users, signer_id)
+        if not signer or not signer.assinatura_cadastrada:
+            return jsonify("O usuário selecionado não possui uma assinatura cadastrada."), 409
+
+        evaluation, error = self._get_evaluation_in_scope(evaluation_id, token_data)
+        if error:
+            return error
+        if evaluation.status != "aguardando_rh":
+            return jsonify("A avaliação não está disponível para assinatura do RH."), 409
+        if evaluation.classificacao_perfil not in PROFILE_LABELS:
+            return jsonify("Salve a classificação do perfil antes de assinar."), 400
+        if evaluation.decisao_rh not in DECISION_LABELS:
+            return jsonify("Salve a decisão do RH antes de assinar."), 400
+
+        source = self._registered_signature_path(signer.assinatura_cadastrada)
+        if not source or not source.is_file():
+            return jsonify("A assinatura cadastrada do usuário selecionado não foi encontrada."), 409
+        try:
+            with Image.open(source) as signature:
+                signature.verify()
+                if signature.format != "PNG":
+                    return jsonify("A assinatura cadastrada deve estar em PNG."), 409
+        except (UnidentifiedImageError, OSError):
+            return jsonify("A assinatura cadastrada é inválida."), 409
+
+        EXPERIENCE_SIGNATURE_DIR.mkdir(parents=True, exist_ok=True)
+        stored_name = f"{uuid4().hex}{SIGNATURE_EXTENSION}"
+        try:
+            copyfile(source, EXPERIENCE_SIGNATURE_DIR / stored_name)
+        except OSError:
+            return jsonify("Não foi possível preparar a assinatura cadastrada."), 500
+
+        previous = evaluation.assinatura_rh
+        evaluation.assinatura_rh = stored_name
+        self._remove_signature_file(previous)
+        db.session.commit()
+        return jsonify(self._serialize(evaluation, detailed=True)), 200
+
+    @safe_route
+    def registered_signatures(self, token_data):
+        """Lista titulares de assinaturas cadastradas apenas para administradores."""
+        if not is_admin(token_data):
+            return jsonify("Somente administradores podem consultar assinaturas cadastradas."), 403
+
+        users = Users.query.filter(
+            Users.assinatura_cadastrada.isnot(None),
+            func.trim(Users.assinatura_cadastrada) != "",
+        ).order_by(Users.nome).all()
+        options = []
+        for user in users:
+            signature_path = self._registered_signature_path(user.assinatura_cadastrada)
+            if signature_path and signature_path.is_file():
+                options.append({"id": user.id, "nome": user.nome})
+        return jsonify(options), 200
+
+    @safe_route
     def delete(self, evaluation_id, token_data):
         """Permite remover somente registros finalizados e por administrador."""
         if not is_admin(token_data):
@@ -1139,18 +1226,18 @@ class ExperienceEvaluationService:
                 check(coordinate, y)
 
         profile_coordinates = {
-            "incompativel": (52, 366),
-            "bom_desenvolvivel": (52, 355),
-            "excelente": (52, 344),
+            "incompativel": (55, 368),
+            "bom_desenvolvivel": (55, 357),
+            "excelente": (55, 346),
         }
         profile_coordinate = profile_coordinates.get(evaluation.classificacao_perfil)
         if profile_coordinate:
             check(*profile_coordinate)
 
         decision_coordinates = {
-            "demitir": (52, 302),
-            "efetivar": (127, 302),
-            "prorrogar": (200, 302),
+            "demitir": (55, 304),
+            "efetivar": (130, 304),
+            "prorrogar": (203, 304),
         }
         decision_coordinate = decision_coordinates.get(
             evaluation.decisao_rh or evaluation.decisao_supervisor
@@ -1175,8 +1262,8 @@ class ExperienceEvaluationService:
         # Datas e assinaturas registradas no celular ocupam os campos do formulário.
         date_fields(178, rh_date)
         date_fields(133, operation_date)
-        paste_signature(evaluation.assinatura_rh, 335, 181, 160, 28)
-        paste_signature(evaluation.assinatura_supervisor, 335, 136, 160, 28)
+        paste_signature(evaluation.assinatura_rh, 300, 174, 190, 44)
+        paste_signature(evaluation.assinatura_supervisor, 300, 120, 190, 44)
         output = BytesIO()
         image.save(output, format="PDF", resolution=PDF_RENDER_DPI)
         output.seek(0)
