@@ -610,7 +610,7 @@ class ProjectService:
         if "columns" in body and "cards" in body:
             card_ids = [
                 card.id
-                for card in ProjectCard.query.join(ProjectColumn)
+                for card in ProjectCard.query.join(ProjectColumn, ProjectColumn.id == ProjectCard.column_id)
                 .filter(ProjectColumn.project_id == project.id)
                 .all()
             ]
