@@ -203,9 +203,21 @@ def enforce_request_permission():
 
     if request.method == "OPTIONS":
         return None
-    if request.path.rstrip("/") == "/repo/request" and request.method == "POST" and not request.headers.get("Access-Token"):
+    normalized_path = request.path.rstrip("/") or "/"
+    public_requisition_paths = {
+        "/repo/request",
+        "/repo/request/contexto-disciplinar",
+        "/repo/request/contexto-adicional",
+    }
+    # O formulário de reposições é público para os supervisores. As rotas de
+    # contexto só retornam os dados necessários para montar esse formulário.
+    if (
+        normalized_path in public_requisition_paths
+        and request.method == "POST"
+        and not request.headers.get("Access-Token")
+    ):
         return None
-    required = request_permission(request.path.rstrip("/") or "/", request.method)
+    required = request_permission(normalized_path, request.method)
     if not required:
         return None
     access_token = request.headers.get("Access-Token")

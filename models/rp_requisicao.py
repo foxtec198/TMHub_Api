@@ -12,14 +12,27 @@ class Requisicao(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
     reserva_id = db.Column(db.Integer, nullable=False)
+    # Colaborador que realizou uma cobertura fora das reservas técnicas.
+    cobertura_colaborador_id = db.Column(
+        db.Integer,
+        db.ForeignKey("colaboradores.id", ondelete="SET NULL"),
+        index=True,
+    )
     ausente_id = db.Column(db.Integer, nullable=False)
     cc = db.Column(db.Integer, nullable=True)
     supervisor_id = db.Column(db.Integer, nullable=False)
     warning = db.Column(db.Boolean, default=False)
-    # Distingue a solicitação aberta na operação daquela criada manualmente
-    # pelo Controle de Faltas. O vínculo com controle_faltas não serve para
-    # isso, pois requisições normais de ausência também possuem esse vínculo.
-    origem = db.Column(db.String(30), nullable=False, default="requisicao", index=True)
+    # Snapshot do adicional para preservar o valor válido na data do lançamento.
+    adicional_tipo = db.Column(db.String(100))
+    adicional_valor_diaria = db.Column(db.Numeric(12, 2))
+    # Identifica a ausência operacional criada quando uma cobertura desloca
+    # um colaborador de um cargo de menor valor.
+    requisicao_origem_id = db.Column(
+        db.Integer,
+        db.ForeignKey("rp_requisicoes.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)

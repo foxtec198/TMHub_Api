@@ -1,5 +1,7 @@
 # Modelos
 from models.centros_de_custo import CostCenters, db
+from models.controle_faltas import AbsenceControl
+from models.glosas import Disallowance
 from models.rp_requisicao import Requisicao
 from models.rp_timeline import Timeline
 from models.supervisores import Supervisors
@@ -13,8 +15,10 @@ from models.medidas_disciplinares import DisciplinaryMeasure
 
 # Utilitários
 from datetime import date, datetime as dt, timedelta
+from decimal import Decimal
 from dateutils import relativedelta
 from flask import jsonify, request, send_file
+import re
 from utils.socket import socketio
 from calendar import monthrange
 from sqlalchemy import and_, case, func, or_
@@ -60,6 +64,424 @@ class RequestService:
     """Owns requisition validation, date ranges, spreadsheet I/O and queue queries."""
     REASONS = {"AFASTAMENTO", "ATESTADO", "DECLARAÇÃO", "FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "INJUSTIFICADA"}
     ISNOTFAULT = ["FÉRIAS", "FERIAS", "POSTO VAGO", "REMANEJAMENTO", "AFASTAMENTO"]
+    OPERATIONAL_COVERAGE_REASON = "COBERTURA OPERACIONAL DE ADICIONAL"
+    GAF_VALOR_DIARIO = Decimal("4.36")
+    INSALUBRIDADE_VALOR_DIARIO = {
+        "10": Decimal("5.40"),
+        "20": Decimal("10.81"),
+        "40": Decimal("21.61"),
+    }
+    INSALUBRIDADE_PATTERN = re.compile(r"INSALUB(?:RIDADE|\.)?\s*(10|20|40)\s*%")
+    GAF_PATTERN = re.compile(r"G[\s./-]*A[\s./-]*F")
+
+    @classmethod
+    def _additional_data(cls, cargo):
+        """Calcula insalubridade pelo nome do cargo e preserva adicionais manuais."""
+        if not cargo:
+            return None, Decimal("0")
+
+        additional_type = str(cargo.adicional_tipo or "").strip() or None
+        cargo_name = str(cargo.nome or "").upper()
+        match = cls.INSALUBRIDADE_PATTERN.search(cargo_name)
+        has_gaf = bool(cls.GAF_PATTERN.search(cargo_name))
+        manual_daily_value = Decimal(str(cargo.adicional_valor_diaria or 0))
+
+        # Apenas cargos com percentual explícito são calculados automaticamente.
+        # Nomes genéricos como "INSALUBRIDADE" permanecem para preenchimento manual.
+        if not match:
+            if has_gaf and "INSALUB" not in cargo_name:
+                return "GAF", cls.GAF_VALOR_DIARIO
+            return additional_type, manual_daily_value
+
+        daily_value = cls.INSALUBRIDADE_VALOR_DIARIO[match.group(1)]
+        if has_gaf:
+            daily_value += cls.GAF_VALOR_DIARIO
+
+        calculated_type = f"INSALUBRIDADE {match.group(1)}%"
+        if has_gaf:
+            calculated_type += " + GAF"
+        return calculated_type, daily_value
+
+    @classmethod
+    def _cargo_data(cls, employee):
+        """Lê os valores do cargo sem usar dados enviados pelo navegador."""
+        cargo = (
+            db.session.get(Cargos, employee.cargo)
+            if employee and employee.cargo
+            else None
+        )
+        additional_type, additional_daily_value = cls._additional_data(cargo)
+        return {
+            "cargo_id": cargo.id if cargo else None,
+            "cargo": cargo.nome if cargo else None,
+            "adicional_tipo": additional_type,
+            "adicional_valor_diaria": additional_daily_value,
+            "valor_diaria": Decimal(str(cargo.multa or 0)) if cargo else Decimal("0"),
+        }
+
+    @classmethod
+    def _additional_context(cls, absent_employee, coverage_employee=None):
+        """Define se a cobertura exige adicional e se desloca um posto menor."""
+        absent_cargo = cls._cargo_data(absent_employee)
+        coverage_cargo = cls._cargo_data(coverage_employee) if coverage_employee else None
+        has_additional = bool(
+            absent_cargo["adicional_tipo"]
+            and absent_cargo["adicional_valor_diaria"] > 0
+        )
+        same_job_and_additional = bool(
+            coverage_cargo
+            and absent_cargo["cargo_id"] == coverage_cargo["cargo_id"]
+            and absent_cargo["adicional_tipo"] == coverage_cargo["adicional_tipo"]
+            and absent_cargo["adicional_valor_diaria"] == coverage_cargo["adicional_valor_diaria"]
+        )
+        requires_additional = (
+            has_additional
+            and bool(coverage_cargo)
+            and not same_job_and_additional
+        )
+        coverage_has_lower_value = bool(
+            requires_additional
+            # Valor zero representa cargo ainda não parametrizado, não um
+            # cargo comprovadamente menor para gerar glosa operacional.
+            and coverage_cargo["valor_diaria"] > 0
+            and coverage_cargo["valor_diaria"] < absent_cargo["valor_diaria"]
+        )
+        return {
+            "has_additional": has_additional,
+            "requires_additional": requires_additional,
+            "coverage_has_lower_value": coverage_has_lower_value,
+            "adicional_tipo": absent_cargo["adicional_tipo"] if requires_additional else None,
+            "adicional_valor_diaria": (
+                absent_cargo["adicional_valor_diaria"]
+                if requires_additional
+                else Decimal("0")
+            ),
+        }
+
+    @staticmethod
+    def _coverage_candidates(absent_employee):
+        """Retorna somente colegas ativos do mesmo centro de custo do ausente."""
+        if not absent_employee or not absent_employee.centro_id:
+            return []
+        rows = (
+            db.session.query(Employees, Cargos.nome.label("cargo"))
+            .outerjoin(Cargos, Cargos.id == Employees.cargo)
+            .filter(
+                Employees.centro_id == absent_employee.centro_id,
+                Employees.id != absent_employee.id,
+                Employees.situacao == 1,
+            )
+            .order_by(Employees.nome)
+            .all()
+        )
+        return [
+            {
+                "id": employee.id,
+                "nome": employee.nome,
+                "matricula": employee.matricula,
+                "centro_id": employee.centro_id,
+                "cargo": cargo,
+            }
+            for employee, cargo in rows
+        ]
+
+    def additional_context(self):
+        """Prepara o item 3 sem expor colaboradores de outros centros de custo."""
+        body = request.get_json(silent=True) or {}
+        try:
+            absent_id = int(body.get("ausente_id"))
+            reserve_id = int(body.get("reserva_id") or 0)
+        except (TypeError, ValueError):
+            return jsonify("Informe um colaborador ausente válido."), 400
+
+        absent_employee = db.session.get(Employees, absent_id)
+        if not absent_employee:
+            return jsonify("Colaborador ausente não encontrado."), 404
+        if not absent_employee.centro_id:
+            return jsonify("O colaborador ausente não possui centro de custo cadastrado."), 400
+
+        coverage_employee = db.session.get(Employees, reserve_id) if reserve_id else None
+        context = self._additional_context(absent_employee, coverage_employee)
+        if not context["has_additional"]:
+            return jsonify({
+                "modo": "desabilitado",
+                "motivo": "O cargo não possui adicional cadastrado.",
+            }), 200
+        if coverage_employee:
+            return jsonify({
+                "modo": "desabilitado",
+                "motivo": "A cobertura já foi informada nas reservas técnicas.",
+                "adicional": {
+                    "tipo": context["adicional_tipo"],
+                    "valor_diaria": float(context["adicional_valor_diaria"]),
+                } if context["requires_additional"] else None,
+                "beneficiario": {
+                    "id": coverage_employee.id,
+                    "nome": coverage_employee.nome,
+                    "matricula": coverage_employee.matricula,
+                },
+            }), 200
+
+        candidates = self._coverage_candidates(absent_employee)
+        if not candidates:
+            return jsonify({
+                "modo": "desabilitado",
+                "motivo": "Não há outro colaborador ativo neste centro de custo para cobrir o posto.",
+            }), 200
+        return jsonify({
+            "modo": "selecionar_cobertura",
+            "candidatos": candidates,
+        }), 200
+
+    @classmethod
+    def _remove_operational_coverage(cls, req):
+        """Remove a ausência operacional quando a cobertura original deixa de valer."""
+        children = Requisicao.query.filter_by(requisicao_origem_id=req.id).all()
+        for child in children:
+            absence = AbsenceControl.query.filter_by(requisicao_id=child.id).first()
+            if absence:
+                Disallowance.query.filter_by(falta_id=absence.id).delete(synchronize_session=False)
+                db.session.delete(absence)
+            History.query.filter_by(requisicao_id=child.id).delete(synchronize_session=False)
+            Timeline.query.filter_by(requisicao_id=child.id).delete(synchronize_session=False)
+            db.session.delete(child)
+
+    @classmethod
+    def sync_operational_coverage(cls, req):
+        """Gera a falta operacional do cargo menor somente após a aprovação."""
+        cls._remove_operational_coverage(req)
+        # Garante que um filho anterior seja removido antes de inserir outro
+        # para a mesma requisição de origem.
+        db.session.flush()
+        if req.status != "approved" or not req.cobertura_colaborador_id:
+            return None
+
+        coverage_employee = db.session.get(Employees, req.cobertura_colaborador_id)
+        return cls._ensure_operational_coverage(req, coverage_employee)
+
+    @classmethod
+    def _ensure_operational_coverage(cls, req, coverage_employee):
+        """Cria uma única falta operacional quando a cobertura tem valor menor."""
+        existing = Requisicao.query.filter_by(requisicao_origem_id=req.id).first()
+        if existing:
+            return existing
+
+        absent_employee = db.session.get(Employees, req.ausente_id)
+        if not absent_employee or not coverage_employee or not coverage_employee.centro_id:
+            return None
+        context = cls._additional_context(absent_employee, coverage_employee)
+        if not context["coverage_has_lower_value"]:
+            return None
+
+        coverage_center = db.session.get(CostCenters, coverage_employee.centro_id)
+        child = Requisicao(
+            reserva_id=0,
+            ausente_id=coverage_employee.id,
+            cc=coverage_employee.centro_id,
+            supervisor_id=(
+                coverage_center.supervisor_id
+                if coverage_center and coverage_center.supervisor_id
+                else req.supervisor_id
+            ),
+            warning=False,
+            motivo=cls.OPERATIONAL_COVERAGE_REASON,
+            obs=f"COBERTURA OPERACIONAL DA REQUISIÇÃO #{req.id}.",
+            created_at=req.created_at,
+            opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
+            status="approved",
+            requisicao_origem_id=req.id,
+        )
+        db.session.add(child)
+        db.session.flush()
+        AbsenceControlService.ensure_for_request(child)
+        return child
+
+    @classmethod
+    def _historical_additional_rows(cls):
+        """Retorna somente a última cobertura técnica aprovada por requisição."""
+        latest_history = (
+            db.session.query(
+                History.requisicao_id,
+                func.max(History.id).label("history_id"),
+            )
+            .group_by(History.requisicao_id)
+            .subquery()
+        )
+        return (
+            db.session.query(History, Requisicao)
+            .join(latest_history, History.id == latest_history.c.history_id)
+            .outerjoin(Requisicao, Requisicao.id == History.requisicao_id)
+            .filter(
+                History.status == "approved",
+                History.reserva_id.isnot(None),
+                History.reserva_id != 0,
+            )
+            .order_by(History.ended_at.desc(), History.id.desc())
+            .all()
+        )
+
+    @classmethod
+    def simulate_historical_additionals(cls, limit=50):
+        """Simula vínculos históricos de adicional sem alterar qualquer registro."""
+        histories = cls._historical_additional_rows()
+
+        summary = {
+            "historicos_analisados": len(histories),
+            "sem_requisicao_origem": 0,
+            "sem_colaborador": 0,
+            "motivo_sem_falta": 0,
+            "ausente_sem_adicional": 0,
+            "cobertura_com_mesmo_cargo": 0,
+            "cobertura_sem_valor_diario": 0,
+            "candidatos_adicional": 0,
+            "faltas_operacionais_possiveis": 0,
+            "faltas_a_criar": 0,
+        }
+        candidates = []
+
+        for history, requisition in histories:
+            if not requisition:
+                summary["sem_requisicao_origem"] += 1
+                continue
+
+            # O histórico é a fonte da cobertura antiga. A cobertura manual não
+            # existia nesse período e, por isso, não participa da simulação.
+            absent_employee = db.session.get(Employees, history.ausente_id)
+            coverage_employee = db.session.get(Employees, history.reserva_id)
+            if not absent_employee or not coverage_employee:
+                summary["sem_colaborador"] += 1
+                continue
+
+            if not AbsenceControlService._is_absence_reason(history.motivo):
+                summary["motivo_sem_falta"] += 1
+                continue
+
+            context = cls._additional_context(absent_employee, coverage_employee)
+            if not context["has_additional"]:
+                summary["ausente_sem_adicional"] += 1
+                continue
+            if not context["requires_additional"]:
+                summary["cobertura_com_mesmo_cargo"] += 1
+                continue
+
+            absence = AbsenceControl.query.filter_by(
+                requisicao_id=requisition.id,
+            ).first()
+            absent_cargo = cls._cargo_data(absent_employee)
+            coverage_cargo = cls._cargo_data(coverage_employee)
+            operational_coverage = Requisicao.query.filter_by(
+                requisicao_origem_id=requisition.id,
+            ).first()
+
+            summary["candidatos_adicional"] += 1
+            if coverage_cargo["valor_diaria"] <= 0:
+                summary["cobertura_sem_valor_diario"] += 1
+            if context["coverage_has_lower_value"]:
+                summary["faltas_operacionais_possiveis"] += 1
+            if not absence:
+                summary["faltas_a_criar"] += 1
+
+            # O limite controla apenas os detalhes impressos. Os totais sempre
+            # consideram todo o histórico elegível para a conferência ser fiel.
+            if len(candidates) >= limit:
+                continue
+            candidates.append({
+                "historico_id": history.id,
+                "requisicao_id": requisition.id,
+                "data": history.created_at.isoformat() if history.created_at else None,
+                "ausente": {
+                    "id": absent_employee.id,
+                    "nome": absent_employee.nome,
+                    "matricula": absent_employee.matricula,
+                    "cargo": absent_cargo["cargo"],
+                    "adicional_tipo": absent_cargo["adicional_tipo"],
+                    "adicional_valor_diaria": str(absent_cargo["adicional_valor_diaria"]),
+                    "valor_diaria": str(absent_cargo["valor_diaria"]),
+                },
+                "cobertura_reserva": {
+                    "id": coverage_employee.id,
+                    "nome": coverage_employee.nome,
+                    "matricula": coverage_employee.matricula,
+                    "cargo": coverage_cargo["cargo"],
+                    "adicional_tipo": coverage_cargo["adicional_tipo"],
+                    "adicional_valor_diaria": str(coverage_cargo["adicional_valor_diaria"]),
+                    "valor_diaria": str(coverage_cargo["valor_diaria"]),
+                },
+                "adicional_a_registrar": {
+                    "tipo": context["adicional_tipo"],
+                    "valor_diaria": str(context["adicional_valor_diaria"]),
+                },
+                "controle_faltas_existente": bool(absence),
+                "falta_operacional_necessaria": context["coverage_has_lower_value"],
+                "falta_operacional_existente": bool(operational_coverage),
+            })
+
+        return {"resumo": summary, "candidatos": candidates}
+
+    @classmethod
+    def apply_historical_additionals(cls):
+        """Aplica adicionais históricos aprovados; a transação é controlada pelo script."""
+        result = {
+            "historicos_analisados": 0,
+            "requisicoes_atualizadas": 0,
+            "faltas_criadas": 0,
+            "faltas_operacionais_criadas": 0,
+            "faltas_operacionais_ignoradas_sem_valor": 0,
+            "ignorados": 0,
+        }
+
+        for history, requisition in cls._historical_additional_rows():
+            result["historicos_analisados"] += 1
+            if not requisition:
+                result["ignorados"] += 1
+                continue
+
+            absent_employee = db.session.get(Employees, history.ausente_id)
+            coverage_employee = db.session.get(Employees, history.reserva_id)
+            if (
+                not absent_employee
+                or not coverage_employee
+                or not AbsenceControlService._is_absence_reason(history.motivo)
+            ):
+                result["ignorados"] += 1
+                continue
+
+            context = cls._additional_context(absent_employee, coverage_employee)
+            if not context["requires_additional"]:
+                result["ignorados"] += 1
+                continue
+
+            additional_value = context["adicional_valor_diaria"]
+            current_value = Decimal(str(requisition.adicional_valor_diaria or 0))
+            if (
+                requisition.adicional_tipo != context["adicional_tipo"]
+                or current_value != additional_value
+            ):
+                requisition.adicional_tipo = context["adicional_tipo"]
+                requisition.adicional_valor_diaria = additional_value
+                result["requisicoes_atualizadas"] += 1
+
+            absence = AbsenceControl.query.filter_by(
+                requisicao_id=requisition.id,
+            ).first()
+            if not absence:
+                AbsenceControlService.ensure_for_request(requisition)
+                result["faltas_criadas"] += 1
+
+            coverage_cargo = cls._cargo_data(coverage_employee)
+            if coverage_cargo["valor_diaria"] <= 0:
+                result["faltas_operacionais_ignoradas_sem_valor"] += 1
+                continue
+            operational_coverage = Requisicao.query.filter_by(
+                requisicao_origem_id=requisition.id,
+            ).first()
+            if not operational_coverage and cls._ensure_operational_coverage(
+                requisition,
+                coverage_employee,
+            ):
+                result["faltas_operacionais_criadas"] += 1
+
+        return result
 
     @staticmethod
     def _disciplinary_context(employee_id):
@@ -274,6 +696,7 @@ class RequestService:
 
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
+        manual_coverage_id = bd.get("cobertura_colaborador_id")
         ausente_id = bd.get("ausente_id")
         advertencia = str(bd.get("advertencia"))
         motivo = bd.get("motivo")
@@ -318,7 +741,12 @@ class RequestService:
             if not public_request and not can_access_supervisor(token_data, supervisor_id):
                 return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
-        if reserva_id not in (None, 0):
+        try:
+            reserva_id = int(reserva_id or 0)
+        except (TypeError, ValueError):
+            return jsonify("Reserva inválida."), 400
+
+        if reserva_id:
             reservation = Floaters.query.filter_by(employee_id=reserva_id).first()
             if not reservation:
                 return jsonify("A pessoa selecionada não pertence às reservas técnicas."), 400
@@ -337,12 +765,49 @@ class RequestService:
             if conflicting_request:
                 return jsonify("Esta reserva está indisponível na data informada."), 409
 
+        coverage_employee = db.session.get(Employees, reserva_id) if reserva_id else None
+        if manual_coverage_id not in (None, "", 0, "0"):
+            if reserva_id:
+                return jsonify("Informe a cobertura manual somente quando não houver reserva técnica."), 400
+            try:
+                manual_coverage_id = int(manual_coverage_id)
+            except (TypeError, ValueError):
+                return jsonify("Cobertura manual inválida."), 400
+            coverage_employee = db.session.get(Employees, manual_coverage_id)
+            if not coverage_employee or coverage_employee.id == absent_employee.id:
+                return jsonify("Selecione outro colaborador para realizar a cobertura."), 400
+            if (
+                coverage_employee.centro_id != absent_employee.centro_id
+                or coverage_employee.situacao != 1
+            ):
+                return jsonify(
+                    "A cobertura manual deve ser um colaborador ativo do mesmo centro de custo."
+                ), 400
+            if access_token and not _can_access_employee(token_data, coverage_employee.id):
+                return jsonify("Você não possui acesso à filial da cobertura informada."), 403
+        else:
+            manual_coverage_id = None
+
+        additional = self._additional_context(absent_employee, coverage_employee)
+        if manual_coverage_id and not additional["has_additional"]:
+            return jsonify("A cobertura manual do item 3 só é permitida para cargo com adicional cadastrado."), 400
+        if (
+            not reserva_id
+            and additional["has_additional"]
+            and not manual_coverage_id
+            and self._coverage_candidates(absent_employee)
+        ):
+            return jsonify("Selecione quem realizará a cobertura no item 3."), 400
+
         new_rq = Requisicao(
             reserva_id=reserva_id,
+            cobertura_colaborador_id=coverage_employee.id if coverage_employee else None,
             ausente_id=ausente_id,
             cc=centro_id,
             supervisor_id=supervisor_id,
             warning=adv,
+            adicional_tipo=additional["adicional_tipo"],
+            adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
             motivo=motivo,
             created_at=created_at,
             opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
@@ -749,6 +1214,7 @@ class RequestService:
         if not can_access_cost_center(token_data, req.cc):
             return jsonify("Você não possui acesso à filial desta requisição."), 403
         requisicao_id = req.id
+        self._remove_operational_coverage(req)
         History.query.filter(History.requisicao_id == requisicao_id).delete(synchronize_session=False)
         Timeline.query.filter(Timeline.requisicao_id == requisicao_id).delete(synchronize_session=False)
         db.session.delete(req)
@@ -756,6 +1222,7 @@ class RequestService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        socketio.emit("disallowance_update", {"action": "request_deleted"})
         _emit_kds_update("deleted", requisicao_id)
         return jsonify({
             "message": "RequisiÃ§Ã£o excluÃ­da",
@@ -882,6 +1349,8 @@ class HistoryService:
         
         req.status = status
         req.reserva_id = reserva_id
+        RequestService.sync_operational_coverage(req)
+        AbsenceControlService.ensure_for_request(req)
         db.session.commit()
         
         TimelineService().create_event(
@@ -893,6 +1362,7 @@ class HistoryService:
         )
 
         socketio.emit("new_history")
+        socketio.emit("disallowance_update", {"action": "request_decided"})
         _emit_kds_update("decided", requisicao_id, status)
         return jsonify("Sucesso"), 201
 
@@ -955,6 +1425,7 @@ class HistoryService:
         hist.status = "pending"
         req.status = "updated"
 
+        RequestService.sync_operational_coverage(req)
         AbsenceControlService.ensure_for_request(req)
 
         db.session.commit()
@@ -969,6 +1440,7 @@ class HistoryService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        socketio.emit("disallowance_update", {"action": "request_reopened"})
         _emit_kds_update("reopened", req.id, req.status)
         return jsonify("Histórico alterado"), 200
 
@@ -985,6 +1457,8 @@ class HistoryService:
         requisicao_id = hist.requisicao_id
         req = Requisicao.query.filter(Requisicao.id == requisicao_id).first()
 
+        if req:
+            RequestService._remove_operational_coverage(req)
         History.query.filter(History.requisicao_id == requisicao_id).delete(synchronize_session=False)
         Timeline.query.filter(Timeline.requisicao_id == requisicao_id).delete(synchronize_session=False)
         if req: db.session.delete(req)
@@ -992,6 +1466,7 @@ class HistoryService:
 
         socketio.emit("new_history")
         socketio.emit("new_request")
+        socketio.emit("disallowance_update", {"action": "history_deleted"})
         _emit_kds_update("deleted", requisicao_id)
         return jsonify({
             "message": "HistÃ³rico e requisiÃ§Ã£o excluÃ­dos",
