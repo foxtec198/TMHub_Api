@@ -32,6 +32,7 @@ from utils.socket import socketio
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 NON_ABSENCE_REASON_TERMS = ("REMANEJAMENTO", "FERIAS", "POSTO VAGO", "AFASTAMENTO", "OUTROS")
 DECLARATION_PARTIAL_HOURS = Decimal("4")
+OPERATIONAL_COVERAGE_REASON = "COBERTURA OPERACIONAL DE ADICIONAL"
 
 class AbsenceControlService:
     @staticmethod
@@ -96,6 +97,10 @@ class AbsenceControlService:
         normalized = cls._normalized_reason(reason)
         return not any(term in normalized for term in NON_ABSENCE_REASON_TERMS)
 
+    @classmethod
+    def _is_operational_coverage(cls, reason):
+        return cls._normalized_reason(reason) == cls._normalized_reason(OPERATIONAL_COVERAGE_REASON)
+
     @staticmethod
     def _deadline(req):
         if not AbsenceControlService._requires_document_deadline(req.motivo):
@@ -142,6 +147,19 @@ class AbsenceControlService:
         absence.data_falta = req.created_at
         if is_new and req.obs:
             absence.observacao = req.obs
+        if cls._is_operational_coverage(req.motivo):
+            # Este registro representa o posto liberado pela cobertura, não uma
+            # falta pessoal. Ele já nasce tratado para gerar a glosa automática.
+            absence.tipo_ausencia = "integral"
+            absence.quantidade_horas = None
+            absence.classificacao = "justificada"
+            absence.status = "tratada"
+            absence.prazo_atestado = None
+            absence.automatizado_em = dt.now(SAO_PAULO)
+            from services.glosas import DisallowanceService
+
+            DisallowanceService.ensure_for_absence(absence)
+            return absence
         if absence.status != "tratada":
             absence.classificacao = cls._initial_classification(req.motivo)
             if is_new and cls._is_historical(req.created_at):
@@ -194,6 +212,8 @@ class AbsenceControlService:
             return jsonify("Você não possui acesso ao Controle de Faltas."), 403
         self._expire_certificates()
         Tratador = aliased(Users)
+        CoberturaManual = aliased(Employees)
+        CoberturaReserva = aliased(Employees)
         query = (
             db.session.query(
                 AbsenceControl.id,
@@ -218,6 +238,18 @@ class AbsenceControlService:
                 Supervisors.nome.label("supervisor"),
                 Tratador.nome.label("tratado_por"),
                 Requisicao.status.label("status_requisicao"),
+                Requisicao.adicional_tipo,
+                Requisicao.adicional_valor_diaria,
+                # A cobertura manual tem prioridade. Antes dessa modalidade,
+                # a reserva técnica já apontava diretamente para o colaborador.
+                db.func.coalesce(
+                    CoberturaManual.nome,
+                    CoberturaReserva.nome,
+                ).label("beneficiario_adicional"),
+                db.func.coalesce(
+                    cast(CoberturaManual.matricula, String),
+                    cast(CoberturaReserva.matricula, String),
+                ).label("beneficiario_adicional_matricula"),
             )
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
@@ -225,6 +257,11 @@ class AbsenceControlService:
             .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
+            .outerjoin(
+                CoberturaManual,
+                CoberturaManual.id == Requisicao.cobertura_colaborador_id,
+            )
+            .outerjoin(CoberturaReserva, CoberturaReserva.id == Requisicao.reserva_id)
             .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .order_by(
                 case((AbsenceControl.status == "pendente", 0), else_=1),
@@ -296,6 +333,27 @@ class AbsenceControlService:
         if not can_access_supervisor(token_data, supervisor_id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
+        coverage_requested = str(body.get("houve_cobertura") or "").strip().lower() in {
+            "1", "true", "sim",
+        }
+        coverage_employee = None
+        coverage_employee_id = body.get("cobertura_colaborador_id")
+        if coverage_employee_id not in (None, "", 0, "0"):
+            try:
+                coverage_employee_id = int(coverage_employee_id)
+            except (TypeError, ValueError):
+                return jsonify("Cobertura informada inválida."), 400
+
+            coverage_employee = db.session.get(Employees, coverage_employee_id)
+            if not coverage_employee or coverage_employee.id == employee.id:
+                return jsonify("Selecione outro colaborador para realizar a cobertura."), 400
+            if coverage_employee.centro_id != employee.centro_id or coverage_employee.situacao != 1:
+                return jsonify(
+                    "A cobertura deve ser realizada por um colaborador ativo do mesmo local."
+                ), 400
+        elif coverage_requested:
+            return jsonify("Selecione quem realizou a cobertura."), 400
+
         reason = str(body.get("motivo") or "").strip().upper()
         if not reason:
             return jsonify("Informe o motivo da falta."), 400
@@ -323,23 +381,37 @@ class AbsenceControlService:
                 return jsonify("As horas da falta parcial devem ser maiores que zero e menores que 24."), 400
 
         observation = str(body.get("observacao") or "").strip()
+        # A regra é centralizada no serviço de requisições, para que o lançamento
+        # manual calcule o adicional e a futura glosa da mesma forma que o fluxo público.
+        from services.reposicoes import RequestService
+
+        additional = RequestService._additional_context(employee, coverage_employee)
         type_label = "PARCIAL" if absence_type == "parcial" else "INTEGRAL"
         coverage_note = f"FALTA {type_label}"
         if absence_hours is not None:
             formatted_hours = format(absence_hours, "f").rstrip("0").rstrip(".")
             coverage_note += f" DE {formatted_hours}H"
-        request_observation = f"{coverage_note} · LANÇADA PELO CONTROLE DE FALTAS · SEM COBERTURA"
+        coverage_description = (
+            f"COBERTA POR {str(coverage_employee.nome or 'COLABORADOR').upper()}"
+            if coverage_employee
+            else "SEM COBERTURA"
+        )
+        request_observation = (
+            f"{coverage_note} · LANÇADA PELO CONTROLE DE FALTAS · {coverage_description}"
+        )
         if observation:
             request_observation += f" · {observation.upper()}"
 
         try:
             requisition = Requisicao(
                 reserva_id=0,
+                cobertura_colaborador_id=coverage_employee.id if coverage_employee else None,
                 ausente_id=employee.id,
                 cc=employee.centro_id,
                 supervisor_id=supervisor_id,
                 warning=False,
-                origem="controle_faltas",
+                adicional_tipo=additional["adicional_tipo"],
+                adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
                 motivo=reason,
                 obs=request_observation,
                 created_at=absence_date,
@@ -381,7 +453,11 @@ class AbsenceControlService:
             "emitted_at": dt.now(SAO_PAULO).isoformat(),
         })
         return jsonify({
-            "message": "Falta lançada e requisição sem cobertura criada.",
+            "message": (
+                "Falta lançada e requisição com cobertura criada."
+                if coverage_employee
+                else "Falta lançada e requisição sem cobertura criada."
+            ),
             "falta_id": absence.id,
             "requisicao_id": requisition.id,
         }), 201
@@ -526,11 +602,14 @@ class AbsenceControlService:
                 CostCenters.departamento,
                 Supervisors.nome.label("supervisor"),
                 Tratador.nome.label("tratado_por"),
+                Requisicao.adicional_tipo,
+                Requisicao.adicional_valor_diaria,
             )
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
             .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
             .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
             .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .order_by(
@@ -595,7 +674,7 @@ class AbsenceControlService:
         )
         thin = Side(style="thin", color="DDE7E1")
 
-        sheet.merge_cells("A1:M2")
+        sheet.merge_cells("A1:N2")
         title = sheet["A1"]
         title.value = "CONTROLE DE FALTAS"
         title.font = Font(size=20, bold=True, color=white)
@@ -632,7 +711,7 @@ class AbsenceControlService:
         headers = [
             "Data da falta", "Colaborador", "Matrícula", "Departamento", "Contrato",
             "Supervisor", "Motivo", "Tipo de ausência", "Horas", "Classificação",
-            "Status", "Prazo do documento", "Observação",
+            "Status", "Prazo do documento", "Adicional", "Observação",
         ]
         header_row = 8
         for column, label in enumerate(headers, 1):
@@ -664,21 +743,30 @@ class AbsenceControlService:
                 classification_labels.get(row.classificacao, row.classificacao),
                 status_labels.get(row.status, row.status),
                 self._excel_datetime(row.prazo_atestado),
+                (
+                    f"{row.adicional_tipo} - "
+                    f"R$ {float(row.adicional_valor_diaria):,.2f}"
+                    .replace(",", "X")
+                    .replace(".", ",")
+                    .replace("X", ".")
+                    if row.adicional_tipo and row.adicional_valor_diaria is not None
+                    else None
+                ),
                 row.observacao,
             ]
             for column, value in enumerate(values, 1):
                 cell = sheet.cell(row_index, column, value)
                 cell.fill = PatternFill("solid", fgColor="FFFFFF" if row_index % 2 else "F5F9F7")
                 cell.border = Border(bottom=thin)
-                cell.alignment = Alignment(vertical="center", wrap_text=column == 13)
+                cell.alignment = Alignment(vertical="center", wrap_text=column == 14)
             for column in (1, 12):
                 sheet.cell(row_index, column).number_format = "dd/mm/yyyy hh:mm"
             sheet.cell(row_index, 9).number_format = "0.00"
 
         # Mantém o cabeçalho visível e permite filtrar qualquer coluna da tabela.
         sheet.freeze_panes = "A9"
-        sheet.auto_filter.ref = f"A8:M{max(header_row, header_row + len(rows))}"
-        widths = [18, 34, 14, 15, 40, 28, 24, 18, 12, 18, 14, 21, 48]
+        sheet.auto_filter.ref = f"A8:N{max(header_row, header_row + len(rows))}"
+        widths = [18, 34, 14, 15, 40, 28, 24, 18, 12, 18, 14, 21, 24, 48]
         for index, width in enumerate(widths, 1):
             sheet.column_dimensions[chr(64 + index)].width = width
         sheet.row_dimensions[1].height = 25

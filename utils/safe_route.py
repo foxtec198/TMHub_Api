@@ -4,7 +4,7 @@ import inspect
 from functools import wraps
 
 # Dependências externas.
-from flask import jsonify, request as rq
+from flask import g, jsonify, request as rq
 from jwt import ExpiredSignatureError
 
 # Módulos internos da aplicação.
@@ -43,6 +43,8 @@ def _data_channel(path, method):
         return "medidas_disciplinares"
     if path.startswith("/glosas"):
         return "glosas"
+    if path.startswith("/arquivos/glosas"):
+        return "glosas"
     if path.startswith("/projetos"):
         return "projetos"
     if path.startswith("/tickets"):
@@ -55,8 +57,14 @@ def _data_channel(path, method):
         return "ponto48"
     if path.startswith("/updates/noticias"):
         return "configuracoes"
-    if path.startswith("/timo/configuracoes"):
+    if path.startswith("/timo"):
         return "configuracoes"
+    if path.startswith(("/tm-ops", "/scheduler")):
+        return "tm_ops"
+    if path.startswith("/rpa"):
+        return "rpa"
+    if path.startswith(("/importacao-colaboradores", "/update")):
+        return "colaboradores"
     if path in {"/usuarios", "/usuarios/importar", "/filiais", "/centro", "/centro/configuracoes", "/supervisores", "/funcionarios"}:
         return "configuracoes"
     if path.startswith("/avaliacoes-experiencia"):
@@ -102,6 +110,7 @@ def safe_route(func):
             and channel
         ):
             _emit_data_change(token_data, channel)
+            g.tmhub_data_change_emitted = True
         return result
         # except ExpiredSignatureError:
         #     return jsonify("Token de acesso expirado"), 401
