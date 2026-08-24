@@ -582,6 +582,8 @@ class AbsenceControlService:
 
         # Mantém o usuário que tratou a falta separado dos demais vínculos.
         Tratador = aliased(Users)
+        CoberturaManual = aliased(Employees)
+        CoberturaReserva = aliased(Employees)
         query = (
             db.session.query(
                 AbsenceControl.data_falta,
@@ -604,6 +606,16 @@ class AbsenceControlService:
                 Tratador.nome.label("tratado_por"),
                 Requisicao.adicional_tipo,
                 Requisicao.adicional_valor_diaria,
+                # A cobertura manual tem prioridade; a reserva técnica atende
+                # os registros antigos que não possuíam cobertura manual.
+                db.func.coalesce(
+                    CoberturaManual.nome,
+                    CoberturaReserva.nome,
+                ).label("beneficiario_adicional"),
+                db.func.coalesce(
+                    cast(CoberturaManual.matricula, String),
+                    cast(CoberturaReserva.matricula, String),
+                ).label("beneficiario_adicional_matricula"),
             )
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
@@ -611,6 +623,11 @@ class AbsenceControlService:
             .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
+            .outerjoin(
+                CoberturaManual,
+                CoberturaManual.id == Requisicao.cobertura_colaborador_id,
+            )
+            .outerjoin(CoberturaReserva, CoberturaReserva.id == Requisicao.reserva_id)
             .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .order_by(
                 case((AbsenceControl.status == "pendente", 0), else_=1),
@@ -674,7 +691,7 @@ class AbsenceControlService:
         )
         thin = Side(style="thin", color="DDE7E1")
 
-        sheet.merge_cells("A1:N2")
+        sheet.merge_cells("A1:O2")
         title = sheet["A1"]
         title.value = "CONTROLE DE FALTAS"
         title.font = Font(size=20, bold=True, color=white)
@@ -711,7 +728,8 @@ class AbsenceControlService:
         headers = [
             "Data da falta", "Colaborador", "Matrícula", "Departamento", "Contrato",
             "Supervisor", "Motivo", "Tipo de ausência", "Horas", "Classificação",
-            "Status", "Prazo do documento", "Adicional", "Observação",
+            "Status", "Prazo do documento", "Adicional",
+            "Beneficiário do adicional", "Observação",
         ]
         header_row = 8
         for column, label in enumerate(headers, 1):
@@ -752,21 +770,32 @@ class AbsenceControlService:
                     if row.adicional_tipo and row.adicional_valor_diaria is not None
                     else None
                 ),
+                (
+                    f"{row.beneficiario_adicional} - Matrícula "
+                    f"{row.beneficiario_adicional_matricula}"
+                    if (
+                        row.adicional_tipo
+                        and row.adicional_valor_diaria is not None
+                        and row.beneficiario_adicional
+                        and row.beneficiario_adicional_matricula
+                    )
+                    else None
+                ),
                 row.observacao,
             ]
             for column, value in enumerate(values, 1):
                 cell = sheet.cell(row_index, column, value)
                 cell.fill = PatternFill("solid", fgColor="FFFFFF" if row_index % 2 else "F5F9F7")
                 cell.border = Border(bottom=thin)
-                cell.alignment = Alignment(vertical="center", wrap_text=column == 14)
+                cell.alignment = Alignment(vertical="center", wrap_text=column in {14, 15})
             for column in (1, 12):
                 sheet.cell(row_index, column).number_format = "dd/mm/yyyy hh:mm"
             sheet.cell(row_index, 9).number_format = "0.00"
 
         # Mantém o cabeçalho visível e permite filtrar qualquer coluna da tabela.
         sheet.freeze_panes = "A9"
-        sheet.auto_filter.ref = f"A8:N{max(header_row, header_row + len(rows))}"
-        widths = [18, 34, 14, 15, 40, 28, 24, 18, 12, 18, 14, 21, 24, 48]
+        sheet.auto_filter.ref = f"A8:O{max(header_row, header_row + len(rows))}"
+        widths = [18, 34, 14, 15, 40, 28, 24, 18, 12, 18, 14, 21, 24, 34, 48]
         for index, width in enumerate(widths, 1):
             sheet.column_dimensions[chr(64 + index)].width = width
         sheet.row_dimensions[1].height = 25
