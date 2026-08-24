@@ -23,6 +23,7 @@ from models.configuracoes_sistema import SystemConfiguration
 from services.tickets import TicketService
 from services.avaliacoes_experiencia import ExperienceEvaluationService
 from services.dashboard_ql import QLDashboardService
+from services.uso_tmhub import TMHubUsageService
 
 load_dotenv()  # Carrega o dotenv
 
@@ -78,10 +79,6 @@ def emit_realtime_data_change(response):
     if normalized_path in REALTIME_NOTIFICATION_EXCLUSIONS:
         return response
 
-    channel = _data_channel(normalized_path, request.method)
-    if not channel:
-        return response
-
     token_data = {}
     access_token = request.headers.get("Access-Token")
     if access_token:
@@ -92,6 +89,18 @@ def emit_realtime_data_change(response):
             # required. Realtime is complementary, so a malformed optional
             # token must not alter a successful response.
             token_data = {}
+
+    # Toda mutação autenticada entra no resumo diário, inclusive módulos sem
+    # canal visual próprio. O payload é só rota e método, nunca o conteúdo.
+    TMHubUsageService.record_successful_mutation(
+        token_data,
+        normalized_path,
+        request.method,
+    )
+
+    channel = _data_channel(normalized_path, request.method)
+    if not channel:
+        return response
 
     _emit_data_change(token_data, channel)
     return response
