@@ -26,6 +26,9 @@ class Users(BaseModel):
     modo_tema = db.Column(db.String(5), default="light")
     # Camada visual opcional. Mantém o TMHub fluido em máquinas mais simples.
     particulas_ativas = db.Column(db.Boolean, nullable=False, default=True)
+    # Liberação administrativa para as identidades visuais extras. A edição
+    # é deliberadamente feita no banco enquanto o catálogo está em testes.
+    temas_extras_liberados = db.Column(db.Boolean, nullable=False, default=False)
     timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)

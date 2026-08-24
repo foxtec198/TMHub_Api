@@ -56,6 +56,15 @@ def _migrate_user_theme():
         ),
     )
 
+    _run_column_migration(
+        "usuarios",
+        "temas_extras_liberados",
+        (
+            "ALTER TABLE usuarios "
+            "ADD COLUMN temas_extras_liberados BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+    )
+
 
 
 def _migrate_timo_user_preference():
