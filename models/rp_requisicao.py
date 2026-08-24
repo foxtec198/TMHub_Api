@@ -33,7 +33,15 @@ class Requisicao(BaseModel):
         unique=True,
         index=True,
     )
-    origem = db.Column(db.String)
+    # Toda requisição precisa informar de onde nasceu. O default do ORM e do
+    # banco protege fluxos antigos que não enviam essa informação explicitamente.
+    origem = db.Column(
+        db.String(30),
+        nullable=False,
+        default="requisicao",
+        server_default="requisicao",
+        index=True,
+    )
     motivo = db.Column(db.String)
     obs = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)

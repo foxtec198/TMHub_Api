@@ -22,8 +22,10 @@ class Users(BaseModel):
     assinatura_cadastrada = db.Column(db.String)
     # Identidade visual. Valores light/dark legados continuam aceitos na API
     # e são migrados pelo frontend para TMHub + modo de luminosidade.
-    tema = db.Column(db.String(10), default="tmhub")
+    tema = db.Column(db.String(24), default="tmhub")
     modo_tema = db.Column(db.String(5), default="light")
+    # Camada visual opcional. Mantém o TMHub fluido em máquinas mais simples.
+    particulas_ativas = db.Column(db.Boolean, nullable=False, default=True)
     timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)

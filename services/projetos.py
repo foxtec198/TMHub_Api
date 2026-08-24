@@ -21,7 +21,6 @@ from models.pj_projects import Project
 from utils.db import db
 from utils.safe_route import safe_route
 from utils.permissions import has_permission
-from utils.project_notifications import notify_card_members
 # Dependências externas.
 from sqlalchemy import or_
 
@@ -487,26 +486,6 @@ class ProjectService:
         )
 
     @staticmethod
-    def _card_recipient_emails(card_id):
-        return [
-            row.email
-            for row in (
-                db.session.query(Users.email)
-                .join(ProjectCardMember, ProjectCardMember.employee_id == Users.id)
-                .filter(ProjectCardMember.card_id == card_id)
-                .all()
-            )
-            if row.email
-        ]
-
-    def _notify_card(self, card, event, detail=""):
-        notify_card_members(
-            self._card_recipient_emails(card.id),
-            f"TM Hub | Card {event}: {card.titulo}",
-            f"O card '{card.titulo}' foi {event.lower()}.\n{detail}".strip(),
-        )
-
-    @staticmethod
     def _delete_card_files(card_id):
         for file in ProjectCardFile.query.filter_by(card_id=card_id).all():
             path = PROJECT_FILES_DIR / Path(file.caminho_arquivo).name
@@ -607,15 +586,6 @@ class ProjectService:
             self._sync_board(project, body["columns"], body["cards"])
 
         db.session.commit()
-        if "columns" in body and "cards" in body:
-            card_ids = [
-                card.id
-                for card in ProjectCard.query.join(ProjectColumn, ProjectColumn.id == ProjectCard.column_id)
-                .filter(ProjectColumn.project_id == project.id)
-                .all()
-            ]
-            for card in ProjectCard.query.filter(ProjectCard.id.in_(card_ids or [0])).all():
-                self._notify_card(card, "atualizado")
         return jsonify(self._serialize(project)), 200
 
     @safe_route
@@ -751,7 +721,6 @@ class ProjectService:
         db.session.flush()
         self._sync_card_members(card.id, [_as_int(item) for item in body.get("memberIds", [])])
         db.session.commit()
-        self._notify_card(card, "criado")
         return jsonify(self._serialize(Project.query.filter_by(id=project_id).first())), 201
 
     @safe_route
@@ -788,7 +757,6 @@ class ProjectService:
             self._sync_card_members(card.id, [_as_int(item) for item in body["memberIds"]])
 
         db.session.commit()
-        self._notify_card(card, "atualizado")
         return jsonify(self._serialize(project)), 200
 
     @safe_route
@@ -826,7 +794,6 @@ class ProjectService:
         comment = ProjectCardComment(card_id=card.id, autor_id=user_id, conteudo=content)
         db.session.add(comment)
         db.session.commit()
-        self._notify_card(card, "comentado", content)
         return jsonify(self._serialize(project)), 201
 
     @safe_route
@@ -846,7 +813,6 @@ class ProjectService:
             return jsonify("Informe o comentário."), 400
         comment.conteudo = content
         db.session.commit()
-        self._notify_card(card, "atualizado", "Um comentário foi alterado.")
         return jsonify(self._serialize(project))
 
     @safe_route
@@ -896,7 +862,6 @@ class ProjectService:
             tamanho_bytes=size,
         ))
         db.session.commit()
-        self._notify_card(card, "atualizado", f"Novo arquivo: {original_name}")
         return jsonify(self._serialize(project)), 201
 
     @safe_route

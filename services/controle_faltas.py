@@ -412,6 +412,7 @@ class AbsenceControlService:
                 warning=False,
                 adicional_tipo=additional["adicional_tipo"],
                 adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
+                origem="controle_faltas",
                 motivo=reason,
                 obs=request_observation,
                 created_at=absence_date,

@@ -652,6 +652,8 @@ class UserServices:
         foto = body.get("foto_perfil")
         tema = body.get("tema")
         modo_tema = body.get("modo_tema")
+        has_particles_update = "particulas_ativas" in body
+        particulas_ativas = body.get("particulas_ativas")
         senha_atual = body.get("senha_atual")
         nova_senha = body.get("nova_senha")
         has_timo_update = "timo_ativo" in body
@@ -670,7 +672,10 @@ class UserServices:
 
         if tema is not None:
             tema = str(tema).lower()
-            if tema not in {"tmhub", "light", "dark", "cyberpunk", "pride", "christmas"}:
+            if tema not in {
+                "tmhub", "light", "dark", "cyberpunk", "pride", "christmas",
+                "aurora", "ocean", "sunset", "forest", "terminal", "paper",
+            }:
                 return jsonify("Tema visual inválido."), 400
             if tema in {"light", "dark"}:
                 if modo_tema is None:
@@ -684,6 +689,11 @@ class UserServices:
             if modo_tema not in {"light", "dark"}:
                 return jsonify("O modo deve ser light ou dark."), 400
             user.modo_tema = modo_tema
+
+        if has_particles_update:
+            if not isinstance(particulas_ativas, bool):
+                return jsonify("Informe um valor válido para as partículas visuais."), 400
+            user.particulas_ativas = particulas_ativas
 
         if has_timo_update:
             if str(user.role or "").upper() != "ADMIN":
@@ -704,7 +714,7 @@ class UserServices:
             user.token_version = int(user.token_version or 0) + 1
             user.senha_alterada_em = dt.now()
 
-        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)) and not has_timo_update:
+        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)) and not has_timo_update and not has_particles_update:
             return jsonify("Nenhuma alteração informada."), 400
 
         refresh_user_requirements(user)
@@ -859,6 +869,7 @@ class UserServices:
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "tmhub",
             "modo_tema": user.modo_tema or "light",
+            "particulas_ativas": bool(user.particulas_ativas),
             "role": user.role,
             "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),

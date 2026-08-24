@@ -61,6 +61,7 @@ class FloaterService:
             cc=employee.centro_id,
             supervisor_id=supervisor_id,
             warning=False,
+            origem="reserva_tecnica",
             motivo="INJUSTIFICADA",
             obs=cls.RESERVE_ABSENCE_NOTE,
             created_at=scheduled_at,

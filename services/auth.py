@@ -75,6 +75,7 @@ class AuthService:
             "foto_perfil": user.foto_perfil,
             "tema": user.tema or "tmhub",
             "modo_tema": user.modo_tema or "light",
+            "particulas_ativas": bool(user.particulas_ativas),
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
             "last_login": last_login,

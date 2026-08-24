@@ -290,6 +290,7 @@ class RequestService:
             opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
             status="approved",
             requisicao_origem_id=req.id,
+            origem="cobertura_operacional",
         )
         db.session.add(child)
         db.session.flush()
@@ -808,6 +809,7 @@ class RequestService:
             warning=adv,
             adicional_tipo=additional["adicional_tipo"],
             adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
+            origem="requisicao",
             motivo=motivo,
             created_at=created_at,
             opened_at=dt.now(ZoneInfo("America/Sao_Paulo")),
@@ -1081,6 +1083,7 @@ class RequestService:
                 cc=centro_id,
                 supervisor_id=supervisor_id,
                 warning=warning_value == "APLICADO",
+                origem="requisicao",
                 motivo=motivo,
                 obs=obs,
                 created_at=created_at,
@@ -1395,6 +1398,7 @@ class HistoryService:
                 cc=hist.cc,
                 supervisor_id=hist.supervisor_id,
                 warning=False,
+                origem="requisicao",
                 motivo=hist.motivo,
                 obs=hist.obs,
                 created_at=hist.created_at,
