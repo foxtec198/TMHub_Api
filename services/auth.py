@@ -18,6 +18,7 @@ from utils.permissions import serialize_permissions
 from utils.token import create_token
 from utils.user_requirements import auth_requirements, normalize_cpf, refresh_user_requirements
 from utils.maintenance import maintenance_mode_enabled
+from utils.theme_access import available_themes_for, effective_theme_for
 
 
 def issue_user_token(user):
@@ -73,9 +74,10 @@ class AuthService:
             "role": user.role,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
-            "tema": user.tema or "tmhub",
+            "tema": effective_theme_for(user),
             "modo_tema": user.modo_tema or "light",
             "particulas_ativas": bool(user.particulas_ativas),
+            "temas_disponiveis": available_themes_for(user),
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
             "last_login": last_login,

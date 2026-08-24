@@ -36,6 +36,7 @@ from utils.password_security import (
 )
 from utils.token import create_token
 from utils.maintenance import maintenance_mode_enabled, update_maintenance_mode
+from utils.theme_access import available_themes_for, can_use_custom_themes, effective_theme_for
 from utils.user_requirements import (
     auth_requirements,
     is_valid_cpf,
@@ -682,6 +683,8 @@ class UserServices:
                     user.modo_tema = tema
                 user.tema = "tmhub"
             else:
+                if tema != "tmhub" and not can_use_custom_themes(user):
+                    return jsonify("Este tema ainda não está liberado para sua conta."), 403
                 user.tema = tema
 
         if modo_tema is not None:
@@ -867,9 +870,10 @@ class UserServices:
             "nome": user.nome,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
-            "tema": user.tema or "tmhub",
+            "tema": effective_theme_for(user),
             "modo_tema": user.modo_tema or "light",
             "particulas_ativas": bool(user.particulas_ativas),
+            "temas_disponiveis": available_themes_for(user),
             "role": user.role,
             "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),
