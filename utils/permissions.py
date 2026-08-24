@@ -190,6 +190,7 @@ def request_permission(path, method):
         ("/dash/ql", "dashboard_ql", {"GET": "view"}),
         ("/dash/rescisoes", "dashboard_rescisoes", {"GET": "view"}),
         ("/dash/medidas-disciplinares","dashboard_medidas_disciplinares",{"GET": "view"},),
+        ("/dash/experiencias", "controle_experiencia_rh", {"GET": "view"}),
     ]
     for prefix, screen, actions in rules:
         if path == prefix or path.startswith(f"{prefix}/"):
