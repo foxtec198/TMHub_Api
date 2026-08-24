@@ -47,6 +47,16 @@ def _migrate_user_theme():
         ),
     )
 
+    _run_column_migration(
+        "usuarios",
+        "particulas_ativas",
+        (
+            "ALTER TABLE usuarios "
+            "ADD COLUMN particulas_ativas BOOLEAN NOT NULL DEFAULT TRUE",
+        ),
+    )
+
+
 
 def _migrate_timo_user_preference():
     _run_column_migration(
@@ -81,6 +91,19 @@ def _migrate_requisition_origin(table_names):
             ")",
         ),
     )
+
+    # Instalações que já possuíam a coluna antes desta migration podem não ter
+    # recebido o default físico. Mantém o banco protegido além do default ORM.
+    try:
+        with db.engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE rp_requisicoes "
+                "ALTER COLUMN origem SET DEFAULT 'requisicao'"
+            ))
+    except SQLAlchemyError:
+        # O default do modelo ainda atende bancos/dialetos que não aceitam a
+        # sintaxe acima; a inicialização não deve ficar indisponível por isso.
+        pass
 
 
 def _migrate_department_capacity(table_names):
