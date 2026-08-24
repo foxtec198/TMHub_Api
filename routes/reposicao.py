@@ -34,6 +34,9 @@ def export_requests(): return rq_service.export()
 @replace_bp.post("/request/contexto-disciplinar")
 def disciplinary_context(): return rq_service.disciplinary_context()
 
+@replace_bp.post("/request/contexto-adicional")
+def additional_context(): return rq_service.additional_context()
+
 @replace_bp.get("/kds")
 def kds_requests(): return rq_service.kds()
 
