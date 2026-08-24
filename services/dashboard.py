@@ -24,6 +24,8 @@ from models.situacoes import Situations
 from utils.filial_scope import apply_cost_center_scope
 
 class DashboardService:
+    RESERVE_ABSENCE_NOTE = "FALTA REGISTRADA PELA INDISPONIBILIDADE DA RESERVA TÉCNICA · SEM COBERTURA"
+
     @safe_route
     def get_employees_by_department(self, token_data):
         query = (
@@ -80,7 +82,13 @@ class DashboardService:
             dias_no_mes = monthrange(init.year, init.month)[1]
             end = init + relativedelta(day=dias_no_mes , hour=23, minute=59, second=59)
         
-        response = {"abertas": 0, "historico": [], "multas": [], "meter": {'total': 0, 'cobertas': 0, 'sem_cobertura': 0}}
+        response = {
+            "abertas": 0,
+            "historico": [],
+            "faltas_reservas": [],
+            "multas": [],
+            "meter": {"total": 0, "cobertas": 0, "sem_cobertura": 0},
+        }
         # Open requests follow the same status contract used by the operational request queue.
         open_requests = Requisicao.query.filter(
             Requisicao.created_at.between(init, end),
@@ -134,5 +142,35 @@ class DashboardService:
             history_query, History.cc, token_data
         ).all()
         response["historico"] = [h._asdict() for h in hists]
+
+        # A indisponibilidade por FALTA cria uma requisição própria. Consultar
+        # a requisição, em vez de somente o histórico, preserva a métrica
+        # enquanto ela ainda está pendente e depois de concluída.
+        reserve_absence_query = (
+            db.session.query(
+                Requisicao.id,
+                Ausente.nome.label("ausente"),
+                Supervisors.nome.label("supervisor"),
+                CostCenters.local.label("local"),
+                CostCenters.departamento.label("dpto"),
+                Requisicao.created_at,
+                Requisicao.status,
+                Requisicao.motivo,
+                Requisicao.obs,
+            )
+            .select_from(Requisicao)
+            .join(Ausente, Ausente.id == Requisicao.ausente_id)
+            .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .filter(
+                Requisicao.created_at.between(init, end),
+                Requisicao.obs == self.RESERVE_ABSENCE_NOTE,
+            )
+            .order_by(Requisicao.created_at.desc())
+        )
+        reserve_absences = apply_cost_center_scope(
+            reserve_absence_query, Requisicao.cc, token_data
+        ).all()
+        response["faltas_reservas"] = [item._asdict() for item in reserve_absences]
         
         return jsonify(response), 200
