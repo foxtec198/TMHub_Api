@@ -166,6 +166,25 @@ def _migrate_ticket_branch(table_names):
     )
 
 
+def _migrate_usage_control(table_names):
+    """Cria os índices em instalações em que as tabelas foram criadas antes."""
+    if "tm_uso_diario" not in table_names or "tm_uso_eventos" not in table_names:
+        return
+    try:
+        with db.engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_tm_uso_diario_usuario_dia "
+                "ON tm_uso_diario (usuario_id, dia)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_tm_uso_eventos_diario_ocorrido "
+                "ON tm_uso_eventos (uso_diario_id, ocorrido_em)"
+            ))
+    except SQLAlchemyError:
+        # A telemetria é complementar e não deve impedir a inicialização.
+        return
+
+
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():
@@ -179,3 +198,4 @@ def initialize_database(app):
         _migrate_timo_configuration(table_names)
         _migrate_floaters()
         _migrate_ticket_branch(table_names)
+        _migrate_usage_control(table_names)
