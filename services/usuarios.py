@@ -36,7 +36,12 @@ from utils.password_security import (
 )
 from utils.token import create_token
 from utils.maintenance import maintenance_mode_enabled, update_maintenance_mode
-from utils.theme_access import available_themes_for, can_use_custom_themes, effective_theme_for
+from utils.theme_access import (
+    CUSTOM_THEMES,
+    available_themes_for,
+    can_use_custom_themes,
+    effective_theme_for,
+)
 from utils.user_requirements import (
     auth_requirements,
     is_valid_cpf,
@@ -673,10 +678,7 @@ class UserServices:
 
         if tema is not None:
             tema = str(tema).lower()
-            if tema not in {
-                "tmhub", "light", "dark", "cyberpunk", "pride", "christmas",
-                "aurora", "ocean", "sunset", "forest", "terminal", "paper",
-            }:
+            if tema not in {"tmhub", "light", "dark", *CUSTOM_THEMES}:
                 return jsonify("Tema visual inválido."), 400
             if tema in {"light", "dark"}:
                 if modo_tema is None:
