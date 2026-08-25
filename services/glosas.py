@@ -6,11 +6,13 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from os import getenv
 from pathlib import Path
+from uuid import uuid4
 
 # Dependências externas.
 from flask import jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from sqlalchemy import case
 from sqlalchemy.orm import aliased
 from werkzeug.utils import secure_filename
 
@@ -158,8 +160,13 @@ class DisallowanceService:
         })
     @classmethod
     def ensure_for_absence(cls, absence, user_id=None):
-        """Cria a glosa preventiva de uma falta tratada, sem duplicar o vínculo."""
-        if not absence or absence.status != "tratada":
+        """Cria a glosa preventiva de uma falta, sem duplicar o vínculo.
+
+        A glosa nasce junto com a falta para que a operação já enxergue o risco
+        antes da tratativa. Quando a requisição é aprovada, a mesma glosa é
+        sincronizada como coberta — nunca é criada uma segunda linha.
+        """
+        if not absence:
             return None, False
 
         if not absence.id:
@@ -175,6 +182,7 @@ class DisallowanceService:
         if existing:
             # Não recria a glosa: apenas sincroniza cobertura e valores da falta.
             cls._update_values(existing, coverage, total_days, existing.valor_diaria or daily_value)
+            existing.requisicao_id = absence.requisicao_id
             return existing, False
 
         item = Disallowance(
@@ -186,7 +194,7 @@ class DisallowanceService:
             colaborador_matricula=absence.colaborador_matricula,
             falta_id=absence.id,
             requisicao_id=absence.requisicao_id,
-            justificativa="Glosa preventiva gerada ao tratar a falta.",
+            justificativa="Glosa preventiva gerada pela requisição.",
             observacao="Registro criado automaticamente pelo Controle de Faltas.",
             criado_por_usuario_id=user_id,
         )
@@ -219,6 +227,9 @@ class DisallowanceService:
             "falta_id": item.falta_id,
             "requisicao_id": item.requisicao_id,
             "cobertura": item.cobertura,
+            "cobertura_colaborador_id": row.cobertura_colaborador_id,
+            "cobertura_colaborador": row.cobertura_colaborador,
+            "cobertura_matricula": row.cobertura_matricula,
             "quantidade_dias": round(dias, 4),
             "quantidade_horas": round(dias * 8, 2),
             "quantidade_coberta_dias": round(dias_cobertos, 4),
@@ -242,6 +253,15 @@ class DisallowanceService:
     def _query():
         Creator = aliased(Users)
         Editor = aliased(Users)
+        Coverage = aliased(Employees)
+        coverage_employee_id = case(
+            (
+                Requisicao.cobertura_colaborador_id.isnot(None),
+                Requisicao.cobertura_colaborador_id,
+            ),
+            (Requisicao.reserva_id != 0, Requisicao.reserva_id),
+            else_=None,
+        )
         return (
             db.session.query(
                 Disallowance,
@@ -251,11 +271,16 @@ class DisallowanceService:
                 Employees.matricula.label("matricula"),
                 Creator.nome.label("criado_por"),
                 Editor.nome.label("alterado_por"),
+                Coverage.id.label("cobertura_colaborador_id"),
+                Coverage.nome.label("cobertura_colaborador"),
+                Coverage.matricula.label("cobertura_matricula"),
             )
             .join(CostCenters, CostCenters.id == Disallowance.centro_custo_id)
             .outerjoin(Employees, Employees.id == Disallowance.colaborador_id)
             .outerjoin(Creator, Creator.id == Disallowance.criado_por_usuario_id)
             .outerjoin(Editor, Editor.id == Disallowance.alterado_por_usuario_id)
+            .outerjoin(Requisicao, Requisicao.id == Disallowance.requisicao_id)
+            .outerjoin(Coverage, Coverage.id == coverage_employee_id)
         )
 
     def _records_and_summary(self, token_data):

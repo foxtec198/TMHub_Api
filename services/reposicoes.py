@@ -723,6 +723,12 @@ class RequestService:
         absent_employee = db.session.get(Employees, ausente_id)
         if not absent_employee:
             return jsonify("Colaborador ausente não encontrado."), 404
+        duplicate_message = AbsenceControlService.duplicate_request_message(
+            absent_employee.id,
+            created_at,
+        )
+        if duplicate_message:
+            return jsonify(duplicate_message), 409
         requested_center_id = bd.get("centro_id")
         if requested_center_id is not None:
             try:
@@ -871,6 +877,20 @@ class RequestService:
             if not reservation.disponivel:
                 reason = (reservation.indisponibilidade_motivo or "indisponível").lower()
                 return jsonify(f"Esta reserva está indisponível por {reason}."), 409
+
+        next_absent_id = bd.get("ausente_id", req.ausente_id)
+        next_date = (
+            self._parse_datetime(bd.get("data"))
+            if "data" in bd
+            else req.created_at
+        )
+        duplicate_message = AbsenceControlService.duplicate_request_message(
+            next_absent_id,
+            next_date,
+            exclude_request_id=req.id,
+        )
+        if duplicate_message:
+            return jsonify(duplicate_message), 409
 
         if "reserva_id" in bd: req.reserva_id = bd.get("reserva_id")
         if "centro_id" in bd: req.cc = bd.get("centro_id")
@@ -1045,6 +1065,7 @@ class RequestService:
         allowed_dates = {today, today + timedelta(days=1)}
         created = []
         errors = []
+        batch_request_keys = set()
 
         for row_number, row in enumerate(rows, start=2):
             if not any(value is not None and str(value).strip() for value in row):
@@ -1075,9 +1096,16 @@ class RequestService:
             if ausente_id not in employee_ids: row_errors.append("ausente_id não encontrado")
             if motivo not in self.REASONS: row_errors.append("motivo inválido")
             if created_at.date() not in allowed_dates: row_errors.append("a data deve ser hoje ou amanhã")
+            request_key = (ausente_id, created_at.date())
+            if request_key in batch_request_keys:
+                row_errors.append("já existe outra requisição desta planilha para o colaborador nesta data")
+            elif AbsenceControlService.duplicate_request_for_day(ausente_id, created_at):
+                row_errors.append("já existe uma requisição para o colaborador nesta data")
             if row_errors:
                 errors.append(f"Linha {row_number}: {', '.join(row_errors)}.")
                 continue
+
+            batch_request_keys.add(request_key)
 
             warning_value = str(value("advertencia") or "").strip().upper()
             obs = str(value("obs") or "").strip().upper() or None
