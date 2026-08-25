@@ -36,6 +36,46 @@ OPERATIONAL_COVERAGE_REASON = "COBERTURA OPERACIONAL DE ADICIONAL"
 
 class AbsenceControlService:
     @staticmethod
+    def duplicate_request_for_day(employee_id, occurrence, exclude_request_id=None):
+        """Retorna a requisição principal já lançada para o colaborador no dia.
+
+        A data de uma reposição não possui horário de negócio. Por isso a
+        conferência usa o dia local completo e ignora requisições-filhas de
+        cobertura operacional, que representam outra regra financeira.
+        """
+        if not employee_id or not occurrence:
+            return None
+
+        local_occurrence = occurrence
+        if local_occurrence.tzinfo is not None:
+            local_occurrence = local_occurrence.astimezone(SAO_PAULO).replace(tzinfo=None)
+        day_start = local_occurrence.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = local_occurrence.replace(hour=23, minute=59, second=59, microsecond=999999)
+        query = Requisicao.query.filter(
+            Requisicao.ausente_id == int(employee_id),
+            Requisicao.requisicao_origem_id.is_(None),
+            Requisicao.created_at.between(day_start, day_end),
+        )
+        if exclude_request_id:
+            query = query.filter(Requisicao.id != int(exclude_request_id))
+        return query.order_by(Requisicao.id.desc()).first()
+
+    @classmethod
+    def duplicate_request_message(cls, employee_id, occurrence, exclude_request_id=None):
+        duplicate = cls.duplicate_request_for_day(
+            employee_id,
+            occurrence,
+            exclude_request_id=exclude_request_id,
+        )
+        if not duplicate:
+            return None
+        formatted_day = occurrence.astimezone(SAO_PAULO).strftime("%d/%m/%Y") if occurrence.tzinfo else occurrence.strftime("%d/%m/%Y")
+        return (
+            f"Já existe a requisição #{duplicate.id} para este colaborador em "
+            f"{formatted_day}."
+        )
+
+    @staticmethod
     def _excel_datetime(value):
         """Converte datetimes com fuso para o formato aceito pelo Excel."""
         if isinstance(value, dt) and value.tzinfo is not None:
@@ -121,6 +161,14 @@ class AbsenceControlService:
         if not cls._is_absence_reason(req.motivo):
             absence = AbsenceControl.query.filter_by(requisicao_id=req.id).first()
             if absence:
+                # Se o motivo deixou de ser falta (férias, afastamento,
+                # remanejamento ou posto vago), a glosa preventiva também não
+                # pode permanecer sem uma falta vinculada.
+                from models.glosas import Disallowance
+
+                Disallowance.query.filter_by(falta_id=absence.id).delete(
+                    synchronize_session=False
+                )
                 db.session.delete(absence)
             return None
 
@@ -166,10 +214,12 @@ class AbsenceControlService:
                 cls._mark_historical_as_treated(absence)
             else:
                 absence.prazo_atestado = cls._deadline(req)
-        if absence.status == "tratada":
-            from services.glosas import DisallowanceService
+        # A glosa preventiva acompanha a falta desde o lançamento. Quando a
+        # requisição for decidida, esta mesma linha recebe a cobertura e os
+        # valores atualizados pelo próximo sync da requisição.
+        from services.glosas import DisallowanceService
 
-            DisallowanceService.ensure_for_absence(absence)
+        DisallowanceService.ensure_for_absence(absence)
         return absence
 
     @staticmethod
@@ -370,6 +420,10 @@ class AbsenceControlService:
             return jsonify("Informe uma data válida para a falta."), 400
         if absence_date.tzinfo:
             absence_date = absence_date.astimezone(SAO_PAULO).replace(tzinfo=None)
+
+        duplicate_message = self.duplicate_request_message(employee.id, absence_date)
+        if duplicate_message:
+            return jsonify(duplicate_message), 409
 
         absence_hours = None
         if absence_type == "parcial":
