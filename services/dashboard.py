@@ -7,7 +7,7 @@ from utils.safe_route import safe_route
 from datetime import datetime as dt
 # Dependências externas.
 from dateutils import relativedelta
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import aliased
 # Biblioteca padrão.
 from calendar import monthrange
@@ -83,20 +83,10 @@ class DashboardService:
             end = init + relativedelta(day=dias_no_mes , hour=23, minute=59, second=59)
         
         response = {
-            "abertas": 0,
             "historico": [],
+            "abertas_registros": [],
             "faltas_reservas": [],
-            "multas": [],
-            "meter": {"total": 0, "cobertas": 0, "sem_cobertura": 0},
         }
-        # Open requests follow the same status contract used by the operational request queue.
-        open_requests = Requisicao.query.filter(
-            Requisicao.created_at.between(init, end),
-            Requisicao.status.in_(["pending", "updated"]),
-        )
-        response["abertas"] = apply_cost_center_scope(
-            open_requests, Requisicao.cc, token_data
-        ).count()
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
@@ -114,7 +104,11 @@ class DashboardService:
                 History.id,
                 Ausente.nome.label("ausente"),
                 case(
-                    (History.reserva_id == 0 or not History.reserva_id, "SEM COBERTURA"), else_=Reserva.nome
+                    (
+                        or_(History.reserva_id == 0, History.reserva_id.is_(None)),
+                        "SEM COBERTURA",
+                    ),
+                    else_=Reserva.nome,
                 ).label("reserva"),
                 Supervisors.nome.label("supervisor"),
                 CostCenters.local.label("local"),
@@ -142,6 +136,43 @@ class DashboardService:
             history_query, History.cc, token_data
         ).all()
         response["historico"] = [h._asdict() for h in hists]
+
+        # As solicitações em aberto seguem o mesmo formato do histórico. Isso
+        # permite ao front aplicar um único recorte em todos os indicadores,
+        # sem misturar uma contagem global aos filtros locais.
+        open_query = (
+            db.session.query(
+                Requisicao.id,
+                Ausente.nome.label("ausente"),
+                case(
+                    (
+                        or_(Requisicao.reserva_id == 0, Requisicao.reserva_id.is_(None)),
+                        "SEM COBERTURA",
+                    ),
+                    else_=Reserva.nome,
+                ).label("reserva"),
+                Supervisors.nome.label("supervisor"),
+                CostCenters.local.label("local"),
+                CostCenters.departamento.label("dpto"),
+                Requisicao.created_at,
+                Requisicao.status,
+                Requisicao.motivo,
+                Requisicao.obs,
+                Requisicao.origem,
+            )
+            .select_from(Requisicao)
+            .join(Ausente, Ausente.id == Requisicao.ausente_id)
+            .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
+            .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .filter(
+                Requisicao.created_at.between(init, end),
+                Requisicao.status.in_(["pending", "updated"]),
+            )
+            .order_by(Requisicao.created_at.desc())
+        )
+        open_requests = apply_cost_center_scope(open_query, Requisicao.cc, token_data).all()
+        response["abertas_registros"] = [item._asdict() for item in open_requests]
 
         # A indisponibilidade por FALTA cria uma requisição própria. Consultar
         # a requisição, em vez de somente o histórico, preserva a métrica
