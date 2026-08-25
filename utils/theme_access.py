@@ -2,7 +2,7 @@
 
 CUSTOM_THEMES = frozenset({
     "cyberpunk", "pride", "christmas", "aurora", "ocean",
-    "sunset", "forest", "terminal", "paper",
+    "sunset", "forest", "terminal", "paper", "muertos",
 })
 DEFAULT_THEME = "tmhub"
 

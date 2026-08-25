@@ -698,6 +698,9 @@ class RequestService:
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
         manual_coverage_id = bd.get("cobertura_colaborador_id")
+        no_coverage_requested = str(bd.get("sem_cobertura", "")).strip().lower() in {
+            "1", "true", "sim", "yes", "on",
+        }
         ausente_id = bd.get("ausente_id")
         advertencia = str(bd.get("advertencia"))
         motivo = bd.get("motivo")
@@ -796,6 +799,7 @@ class RequestService:
             not reserva_id
             and additional["has_additional"]
             and not manual_coverage_id
+            and not no_coverage_requested
             and self._coverage_candidates(absent_employee)
         ):
             return jsonify("Selecione quem realizará a cobertura no item 3."), 400
