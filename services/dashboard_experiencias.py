@@ -207,6 +207,7 @@ class ExperienceDashboardService:
             .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
             .with_entities(
                 Employees.nome.label("colaborador"),
+                Employees.id.label("colaborador_id"),
                 Employees.matricula.label("matricula"),
                 Employees.data_admissao.label("data_admissao"),
                 CostCenters.local.label("centro_custo"),
@@ -236,7 +237,11 @@ class ExperienceDashboardService:
             Employees.centro_id,
             token_data,
         )
-        employees_in_experience = employee_query.count()
+        employees_in_experience_rows = employee_query.order_by(
+            Employees.data_admissao.asc(),
+            Employees.nome.asc(),
+        ).all()
+        employees_in_experience = len(employees_in_experience_rows)
         employees_in_experience_list = [
             {
                 "colaborador": row.colaborador or "Sem identificação",
@@ -249,22 +254,41 @@ class ExperienceDashboardService:
                 "supervisor": row.supervisor or "Sem supervisor",
                 "admissao": row.data_admissao.isoformat(),
                 "fim_experiencia": (
-                    row.data_admissao + timedelta(days=90)
+                    row.data_admissao + timedelta(days=89)
                 ).isoformat(),
             }
-            for row in employee_query.order_by(
-                Employees.data_admissao.asc(),
-                Employees.nome.asc(),
-            ).limit(25).all()
+            for row in employees_in_experience_rows[:25]
         ]
 
         monthly = {
-            key: {"mes": key, "total": 0, "concluidas": 0, "atrasadas": 0}
+            key: {
+                "mes": key,
+                "total": 0,
+                "concluidas": 0,
+                "atrasadas": 0,
+                "futuras": 0,
+            }
             for key in _month_keys(
                 filters["start"] or today.replace(month=1, day=1),
                 filters["end"] or today.replace(month=12, day=31),
             )
         }
+        existing_evaluations = {
+            (
+                row.ExperienceEvaluation.colaborador_id,
+                row.ExperienceEvaluation.data_fim_experiencia,
+            )
+            for row in option_rows
+        }
+
+        # Projeta apenas tarefas que ainda não foram abertas, sem duplicar a fila atual.
+        for employee in employees_in_experience_rows:
+            end_date = employee.data_admissao + timedelta(days=89)
+            month = end_date.strftime("%Y-%m")
+            evaluation_key = (employee.colaborador_id, end_date)
+            if month in monthly and evaluation_key not in existing_evaluations:
+                monthly[month]["futuras"] += 1
+
         supervisor_counts = defaultdict(
             lambda: {"total": 0, "pendentes": 0, "atrasadas": 0}
         )
