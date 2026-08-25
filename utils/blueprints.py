@@ -40,6 +40,7 @@ from routes.tickets import tickets_bp
 from routes.dashboard_medidas_disciplinares import disciplinary_measures_dashboard_bp
 from routes.dashboard_experiencias import experience_dashboard_bp
 from routes.avaliacoes_experiencia import experience_evaluations_bp
+from routes.exames_periodicos import periodic_exams_bp
 from routes.uso_tmhub import usage_bp
 
 blueprints = {
@@ -97,5 +98,6 @@ blueprints = {
     
     # Período de experiência
     experience_evaluations_bp: "/avaliacoes-experiencia",
+    periodic_exams_bp: "/exames-periodicos",
     usage_bp: "/uso",
 }
