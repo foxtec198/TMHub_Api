@@ -107,6 +107,8 @@ class FloaterService:
             Employees.nome,
             Cargos.nome.label("cargo"),
             Situations.tipo.label("situacao"),
+            CostCenters.departamento.label("departamento"),
+            CostCenters.local.label("centro_custo"),
             Floaters.created_at.label("data"),
             Floaters.disponivel,
             Floaters.indisponibilidade_motivo,
@@ -115,7 +117,8 @@ class FloaterService:
         .select_from(Floaters)
         .join(Employees, Employees.id == Floaters.employee_id)
         .join(Cargos, Cargos.id == Employees.cargo)
-        .join(Situations, Situations.id == Employees.situacao))
+        .join(Situations, Situations.id == Employees.situacao)
+        .join(CostCenters, CostCenters.id == Employees.centro_id))
         
         rsv = apply_cost_center_scope(rsv, Employees.centro_id, token_data)
         available_only = str(bd.get("disponivel", "")).strip().lower() in {"1", "true", "sim"}
