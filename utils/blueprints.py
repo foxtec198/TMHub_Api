@@ -22,6 +22,7 @@ from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
 from routes.pcd import pcd_bp
 from routes.rescisoes import termination_bp
+from routes.ferias import vacation_bp
 from routes.filiais import branch_bp
 from routes.controle_faltas import absence_control_bp
 from routes.glosas import disallowance_bp, disallowance_files_bp
@@ -79,6 +80,9 @@ blueprints = {
 
     #Rescisões
     termination_bp: "/rescisoes",
+
+    # Férias
+    vacation_bp: "/ferias",
 
     #Indicadores
     pcd_bp: "/pcd",
