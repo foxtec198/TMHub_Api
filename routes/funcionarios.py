@@ -1,17 +1,27 @@
-# Rotas HTTP de funcionários.
-# Dependências externas.
-from flask import request, Blueprint
-# Módulos internos da aplicação.
+"""Rotas do cadastro de colaboradores."""
+from flask import Blueprint, request
+
 from services.funcionarios import EmployeesService
 
 funcionarios_bp = Blueprint("Funcionarios", __name__)
 service = EmployeesService()
 
-# Encaminha a requisição para o fluxo principal do módulo.
-@funcionarios_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
+
+@funcionarios_bp.get("")
 def root():
-    match request.method:
-        case "GET": return service.read()
-        case "POST": return service.create()
-        case "PATCH": return service.update()
-        case "DELETE": return service.delete()
+    return service.read()
+
+
+@funcionarios_bp.get("/filtros")
+def filters():
+    return service.filters()
+
+
+@funcionarios_bp.get("/exportar")
+def export():
+    return service.export()
+
+
+@funcionarios_bp.patch("/<int:employee_id>")
+def update(employee_id):
+    return service.update(employee_id)

@@ -12,6 +12,16 @@ service = CostsCenterService()
 def companies():
     return service.companies()
 
+
+@center_bp.post("/importar")
+def import_centers():
+    return service.import_centers()
+
+
+@center_bp.get("/importacoes/<string:job_id>")
+def center_import_status(job_id):
+    return service.import_status(job_id)
+
 # Encaminha a requisição para o fluxo principal do módulo.
 @center_bp.route("", methods=["GET", "POST", "PATCH", "DELETE"])
 def root():
