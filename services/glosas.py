@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 # Dependências externas.
-from flask import jsonify, request, send_file, send_from_directory
+from flask import current_app, jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import case
@@ -658,14 +658,30 @@ class DisallowanceService:
         try:
             db.session.commit()
         except Exception:
+            db.session.rollback()
             if stored_path.is_file():
-                stored_path.unlink()
-            raise
+                try:
+                    stored_path.unlink()
+                except OSError:
+                    current_app.logger.warning(
+                        "Não foi possível limpar a evidência temporária da glosa %s.",
+                        glosa_id,
+                        exc_info=True,
+                    )
+            current_app.logger.exception("Falha ao vincular evidência à glosa %s.", glosa_id)
+            return jsonify("Não foi possível registrar a evidência da glosa. Tente novamente."), 500
 
         if old_name:
             old_path = EVIDENCE_DIR / Path(old_name).name
             if old_path.is_file():
-                old_path.unlink()
+                try:
+                    old_path.unlink()
+                except OSError:
+                    current_app.logger.warning(
+                        "Não foi possível remover a evidência antiga da glosa %s.",
+                        glosa_id,
+                        exc_info=True,
+                    )
 
         socketio.emit("disallowance_update", {"id": item.id, "action": "evidence_updated"})
         return jsonify(

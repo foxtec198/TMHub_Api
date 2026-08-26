@@ -55,6 +55,15 @@ class FloaterService:
         if requisition:
             return requisition, None
 
+        from services.controle_faltas import AbsenceControlService
+
+        duplicate_message = AbsenceControlService.duplicate_request_message(
+            employee.id,
+            scheduled_at,
+        )
+        if duplicate_message:
+            return None, (jsonify(duplicate_message), 409)
+
         requisition = Requisicao(
             reserva_id=0,
             ausente_id=employee.id,
@@ -70,8 +79,6 @@ class FloaterService:
         )
         db.session.add(requisition)
         db.session.flush()
-
-        from services.controle_faltas import AbsenceControlService
 
         AbsenceControlService.ensure_for_request(requisition)
         db.session.add(Timeline(

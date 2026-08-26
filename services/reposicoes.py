@@ -1439,6 +1439,15 @@ class HistoryService:
             )
             db.session.add(req)
 
+        next_absent_id = bd.get("ausente_id", req.ausente_id)
+        duplicate_message = AbsenceControlService.duplicate_request_message(
+            next_absent_id,
+            req.created_at,
+            exclude_request_id=req.id,
+        )
+        if duplicate_message:
+            return jsonify(duplicate_message), 409
+
         if "reserva_id" in bd:
             hist.reserva_id = bd.get("reserva_id")
             req.reserva_id = bd.get("reserva_id")
