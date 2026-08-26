@@ -37,6 +37,8 @@ def _data_channel(path, method):
         return "admissao"
     if path.startswith("/rescisoes"):
         return "rescisoes"
+    if path.startswith("/ferias"):
+        return "ferias"
     if path == "/controle-faltas":
         return "controle_faltas"
     if path.startswith("/medidas-disciplinares"):
