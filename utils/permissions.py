@@ -226,6 +226,23 @@ def enforce_request_permission():
         and not request.headers.get("Access-Token")
     ):
         return None
+
+    # A consulta de colaboradores também alimenta seletores de módulos como
+    # Reposições, Glosas, Rotinas e Estoque. Esses campos só retornam dados
+    # operacionais e continuam limitados ao escopo de filial dentro do próprio
+    # serviço. Não exigir a permissão da tela administrativa aqui evita que um
+    # usuário precise enxergar toda a tela de Colaboradores apenas para escolher
+    # alguém em uma operação que ele já pode executar.
+    #
+    # A listagem administrativa usa ``paginado=true`` e a exportação possui
+    # rota própria; ambas continuam protegidas por ``colaboradores.view``.
+    if (
+        request.method == "GET"
+        and normalized_path in {"/funcionarios", "/funcionarios/filtros"}
+        and str(request.args.get("paginado") or "").lower() not in {"1", "true", "sim"}
+    ):
+        return None
+
     required = request_permission(normalized_path, request.method)
     if not required:
         return None
