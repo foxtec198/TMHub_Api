@@ -236,10 +236,13 @@ class TMHubUsageService:
         selected_day = _parse_day(request.args.get("dia"))
         if not selected_day:
             return jsonify("Informe uma data válida no formato AAAA-MM-DD."), 400
-        daily = TMHubUsageDaily.query.filter_by(usuario_id=token_data.get("id"), dia=selected_day).first()
         user = db.session.get(Users, token_data.get("id"))
-        if not daily or not user:
+        if not user:
             return jsonify({"dia": selected_day.isoformat(), "edinhos_gerados": 0, "saldo_edinhos": 0, "timeline": []}), 200
+        daily = TMHubUsageDaily.query.filter_by(usuario_id=user.id, dia=selected_day).first()
+        balance = self._edinho_balance(user.id)
+        if not daily:
+            return jsonify({"dia": selected_day.isoformat(), "edinhos_gerados": 0, "saldo_edinhos": balance, "timeline": []}), 200
         payload = self._serialize_daily(daily, user, include_events=True)
-        payload["saldo_edinhos"] = self._edinho_balance(user.id)
+        payload["saldo_edinhos"] = balance
         return jsonify(payload), 200
