@@ -69,6 +69,8 @@ def _data_channel(path, method):
         return "configuracoes"
     if path.startswith("/avaliacoes-experiencia"):
         return "avaliacoes_experiencia"
+    if path.startswith("/exames-periodicos"):
+        return "exames_periodicos"
     return None
 
 
