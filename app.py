@@ -22,6 +22,7 @@ from utils.token import decode_token
 from models.configuracoes_sistema import SystemConfiguration
 from services.tickets import TicketService
 from services.avaliacoes_experiencia import ExperienceEvaluationService
+from services.exames_periodicos import PeriodicExamService
 from services.dashboard_ql import QLDashboardService
 from services.uso_tmhub import TMHubUsageService
 
@@ -135,6 +136,20 @@ def experience_evaluation_monitor():
 
 
 socketio.start_background_task(experience_evaluation_monitor)
+
+
+def periodic_exam_monitor():
+    """Promove para pendente os exames do mês subsequente sem depender da tela."""
+    while True:
+        try:
+            with app.app_context():
+                PeriodicExamService.refresh_pending_statuses()
+        except Exception:
+            app.logger.exception("Falha ao atualizar pendências de exames periódicos")
+        socketio.sleep(60 * 60)
+
+
+socketio.start_background_task(periodic_exam_monitor)
 
 
 def ql_snapshot_monitor():
