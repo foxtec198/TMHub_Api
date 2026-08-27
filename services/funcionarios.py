@@ -27,15 +27,19 @@ def _ids(value):
 
 class EmployeesService:
     @staticmethod
-    def _query():
-        return db.session.query(
-            Employees.id, Employees.matricula, Employees.nome, Employees.data_admissao,
-            Employees.carga_horaria, Employees.empresa_id, Company.nome.label("empresa_nome"),
-            Employees.centro_id, CostCenters.centro_id.label("centro_numero"),
+    def _query(include_cpf=False):
+        columns = [
+            Employees.id, Employees.matricula, Employees.nome,
+            Employees.data_admissao, Employees.carga_horaria, Employees.empresa_id,
+            Company.nome.label("empresa_nome"), Employees.centro_id,
+            CostCenters.centro_id.label("centro_numero"),
             CostCenters.local.label("centro_local"), CostCenters.departamento,
             Cargos.id.label("cargo_id"), Cargos.nome.label("cargo"),
             Situations.id.label("situacao_id"), Situations.tipo.label("situacao"),
-        ).select_from(Employees).outerjoin(Company, Company.id == Employees.empresa_id).outerjoin(
+        ]
+        if include_cpf:
+            columns.insert(3, Employees.cpf)
+        return db.session.query(*columns).select_from(Employees).outerjoin(Company, Company.id == Employees.empresa_id).outerjoin(
             Cargos, Cargos.id == Employees.cargo).outerjoin(Situations, Situations.id == Employees.situacao).outerjoin(
             CostCenters, CostCenters.id == Employees.centro_id)
 
@@ -64,7 +68,8 @@ class EmployeesService:
     @safe_route
     def read(self, token_data):
         if str(rq.args.get("fields") or "").lower() == "tm_ops": return self._read_tm_ops_lookup(token_data)
-        query = apply_active_department_scope(self._query(), Employees.centro_id)
+        include_cpf = str(rq.args.get("include_cpf") or "").lower() in {"1", "true"} and is_admin(token_data)
+        query = apply_active_department_scope(self._query(include_cpf=include_cpf), Employees.centro_id)
         query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         query = self._apply_filters(query).order_by(Employees.nome.asc(), Employees.id.asc())
         if str(rq.args.get("paginado") or "").lower() in {"1", "true"}:
