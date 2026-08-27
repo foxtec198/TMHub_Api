@@ -607,25 +607,11 @@ class RequestService:
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
         SupervisorUsuario = aliased(Users)
-        active_statuses = ["pending", "updated"]
-        request_days = (
-            db.session.query(
-                Requisicao.ausente_id.label("ausente_id"),
-                Requisicao.cc.label("cc"),
-                Requisicao.motivo.label("motivo"),
-                func.count(func.distinct(func.date(Requisicao.created_at))).label("dias"),
-            )
-            .filter(Requisicao.status.in_(active_statuses))
-            .group_by(Requisicao.ausente_id, Requisicao.cc, Requisicao.motivo)
-            .subquery()
-        )
-
         reqs = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.reserva_id,
                 Requisicao.created_at.label("data"),
-                request_days.c.dias,
                 Ausente.nome.label("ausencia"),
                 case(
                     (Requisicao.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome
@@ -643,11 +629,6 @@ class RequestService:
                 Requisicao.status,
             )
             .select_from(Requisicao)
-            .join(request_days, and_(
-                request_days.c.ausente_id == Requisicao.ausente_id,
-                request_days.c.cc == Requisicao.cc,
-                request_days.c.motivo == Requisicao.motivo,
-            ))
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .outerjoin(Floaters, Floaters.employee_id == Reserva.id)
@@ -981,22 +962,10 @@ class RequestService:
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
         SupervisorUsuario = aliased(Users)
-        request_days = (
-            db.session.query(
-                Requisicao.ausente_id.label("ausente_id"),
-                Requisicao.cc.label("cc"),
-                Requisicao.motivo.label("motivo"),
-                func.count(func.distinct(func.date(Requisicao.created_at))).label("dias"),
-            )
-            .filter(Requisicao.status.in_(["pending", "updated"]))
-            .group_by(Requisicao.ausente_id, Requisicao.cc, Requisicao.motivo)
-            .subquery()
-        )
         export_query = (
             db.session.query(
                 Requisicao.id,
                 Requisicao.created_at.label("data"),
-                request_days.c.dias,
                 Requisicao.status,
                 Requisicao.motivo,
                 Ausente.nome.label("ausente"),
@@ -1010,11 +979,6 @@ class RequestService:
                 ).label("supervisor"),
             )
             .select_from(Requisicao)
-            .join(request_days, and_(
-                request_days.c.ausente_id == Requisicao.ausente_id,
-                request_days.c.cc == Requisicao.cc,
-                request_days.c.motivo == Requisicao.motivo,
-            ))
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
@@ -1028,14 +992,14 @@ class RequestService:
         workbook = Workbook()
         worksheet = workbook.active
         worksheet.title = "Requisicoes"
-        headers = ["id", "data", "dias", "status", "motivo", "ausente", "reserva", "local", "departamento", "supervisor"]
+        headers = ["id", "data", "status", "motivo", "ausente", "reserva", "local", "departamento", "supervisor"]
         worksheet.append(headers)
         for row in rows:
             values = row._asdict()
             worksheet.append([values.get(header) for header in headers])
         worksheet.freeze_panes = "A2"
-        worksheet.auto_filter.ref = f"A1:J{max(len(rows) + 1, 1)}"
-        for column, width in {"A": 8, "B": 20, "C": 8, "D": 14, "E": 22, "F": 32, "G": 32, "H": 40, "I": 16, "J": 28}.items():
+        worksheet.auto_filter.ref = f"A1:I{max(len(rows) + 1, 1)}"
+        for column, width in {"A": 8, "B": 20, "C": 14, "D": 22, "E": 32, "F": 32, "G": 40, "H": 16, "I": 28}.items():
             worksheet.column_dimensions[column].width = width
 
         output = BytesIO()
@@ -1355,19 +1319,6 @@ class HistoryService:
             .group_by(History.requisicao_id)
             .subquery()
         )
-        absence_days = (
-            db.session.query(
-                History.ausente_id.label("ausente_id"),
-                History.cc.label("cc"),
-                History.motivo.label("motivo"),
-                func.count(func.distinct(func.date(History.created_at))).label("dias"),
-            )
-            .join(latest_history, History.id == latest_history.c.id)
-            .filter(History.created_at.between(init, end))
-            .group_by(History.ausente_id, History.cc, History.motivo)
-            .subquery()
-        )
-
         SupervisorUsuario = aliased(Users)
         history_query = (
             db.session.query(
@@ -1381,7 +1332,6 @@ class HistoryService:
                 ).label("reserva"),
                 History.motivo,
                 History.obs,
-                absence_days.c.dias,
                 func.coalesce(
                     SupervisorUsuario.nome,
                     Supervisors.nome,
@@ -1395,11 +1345,6 @@ class HistoryService:
             )
             .select_from(History)
             .join(latest_history, History.id == latest_history.c.id)
-            .join(absence_days, and_(
-                absence_days.c.ausente_id == History.ausente_id,
-                absence_days.c.cc == History.cc,
-                absence_days.c.motivo == History.motivo,
-            ))
             .join(Ausente, Ausente.id == History.ausente_id)
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
