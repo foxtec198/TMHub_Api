@@ -1,6 +1,6 @@
 """Serviço de telemetria de uso e cálculo diário de Edinhos."""
 
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
@@ -38,10 +38,13 @@ def _safe_route(value):
 def _parse_day(value):
     if not value:
         return _now().date()
-    try:
-        return date.fromisoformat(str(value))
-    except ValueError:
-        return None
+    raw = str(value).strip()
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(raw, pattern).date()
+        except ValueError:
+            continue
+    return None
 
 
 class TMHubUsageService:
@@ -212,7 +215,7 @@ class TMHubUsageService:
 
         selected_day = _parse_day(request.args.get("dia"))
         if not selected_day:
-            return jsonify("Informe uma data válida no formato AAAA-MM-DD."), 400
+            return jsonify("Informe uma data válida nos formatos AAAA-MM-DD ou DD/MM/AAAA."), 400
 
         rows = (
             db.session.query(TMHubUsageDaily, Users)
@@ -235,7 +238,7 @@ class TMHubUsageService:
     def my_day(self, token_data):
         selected_day = _parse_day(request.args.get("dia"))
         if not selected_day:
-            return jsonify("Informe uma data válida no formato AAAA-MM-DD."), 400
+            return jsonify("Informe uma data válida nos formatos AAAA-MM-DD ou DD/MM/AAAA."), 400
         user = db.session.get(Users, token_data.get("id"))
         if not user:
             return jsonify({"dia": selected_day.isoformat(), "edinhos_gerados": 0, "saldo_edinhos": 0, "timeline": []}), 200
