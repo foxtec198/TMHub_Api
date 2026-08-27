@@ -3,7 +3,7 @@
 import json
 # Dependências externas.
 from flask import g, has_request_context, request
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 # Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.filiais import Branch, filial_centros_custo, filial_departamentos, filial_usuarios
@@ -217,6 +217,7 @@ def can_access_cost_center(token_data, center_id):
 
 
 def can_access_supervisor(token_data, supervisor_id):
+    """Compatibilidade de leitura para o cadastro legado de supervisores."""
     ids = allowed_cost_center_ids(token_data)
 
     if ids is None:
@@ -239,3 +240,74 @@ def can_access_supervisor(token_data, supervisor_id):
         .first()
         is not None
     )
+
+
+def supervisor_users_query(token_data, center_id=None):
+    """Retorna apenas usuários supervisores visíveis no escopo atual.
+
+    O antigo cadastro ``supervisores`` não participa de novos vínculos. A
+    filial é validada pelo relacionamento de usuários com filiais para que um
+    administrador não consiga direcionar uma operação a um supervisor de
+    outra unidade.
+    """
+    query = Users.query.filter(func.upper(func.trim(Users.role)) == "SUPERVISOR")
+    required_branch_ids = None
+    allowed_ids = allowed_cost_center_ids(token_data)
+    if allowed_ids is not None:
+        if not allowed_ids:
+            return query.filter(db.false())
+
+        required_branch_ids = _branch_ids_for_cost_centers(allowed_ids)
+        if not required_branch_ids:
+            return query.filter(db.false())
+
+    if center_id is not None:
+        center_branch_ids = _branch_ids_for_cost_centers({int(center_id)})
+        if not center_branch_ids:
+            return query.filter(db.false())
+        required_branch_ids = (
+            center_branch_ids
+            if required_branch_ids is None
+            else required_branch_ids.intersection(center_branch_ids)
+        )
+        if not required_branch_ids:
+            return query.filter(db.false())
+
+    if required_branch_ids is not None:
+        query = query.filter(Users.id.in_(
+            db.session.query(filial_usuarios.c.usuario_id)
+            .filter(filial_usuarios.c.filial_id.in_(required_branch_ids))
+        ))
+
+    return query
+
+
+def _branch_ids_for_cost_centers(center_ids):
+    if not center_ids:
+        return set()
+
+    direct_rows = (
+        db.session.query(filial_centros_custo.c.filial_id)
+        .filter(filial_centros_custo.c.centro_custo_id.in_(center_ids))
+        .distinct()
+        .all()
+    )
+    department_rows = (
+        db.session.query(filial_departamentos.c.filial_id)
+        .join(
+            CostCenters,
+            CostCenters.departamento == filial_departamentos.c.departamento,
+        )
+        .filter(CostCenters.id.in_(center_ids))
+        .distinct()
+        .all()
+    )
+    return {row[0] for row in [*direct_rows, *department_rows]}
+
+
+def can_access_supervisor_user(token_data, user_id, center_id=None):
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False
+    return supervisor_users_query(token_data, center_id).filter(Users.id == user_id).first() is not None

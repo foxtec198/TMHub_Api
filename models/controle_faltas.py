@@ -17,7 +17,14 @@ class AbsenceControl(BaseModel):
     colaborador_nome = db.Column(db.String(255), nullable=False, default="Colaborador não encontrado")
     colaborador_matricula = db.Column(db.String(50))
     centro_custo_id = db.Column(db.Integer, db.ForeignKey("centro_de_custo.id", ondelete="RESTRICT"), nullable=False, index=True)
-    supervisor_id = db.Column(db.Integer, db.ForeignKey("supervisores.id", ondelete="RESTRICT"), nullable=False, index=True)
+    # Mantido apenas como referência do cadastro legado das faltas históricas.
+    supervisor_id = db.Column(db.Integer, db.ForeignKey("supervisores.id", ondelete="RESTRICT"), nullable=True, index=True)
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     motivo = db.Column(db.String(100), nullable=False)
     tipo_ausencia = db.Column(db.String(20), nullable=False, default="integral", index=True)
     quantidade_horas = db.Column(db.Numeric(6, 2))

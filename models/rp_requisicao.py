@@ -20,7 +20,15 @@ class Requisicao(BaseModel):
     )
     ausente_id = db.Column(db.Integer, nullable=False)
     cc = db.Column(db.Integer, nullable=True)
-    supervisor_id = db.Column(db.Integer, nullable=False)
+    # Cadastro legado: preservado somente para leitura de requisições antigas.
+    supervisor_id = db.Column(db.Integer, nullable=True)
+    # Novo vínculo oficial com o usuário que possui role SUPERVISOR.
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     warning = db.Column(db.Boolean, default=False)
     # Snapshot do adicional para preservar o valor válido na data do lançamento.
     adicional_tipo = db.Column(db.String(100))
