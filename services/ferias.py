@@ -97,11 +97,32 @@ def _employee_code(value):
 
 def _is_vacation_continuation(row):
     """Confirma se a linha contém o complemento de um lançamento de férias."""
-    return (
-        _employee_code(_cell(row, 0)) is None
-        and _cell(row, 10) not in (None, "")
-        and _cell(row, 13) not in (None, "")
-    )
+    if _employee_code(_cell(row, 0)) is not None:
+        return False
+    try:
+        _parse_date(_cell(row, 10), "Fim do aquisitivo")
+        _parse_date(_cell(row, 13), "Fim das férias")
+    except ValueError:
+        return False
+    return True
+
+
+def _find_vacation_continuation(rows, start_index):
+    """Localiza o complemento do lançamento, inclusive após uma quebra de página."""
+    for index in range(start_index + 1, len(rows)):
+        row = rows[index]
+
+        # Uma nova matrícula inicia outro lançamento. A busca não pode avançar
+        # além dela para não vincular datas de colaboradores diferentes.
+        if _employee_code(_cell(row, 0)) is not None:
+            return None
+
+        # Rodapés, cabeçalhos repetidos e linhas vazias não possuem matrícula
+        # nem as duas datas obrigatórias, por isso são ignorados naturalmente.
+        if _is_vacation_continuation(row):
+            return row
+
+    return None
 
 
 def _filter_values(name, caster=str):
@@ -443,14 +464,15 @@ class VacationService:
             code = _employee_code(_cell(row, 0))
             if code is None:
                 continue
-            next_row = rows[index + 1] if index + 1 < len(rows) else ()
 
-            # O relatório imprime cada lançamento em duas linhas. Uma quebra
-            # de página não pode transformar uma linha isolada em férias
-            # válidas, pois isso perderia dias e valores do período.
-            if not _is_vacation_continuation(next_row):
+            # O relatório imprime cada lançamento em duas linhas. Quando a
+            # segunda linha é deslocada para a página seguinte, a busca ignora
+            # o cabeçalho e o rodapé até encontrar o complemento ou a próxima
+            # matrícula, sem misturar colaboradores diferentes.
+            next_row = _find_vacation_continuation(rows, index)
+            if not next_row:
                 errors.append(
-                    f"Linha {index + 1}, matrícula {code}: período incompleto antes do rodapé; informe a linha de fim no relatório de origem."
+                    f"Linha {index + 1}, matrícula {code}: período sem linha complementar antes do próximo colaborador."
                 )
                 continue
 
