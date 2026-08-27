@@ -24,7 +24,12 @@ from models.rp_timeline import Timeline
 from models.supervisores import Supervisors
 from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor, is_admin
+from utils.filial_scope import (
+    apply_cost_center_scope,
+    can_access_cost_center,
+    can_access_supervisor_user,
+    is_admin,
+)
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
@@ -184,6 +189,7 @@ class AbsenceControlService:
         absence.colaborador_matricula = employee.matricula if employee else None
         absence.centro_custo_id = req.cc
         absence.supervisor_id = req.supervisor_id
+        absence.supervisor_usuario_id = req.supervisor_usuario_id
         absence.motivo = req.motivo
         if cls._is_declaration(req.motivo):
             absence.tipo_ausencia = "parcial"
@@ -262,6 +268,7 @@ class AbsenceControlService:
             return jsonify("Você não possui acesso ao Controle de Faltas."), 403
         self._expire_certificates()
         Tratador = aliased(Users)
+        SupervisorUsuario = aliased(Users)
         CoberturaManual = aliased(Employees)
         CoberturaReserva = aliased(Employees)
         query = (
@@ -285,7 +292,11 @@ class AbsenceControlService:
                 ).label("matricula"),
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento,
-                Supervisors.nome.label("supervisor"),
+                db.func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 Tratador.nome.label("tratado_por"),
                 Requisicao.status.label("status_requisicao"),
                 Requisicao.adicional_tipo,
@@ -304,7 +315,8 @@ class AbsenceControlService:
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
             .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
-            .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == AbsenceControl.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
             .outerjoin(
@@ -367,7 +379,7 @@ class AbsenceControlService:
         body = request.get_json(silent=True) or {}
         try:
             employee_id = int(body.get("colaborador_id"))
-            supervisor_id = int(body.get("supervisor_id"))
+            supervisor_usuario_id = int(body.get("supervisor_usuario_id"))
         except (TypeError, ValueError):
             return jsonify("Selecione o colaborador e o supervisor."), 400
 
@@ -378,9 +390,10 @@ class AbsenceControlService:
             return jsonify("O colaborador selecionado não possui contrato/local vinculado."), 400
         if not can_access_cost_center(token_data, employee.centro_id):
             return jsonify("Você não possui acesso à filial deste colaborador."), 403
-        if not db.session.get(Supervisors, supervisor_id):
+        supervisor = db.session.get(Users, supervisor_usuario_id)
+        if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
             return jsonify("Supervisor não encontrado."), 404
-        if not can_access_supervisor(token_data, supervisor_id):
+        if not can_access_supervisor_user(token_data, supervisor_usuario_id, employee.centro_id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
         coverage_requested = str(body.get("houve_cobertura") or "").strip().lower() in {
@@ -462,7 +475,8 @@ class AbsenceControlService:
                 cobertura_colaborador_id=coverage_employee.id if coverage_employee else None,
                 ausente_id=employee.id,
                 cc=employee.centro_id,
-                supervisor_id=supervisor_id,
+                supervisor_id=None,
+                supervisor_usuario_id=supervisor_usuario_id,
                 warning=False,
                 adicional_tipo=additional["adicional_tipo"],
                 adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
@@ -486,7 +500,8 @@ class AbsenceControlService:
                 reserva_id=0,
                 ausente_id=employee.id,
                 cc=employee.centro_id,
-                supervisor_id=supervisor_id,
+                supervisor_id=None,
+                supervisor_usuario_id=supervisor_usuario_id,
                 criado_por_usuario_id=token_data.get("id"),
                 status="pending",
                 tipo="Requisição criada através do Controle de Faltas",
@@ -550,6 +565,7 @@ class AbsenceControlService:
                         ausente_id=req.ausente_id,
                         cc=req.cc,
                         supervisor_id=req.supervisor_id,
+                        supervisor_usuario_id=req.supervisor_usuario_id,
                         alterado_por_usuario_id=token_data.get("id"),
                         status=req.status,
                         tipo="Motivo alterado no Controle de Faltas",
@@ -637,6 +653,7 @@ class AbsenceControlService:
 
         # Mantém o usuário que tratou a falta separado dos demais vínculos.
         Tratador = aliased(Users)
+        SupervisorUsuario = aliased(Users)
         CoberturaManual = aliased(Employees)
         CoberturaReserva = aliased(Employees)
         query = (
@@ -657,7 +674,11 @@ class AbsenceControlService:
                 ).label("matricula"),
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento,
-                Supervisors.nome.label("supervisor"),
+                db.func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 Tratador.nome.label("tratado_por"),
                 Requisicao.adicional_tipo,
                 Requisicao.adicional_valor_diaria,
@@ -675,7 +696,8 @@ class AbsenceControlService:
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
             .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
-            .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == AbsenceControl.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .join(Requisicao, Requisicao.id == AbsenceControl.requisicao_id)
             .outerjoin(Tratador, Tratador.id == AbsenceControl.tratado_por_usuario_id)
             .outerjoin(
@@ -892,6 +914,7 @@ class AbsenceControlService:
             end = end.replace(tzinfo=SAO_PAULO)
         end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+        SupervisorUsuario = aliased(Users)
         query = (
             db.session.query(
                 AbsenceControl.id,
@@ -904,12 +927,17 @@ class AbsenceControlService:
                 db.func.coalesce(Employees.nome, AbsenceControl.colaborador_nome).label("colaborador"),
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento,
-                Supervisors.nome.label("supervisor"),
+                db.func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
             )
             .select_from(AbsenceControl)
             .outerjoin(Employees, Employees.id == AbsenceControl.colaborador_id)
             .join(CostCenters, CostCenters.id == AbsenceControl.centro_custo_id)
-            .join(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == AbsenceControl.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == AbsenceControl.supervisor_id)
             .filter(~db.func.upper(AbsenceControl.motivo).in_(NON_ABSENCE_REASON_TERMS))
             .filter(AbsenceControl.data_falta.between(start, end))
         )

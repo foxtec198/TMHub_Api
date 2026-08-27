@@ -32,8 +32,9 @@ from utils.filial_scope import (
     apply_active_department_scope,
     apply_cost_center_scope,
     can_access_cost_center,
-    can_access_supervisor,
+    can_access_supervisor_user,
     is_admin,
+    supervisor_users_query,
 )
 from utils.permissions import has_permission
 from services.controle_faltas import AbsenceControlService
@@ -75,50 +76,16 @@ class RequestService:
     INSALUBRIDADE_PATTERN = re.compile(r"INSALUB(?:RIDADE|\.)?\s*(10|20|40)\s*%")
     GAF_PATTERN = re.compile(r"G[\s./-]*A[\s./-]*F")
 
-    @staticmethod
-    def _normalized_person_name(value):
-        """Compara nomes sem depender de caixa, acento ou espaços duplicados."""
-        import unicodedata
-
-        normalized = "".join(
-            character
-            for character in unicodedata.normalize("NFKD", str(value or ""))
-            if not unicodedata.combining(character)
-        )
-        return " ".join(normalized.upper().split())
-
-    @classmethod
-    def _linked_supervisor_for_user(cls, token_data):
-        """Localiza o supervisor da sessão somente dentro da filial permitida."""
-        user = db.session.get(Users, token_data.get("id"))
-        if not user:
-            return None
-        supervisors = apply_cost_center_scope(
-            Supervisors.query.join(CostCenters, CostCenters.supervisor_id == Supervisors.id).distinct(),
-            CostCenters.id,
-            token_data,
-        ).all()
-        user_name = cls._normalized_person_name(user.nome)
-        matches = [
-            item for item in supervisors
-            if cls._normalized_person_name(item.nome) == user_name
-        ]
-        return matches[0] if len(matches) == 1 else None
-
     @safe_route
     def requester(self, token_data):
-        """Resolve a identidade do supervisor antes de criar uma requisição."""
+        """Resolve o usuário supervisor responsável pela nova requisição."""
         user = db.session.get(Users, token_data.get("id"))
         if not user:
             return jsonify("Usuário autenticado não encontrado."), 401
         if not has_permission(token_data, "reposicoes", "create"):
             return jsonify("Você não possui permissão para criar requisições."), 403
 
-        supervisors = apply_cost_center_scope(
-            Supervisors.query.join(CostCenters, CostCenters.supervisor_id == Supervisors.id).distinct(),
-            CostCenters.id,
-            token_data,
-        ).order_by(Supervisors.nome).all()
+        supervisors = supervisor_users_query(token_data).order_by(Users.nome).all()
         options = [{"id": item.id, "nome": item.nome} for item in supervisors]
         if is_admin(token_data):
             return jsonify({
@@ -127,15 +94,13 @@ class RequestService:
                 "supervisores": options,
             }), 200
 
-        supervisor = self._linked_supervisor_for_user(token_data)
-        if not supervisor:
+        if str(user.role or "").upper() != "SUPERVISOR":
             return jsonify(
-                "Seu usuário não está vinculado a um supervisor cadastrado. "
-                "Peça a um administrador para conferir o nome do usuário e do supervisor."
+                "Seu usuário não possui a role SUPERVISOR para registrar requisições."
             ), 403
         return jsonify({
             "pode_selecionar_supervisor": False,
-            "supervisor": {"id": supervisor.id, "nome": supervisor.nome},
+            "supervisor": {"id": user.id, "nome": user.nome},
             "supervisores": [],
         }), 200
 
@@ -350,10 +315,11 @@ class RequestService:
             reserva_id=0,
             ausente_id=coverage_employee.id,
             cc=coverage_employee.centro_id,
-            supervisor_id=(
-                coverage_center.supervisor_id
-                if coverage_center and coverage_center.supervisor_id
-                else req.supervisor_id
+            supervisor_id=None,
+            supervisor_usuario_id=(
+                coverage_center.supervisor_usuario_id
+                if coverage_center and coverage_center.supervisor_usuario_id
+                else req.supervisor_usuario_id
             ),
             warning=False,
             motivo=cls.OPERATIONAL_COVERAGE_REASON,
@@ -640,6 +606,7 @@ class RequestService:
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        SupervisorUsuario = aliased(Users)
         active_statuses = ["pending", "updated"]
         request_days = (
             db.session.query(
@@ -665,7 +632,11 @@ class RequestService:
                 ).label("reserva"),
                 Floaters.id.label("reserva_floater_id"),
                 CostCenters.local,
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 Requisicao.warning,
                 Requisicao.origem,
                 Requisicao.motivo,
@@ -681,7 +652,8 @@ class RequestService:
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .outerjoin(Floaters, Floaters.employee_id == Reserva.id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
-            .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Requisicao.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .order_by(Requisicao.created_at.desc())
         )
         
@@ -701,6 +673,7 @@ class RequestService:
         """Return every open requisition and only decisions finalized today."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        SupervisorUsuario = aliased(Users)
         latest_history = (
             db.session.query(
                 History.requisicao_id,
@@ -732,14 +705,19 @@ class RequestService:
                 Reserva.matricula.label("reserva_matricula"),
                 CostCenters.local.label("contrato"),
                 CostCenters.departamento.label("departamento"),
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 History.ended_at.label("decidida_em"),
             )
             .select_from(Requisicao)
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
-            .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Requisicao.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .outerjoin(latest_history, latest_history.c.requisicao_id == Requisicao.id)
             .outerjoin(History, History.id == latest_history.c.history_id)
             .filter(or_(
@@ -775,7 +753,7 @@ class RequestService:
             return jsonify("Você não possui permissão para criar requisições."), 403
         bd = request.get_json(silent=True) or {}
 
-        supervisor_id = bd.get("supervisor_id")
+        supervisor_usuario_id = bd.get("supervisor_usuario_id")
         reserva_id = bd.get("reserva_id")
         manual_coverage_id = bd.get("cobertura_colaborador_id")
         no_coverage_requested = str(bd.get("sem_cobertura", "")).strip().lower() in {
@@ -788,15 +766,20 @@ class RequestService:
         obs = bd.get("obs")
         status = "pending"
 
-        ok, error = check_field(Supervisor=supervisor_id, Ausente=ausente_id, Motivo=motivo)
+        ok, error = check_field(
+            Supervisor=supervisor_usuario_id,
+            Ausente=ausente_id,
+            Motivo=motivo,
+        )
 
         if not ok:
             return jsonify(error), 400
         try:
-            supervisor_id = int(supervisor_id)
+            supervisor_usuario_id = int(supervisor_usuario_id)
         except (TypeError, ValueError):
             return jsonify("Supervisor inválido."), 400
-        if not db.session.get(Supervisors, supervisor_id):
+        supervisor_user = db.session.get(Users, supervisor_usuario_id)
+        if not supervisor_user or str(supervisor_user.role or "").upper() != "SUPERVISOR":
             return jsonify("Supervisor não encontrado."), 404
         adv = True if advertencia and advertencia.lower() == "aplicado" else False
         created_at = self._parse_datetime(data)
@@ -823,11 +806,10 @@ class RequestService:
             return jsonify("O colaborador ausente não possui um local cadastrado."), 400
         if not can_access_cost_center(token_data, centro_id):
             return jsonify("Você não possui acesso à filial deste colaborador."), 403
-        if not can_access_supervisor(token_data, supervisor_id):
+        if not can_access_supervisor_user(token_data, supervisor_usuario_id, centro_id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
         if not is_admin(token_data):
-            linked_supervisor = self._linked_supervisor_for_user(token_data)
-            if not linked_supervisor or linked_supervisor.id != supervisor_id:
+            if token_data.get("id") != supervisor_usuario_id:
                 return jsonify("A requisição deve ser registrada pelo supervisor autenticado."), 403
 
         try:
@@ -894,7 +876,8 @@ class RequestService:
             cobertura_colaborador_id=coverage_employee.id if coverage_employee else None,
             ausente_id=ausente_id,
             cc=centro_id,
-            supervisor_id=supervisor_id,
+            supervisor_id=None,
+            supervisor_usuario_id=supervisor_usuario_id,
             warning=adv,
             adicional_tipo=additional["adicional_tipo"],
             adicional_valor_diaria=additional["adicional_valor_diaria"] or None,
@@ -920,7 +903,7 @@ class RequestService:
             status=status,
             tipo="Criação da requisição",
             obs=obs,
-            criado_por_supervisor_id=supervisor_id
+            criado_por_usuario_id=token_data.get("id"),
         )
         
         socketio.emit("new_request")
@@ -997,6 +980,7 @@ class RequestService:
         """Export only the operational queue, keeping approved/reproved items in history."""
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        SupervisorUsuario = aliased(Users)
         request_days = (
             db.session.query(
                 Requisicao.ausente_id.label("ausente_id"),
@@ -1019,7 +1003,11 @@ class RequestService:
                 case((Requisicao.reserva_id == 0, "SEM COBERTURA"), else_=Reserva.nome).label("reserva"),
                 CostCenters.local,
                 CostCenters.departamento,
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
             )
             .select_from(Requisicao)
             .join(request_days, and_(
@@ -1030,7 +1018,8 @@ class RequestService:
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
-            .join(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Requisicao.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
             .filter(Requisicao.status.in_(["pending", "updated"]))
             .order_by(Requisicao.created_at.desc())
         )
@@ -1060,7 +1049,7 @@ class RequestService:
         workbook = Workbook()
         worksheet = workbook.active
         worksheet.title = "Requisicoes"
-        headers = ["supervisor_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data", "advertencia", "obs"]
+        headers = ["supervisor_usuario_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data", "advertencia", "obs"]
         worksheet.append(headers)
         worksheet.freeze_panes = "A2"
         worksheet.auto_filter.ref = "A1:H1"
@@ -1069,7 +1058,7 @@ class RequestService:
 
         instructions = workbook.create_sheet("Instrucoes")
         instructions.append(["Campo", "Regra"])
-        instructions.append(["supervisor_id", "Obrigatório; consulte a aba Supervisores"])
+        instructions.append(["supervisor_usuario_id", "Obrigatório; usuário com role SUPERVISOR; consulte a aba Supervisores"])
         instructions.append(["reserva_id", "Obrigatório; consulte a aba Reservas ou use 0 para SEM COBERTURA"])
         instructions.append(["centro_id", "Obrigatório; consulte a aba Centros"])
         instructions.append(["ausente_id", "Obrigatório; consulte a aba Colaboradores"])
@@ -1081,10 +1070,11 @@ class RequestService:
         allowed_centers = apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data).all()
         allowed_center_ids = {center.id for center in allowed_centers}
         allowed_supervisor_ids = {
-            center.supervisor_id for center in allowed_centers if center.supervisor_id
+            supervisor.id
+            for supervisor in supervisor_users_query(token_data).all()
         }
         reference_sheets = [
-            ("Supervisores", ["id", "nome"], db.session.query(Supervisors.id, Supervisors.nome).filter(Supervisors.id.in_(allowed_supervisor_ids)).order_by(Supervisors.nome).all()),
+            ("Supervisores", ["id", "nome"], db.session.query(Users.id, Users.nome).filter(Users.id.in_(allowed_supervisor_ids), func.upper(func.trim(Users.role)) == "SUPERVISOR").order_by(Users.nome).all()),
             ("Reservas", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).select_from(Floaters).join(Employees, Employees.id == Floaters.employee_id).filter(Employees.centro_id.in_(allowed_center_ids)).order_by(Employees.nome).all()),
             ("Colaboradores", ["id", "matricula", "nome"], db.session.query(Employees.id, Employees.matricula, Employees.nome).filter(Employees.centro_id.in_(allowed_center_ids)).order_by(Employees.nome).all()),
             ("Centros", ["id", "local", "departamento"], [(center.id, center.local, center.departamento) for center in allowed_centers]),
@@ -1117,7 +1107,7 @@ class RequestService:
         except (StopIteration, ValueError, OSError):
             return jsonify("Não foi possível ler a planilha."), 400
 
-        required = ["supervisor_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data"]
+        required = ["supervisor_usuario_id", "reserva_id", "centro_id", "ausente_id", "motivo", "data"]
         if any(field not in headers for field in required):
             return jsonify({"message": "Planilha fora do padrão.", "errors": [f"Colunas obrigatórias: {', '.join(required)}."]}), 400
 
@@ -1125,11 +1115,7 @@ class RequestService:
         # Armazena chaves estrangeiras válidas para evitar uma consulta por linha da planilha.
         center_ids = {row[0] for row in apply_cost_center_scope(db.session.query(CostCenters.id), CostCenters.id, token_data).all()}
         supervisor_ids = {
-            row[0] for row in db.session.query(CostCenters.supervisor_id)
-            .filter(
-                CostCenters.id.in_(center_ids),
-                CostCenters.supervisor_id.isnot(None),
-            ).distinct().all()
+            row[0] for row in supervisor_users_query(token_data).with_entities(Users.id).all()
         }
         employee_ids = {
             row[0] for row in db.session.query(Employees.id)
@@ -1158,7 +1144,7 @@ class RequestService:
                 return row[position] if position is not None and position < len(row) else default
 
             try:
-                supervisor_id = int(value("supervisor_id"))
+                supervisor_usuario_id = int(value("supervisor_usuario_id"))
                 reserva_id = int(value("reserva_id"))
                 centro_id = int(value("centro_id"))
                 ausente_id = int(value("ausente_id"))
@@ -1169,7 +1155,8 @@ class RequestService:
                 continue
 
             row_errors = []
-            if supervisor_id not in supervisor_ids: row_errors.append("supervisor_id não encontrado")
+            if supervisor_usuario_id not in supervisor_ids: row_errors.append("supervisor_usuario_id não encontrado")
+            elif not can_access_supervisor_user(token_data, supervisor_usuario_id, centro_id): row_errors.append("supervisor_usuario_id não está disponível para este centro")
             if reserva_id != 0 and reserva_id not in reservation_ids: row_errors.append("reserva_id não pertence às reservas técnicas")
             if centro_id not in center_ids: row_errors.append("centro_id não encontrado")
             if ausente_id not in employee_ids: row_errors.append("ausente_id não encontrado")
@@ -1192,7 +1179,8 @@ class RequestService:
                 reserva_id=reserva_id,
                 ausente_id=ausente_id,
                 cc=centro_id,
-                supervisor_id=supervisor_id,
+                supervisor_id=None,
+                supervisor_usuario_id=supervisor_usuario_id,
                 warning=warning_value == "APLICADO",
                 origem="requisicao",
                 motivo=motivo,
@@ -1220,8 +1208,9 @@ class RequestService:
                 reserva_id=requisition.reserva_id,
                 ausente_id=requisition.ausente_id,
                 cc=requisition.cc,
-                supervisor_id=requisition.supervisor_id,
-                criado_por_supervisor_id=requisition.supervisor_id,
+                supervisor_id=None,
+                supervisor_usuario_id=requisition.supervisor_usuario_id,
+                criado_por_usuario_id=token_data.get("id"),
                 status="pending",
                 tipo="Criação da requisição por planilha",
                 motivo=requisition.motivo,
@@ -1379,6 +1368,7 @@ class HistoryService:
             .subquery()
         )
 
+        SupervisorUsuario = aliased(Users)
         history_query = (
             db.session.query(
                 History.id,
@@ -1392,7 +1382,11 @@ class HistoryService:
                 History.motivo,
                 History.obs,
                 absence_days.c.dias,
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
                 History.status,
@@ -1410,7 +1404,8 @@ class HistoryService:
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
             .join(CostCenters, CostCenters.id == History.cc)
-            .join(Supervisors, Supervisors.id == History.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == History.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == History.supervisor_id)
             .filter(History.created_at.between(init, end))
             .order_by(History.created_at.desc())
         )
@@ -1434,6 +1429,7 @@ class HistoryService:
         cc_id = req.cc
         created_at = req.created_at
         supervisor_id = req.supervisor_id
+        supervisor_usuario_id = req.supervisor_usuario_id
         motivo = req.motivo
         ended_at = dt.now()
         obs = req.obs
@@ -1452,6 +1448,7 @@ class HistoryService:
         hist.status = status
         hist.ended_at = ended_at
         hist.supervisor_id = supervisor_id
+        hist.supervisor_usuario_id = supervisor_usuario_id
         hist.motivo = motivo
         hist.obs = obs
         
@@ -1491,7 +1488,14 @@ class HistoryService:
             token_data, bd.get("reserva_id"), allow_uncovered=True
         ):
             return jsonify("Você não possui acesso à filial desta reserva."), 403
-        if "supervisor_id" in bd and not can_access_supervisor(token_data, bd.get("supervisor_id")):
+        if (
+            "supervisor_usuario_id" in bd
+            and not can_access_supervisor_user(
+                token_data,
+                bd.get("supervisor_usuario_id"),
+                target_center,
+            )
+        ):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
         req = Requisicao.query.filter(Requisicao.id == hist.requisicao_id).first()
@@ -1502,6 +1506,7 @@ class HistoryService:
                 ausente_id=hist.ausente_id,
                 cc=hist.cc,
                 supervisor_id=hist.supervisor_id,
+                supervisor_usuario_id=hist.supervisor_usuario_id,
                 warning=False,
                 origem="requisicao",
                 motivo=hist.motivo,
@@ -1530,9 +1535,16 @@ class HistoryService:
         if "ausente_id" in bd:
             hist.ausente_id = bd.get("ausente_id")
             req.ausente_id = bd.get("ausente_id")
-        if "supervisor_id" in bd:
-            hist.supervisor_id = bd.get("supervisor_id")
-            req.supervisor_id = bd.get("supervisor_id")
+        if "supervisor_usuario_id" in bd:
+            try:
+                supervisor_usuario_id = int(bd.get("supervisor_usuario_id"))
+            except (TypeError, ValueError):
+                return jsonify("Supervisor inválido."), 400
+            supervisor = db.session.get(Users, supervisor_usuario_id)
+            if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
+                return jsonify("Supervisor não encontrado."), 404
+            hist.supervisor_usuario_id = supervisor_usuario_id
+            req.supervisor_usuario_id = supervisor_usuario_id
         if "motivo" in bd:
             hist.motivo = bd.get("motivo")
             req.motivo = bd.get("motivo")
@@ -1610,6 +1622,7 @@ class TimelineService:
                 ausente_id=req.ausente_id,
                 cc=req.cc,
                 supervisor_id=req.supervisor_id,
+                supervisor_usuario_id=req.supervisor_usuario_id,
                 criado_por_supervisor_id=criado_por_supervisor_id,
                 criado_por_usuario_id=criado_por_usuario_id,
                 alterado_por_usuario_id=alterado_por_usuario_id,
@@ -1627,6 +1640,7 @@ class TimelineService:
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        SupervisorUsuario = aliased(Users)
         Criador = aliased(Supervisors)
         CriadorUsuario = aliased(Users)
         Alterador = aliased(Users)
@@ -1639,6 +1653,7 @@ class TimelineService:
                 Timeline.status,
                 Timeline.tipo,
                 Timeline.supervisor_id,
+                Timeline.supervisor_usuario_id,
                 Timeline.criado_por_supervisor_id,
                 Timeline.criado_por_usuario_id,
                 Timeline.alterado_por_usuario_id,
@@ -1648,7 +1663,11 @@ class TimelineService:
                     else_=Reserva.nome
                 ).label("reserva"),
                 CostCenters.local,
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(
+                    SupervisorUsuario.nome,
+                    Supervisors.nome,
+                    "SEM SUPERVISOR",
+                ).label("supervisor"),
                 Criador.nome.label("criado_por"),
                 CriadorUsuario.nome.label("criado_por_usuario"),
                 CriadorUsuario.foto_perfil.label("criado_por_usuario_foto"),
@@ -1661,7 +1680,8 @@ class TimelineService:
             .join(Ausente, Ausente.id == Timeline.ausente_id)
             .outerjoin(Reserva, Reserva.id == Timeline.reserva_id)
             .join(CostCenters, CostCenters.id == Timeline.cc)
-            .join(Supervisors, Supervisors.id == Timeline.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Timeline.supervisor_usuario_id)
+            .outerjoin(Supervisors, Supervisors.id == Timeline.supervisor_id)
             .outerjoin(Criador, Criador.id == Timeline.criado_por_supervisor_id)
             .outerjoin(CriadorUsuario, CriadorUsuario.id == Timeline.criado_por_usuario_id)
             .outerjoin(Alterador, Alterador.id == Timeline.alterado_por_usuario_id)

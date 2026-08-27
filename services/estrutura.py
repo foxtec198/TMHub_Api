@@ -10,13 +10,15 @@ from models.estrutura import StructureAsset, StructureLocation
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
 from models.supervisores import Supervisors
+from models.usuarios import Users
 from services.tm_ops import TMOpsService
 from utils.db import db
 from utils.filial_scope import (
     apply_cost_center_scope,
     can_access_cost_center,
-    can_access_supervisor,
+    can_access_supervisor_user,
     is_admin,
+    supervisor_users_query,
 )
 from utils.safe_route import safe_route
 
@@ -48,11 +50,20 @@ class StructureService:
             .all()
             if center_ids else []
         )
-        supervisor_ids = {center.supervisor_id for center in centers if center.supervisor_id}
-        supervisors = {
+        legacy_supervisor_ids = {center.supervisor_id for center in centers if center.supervisor_id}
+        legacy_supervisors = {
             row.id: row.nome
-            for row in Supervisors.query.filter(Supervisors.id.in_(supervisor_ids)).all()
-        } if supervisor_ids else {}
+            for row in Supervisors.query.filter(Supervisors.id.in_(legacy_supervisor_ids)).all()
+        } if legacy_supervisor_ids else {}
+        supervisor_user_ids = {
+            center.supervisor_usuario_id
+            for center in centers
+            if center.supervisor_usuario_id
+        }
+        supervisor_users = {
+            row.id: row.nome
+            for row in Users.query.filter(Users.id.in_(supervisor_user_ids)).all()
+        } if supervisor_user_ids else {}
         locations_by_center = {}
         assets_by_center = {}
         for item in locations:
@@ -69,8 +80,15 @@ class StructureService:
                 "contrato": center.local,
                 "empresa_id": center.empresa_id,
                 "empresa_nome": center.empresa.nome if center.empresa else "SEM EMPRESA",
+                # ``supervisor_id`` continua disponível apenas para consumidores
+                # antigos. A edição usa sempre supervisor_usuario_id.
                 "supervisor_id": center.supervisor_id,
-                "supervisor": supervisors.get(center.supervisor_id) or "SEM SUPERVISOR",
+                "supervisor_usuario_id": center.supervisor_usuario_id,
+                "supervisor": (
+                    supervisor_users.get(center.supervisor_usuario_id)
+                    or legacy_supervisors.get(center.supervisor_id)
+                    or "SEM SUPERVISOR"
+                ),
                 "locais": locations_by_center.get(center.id, []),
                 "estrutura": self._location_tree(locations_by_center.get(center.id, [])),
                 "ativos": assets_by_center.get(center.id, []),
@@ -95,23 +113,8 @@ class StructureService:
 
     @safe_route
     def read_supervisors(self, token_data):
-        query = Supervisors.query
-        if not is_admin(token_data):
-            scoped_center_ids = (
-                apply_cost_center_scope(
-                    db.session.query(CostCenters.id),
-                    CostCenters.id,
-                    token_data,
-                )
-                .subquery()
-            )
-            query = (
-                query
-                .join(CostCenters, CostCenters.supervisor_id == Supervisors.id)
-                .filter(CostCenters.id.in_(db.session.query(scoped_center_ids.c.id)))
-                .distinct()
-            )
-        supervisors = query.order_by(Supervisors.nome).all()
+        center_id = request.args.get("centro_id", type=int)
+        supervisors = supervisor_users_query(token_data, center_id).order_by(Users.nome).all()
         return jsonify([
             {"id": supervisor.id, "nome": supervisor.nome}
             for supervisor in supervisors
@@ -127,25 +130,25 @@ class StructureService:
 
         body = request.get_json(silent=True) or {}
         try:
-            supervisor_id = int(body.get("supervisor_id"))
+            supervisor_user_id = int(body.get("supervisor_usuario_id"))
         except (TypeError, ValueError):
             return jsonify("Informe um supervisor válido."), 400
 
-        supervisor = db.session.get(Supervisors, supervisor_id)
-        if not supervisor:
+        supervisor = db.session.get(Users, supervisor_user_id)
+        if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
             return jsonify("Supervisor não encontrado."), 404
-        if not can_access_supervisor(token_data, supervisor.id):
+        if not can_access_supervisor_user(token_data, supervisor.id, center.id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
-        previous_supervisor_id = center.supervisor_id
-        center.supervisor_id = supervisor.id
+        previous_supervisor_user_id = center.supervisor_usuario_id
+        center.supervisor_usuario_id = supervisor.id
         db.session.commit()
         current_app.logger.info(
             "Supervisor do contrato alterado",
             extra={
                 "centro_custo_id": center.id,
-                "supervisor_anterior_id": previous_supervisor_id,
-                "supervisor_novo_id": supervisor.id,
+                "supervisor_usuario_anterior_id": previous_supervisor_user_id,
+                "supervisor_usuario_novo_id": supervisor.id,
                 "alterado_por_usuario_id": token_data.get("id"),
             },
         )
@@ -153,7 +156,7 @@ class StructureService:
             "message": "Supervisor alterado com sucesso.",
             "contrato": {
                 "id": center.id,
-                "supervisor_id": supervisor.id,
+                "supervisor_usuario_id": supervisor.id,
                 "supervisor": supervisor.nome,
             },
         })

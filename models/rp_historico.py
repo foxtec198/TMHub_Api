@@ -18,6 +18,12 @@ class History(BaseModel):
     status = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=dt.now)
     supervisor_id = db.Column(db.Integer)
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     ended_at = db.Column(db.DateTime)
     motivo = db.Column(db.String)
     obs = db.Column(db.String)

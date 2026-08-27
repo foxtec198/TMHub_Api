@@ -217,6 +217,79 @@ def _migrate_usage_control(table_names):
         return
 
 
+def _migrate_supervisor_users(table_names):
+    """Migra os vínculos novos para usuários sem tocar no histórico legado.
+
+    O cadastro ``supervisores`` não é removido: ids e nomes antigos ainda são
+    necessários para relatórios e timelines já gravados. A partir desta
+    alteração, os fluxos novos usam exclusivamente ``usuarios.id``.
+    """
+    migrations = {
+        "centro_de_custo": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE centro_de_custo ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_centro_de_custo_supervisor_usuario_id "
+                "ON centro_de_custo (supervisor_usuario_id)",
+            ),
+        ),
+        "rp_requisicoes": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE rp_requisicoes ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_rp_requisicoes_supervisor_usuario_id "
+                "ON rp_requisicoes (supervisor_usuario_id)",
+            ),
+        ),
+        "rp_historico": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE rp_historico ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_rp_historico_supervisor_usuario_id "
+                "ON rp_historico (supervisor_usuario_id)",
+            ),
+        ),
+        "rp_timeline": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE rp_timeline ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_rp_timeline_supervisor_usuario_id "
+                "ON rp_timeline (supervisor_usuario_id)",
+            ),
+        ),
+        "controle_faltas": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE controle_faltas ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_controle_faltas_supervisor_usuario_id "
+                "ON controle_faltas (supervisor_usuario_id)",
+            ),
+        ),
+    }
+
+    for table_name, (column_name, statements) in migrations.items():
+        if table_name in table_names:
+            _run_column_migration(table_name, column_name, statements)
+
+    # Os fluxos novos não possuem id do cadastro legado. As colunas antigas
+    # permanecem preenchidas nas linhas antigas, mas deixam de ser obrigatórias.
+    for table_name in ("rp_requisicoes", "rp_timeline", "controle_faltas"):
+        if table_name not in table_names:
+            continue
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(text(
+                    f"ALTER TABLE {table_name} ALTER COLUMN supervisor_id DROP NOT NULL"
+                ))
+        except SQLAlchemyError:
+            # Bancos instalados antes da constraint, ou dialetos sem a sintaxe,
+            # continuam funcionais com o default do ORM.
+            continue
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():
@@ -231,3 +304,4 @@ def initialize_database(app):
         _migrate_floaters()
         _migrate_ticket_branch(table_names)
         _migrate_usage_control(table_names)
+        _migrate_supervisor_users(table_names)

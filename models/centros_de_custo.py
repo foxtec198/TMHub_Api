@@ -17,7 +17,17 @@ class CostCenters(BaseModel):
     # Capacidade contratual planejada; ainda não bloqueia movimentações nem
     # admissões, mas fica disponível para as próximas regras operacionais.
     capacidade_pessoas = db.Column(db.Integer, nullable=True)
-    supervisor_id = db.Column(db.Integer)
+    # Referência legada ao cadastro anterior de supervisores. Não é mais
+    # preenchida por fluxos novos; permanece para exibir registros históricos.
+    supervisor_id = db.Column(db.Integer, nullable=True)
+    # Fonte oficial do responsável atual do contrato. O usuário precisa ter a
+    # role SUPERVISOR e continua submetido ao escopo de filiais.
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     cidade_id = db.Column(
         db.Integer,
         db.ForeignKey(

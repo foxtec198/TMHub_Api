@@ -15,7 +15,15 @@ class Timeline(BaseModel):
     reserva_id = db.Column(db.Integer, nullable=False)
     ausente_id = db.Column(db.Integer, nullable=False)
     cc = db.Column(db.Integer, nullable=False)
-    supervisor_id = db.Column(db.Integer, nullable=False)
+    # IDs do cadastro antigo não são reutilizados. As duas colunas legadas
+    # ficam somente para a renderização de eventos já existentes.
+    supervisor_id = db.Column(db.Integer, nullable=True)
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     criado_por_supervisor_id = db.Column(db.Integer, nullable=True)
     criado_por_usuario_id = db.Column(db.Integer, nullable=True)
     alterado_por_usuario_id = db.Column(db.Integer, nullable=True)

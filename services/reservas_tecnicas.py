@@ -12,7 +12,6 @@ from models.controle_faltas import AbsenceControl
 from models.rp_requisicao import Requisicao
 from models.rp_timeline import Timeline
 from models.situacoes import Situations
-from models.supervisores import Supervisors
 from utils.db import db
 
 from models.colaboradores import Employees
@@ -34,10 +33,10 @@ class FloaterService:
         if not center:
             return None, (jsonify("O local vinculado à reserva não foi encontrado."), 404)
 
-        supervisor_id = center.supervisor_id
-        if not supervisor_id or not db.session.get(Supervisors, supervisor_id):
+        supervisor_usuario_id = center.supervisor_usuario_id
+        if not supervisor_usuario_id:
             return None, (
-                jsonify("Defina um supervisor válido no contrato da reserva antes de registrar a falta."),
+                jsonify("Defina um usuário com role SUPERVISOR no contrato da reserva antes de registrar a falta."),
                 400,
             )
 
@@ -68,7 +67,8 @@ class FloaterService:
             reserva_id=0,
             ausente_id=employee.id,
             cc=employee.centro_id,
-            supervisor_id=supervisor_id,
+            supervisor_id=None,
+            supervisor_usuario_id=supervisor_usuario_id,
             warning=False,
             origem="reserva_tecnica",
             motivo="INJUSTIFICADA",
@@ -86,7 +86,8 @@ class FloaterService:
             reserva_id=0,
             ausente_id=employee.id,
             cc=employee.centro_id,
-            supervisor_id=supervisor_id,
+            supervisor_id=None,
+            supervisor_usuario_id=supervisor_usuario_id,
             criado_por_usuario_id=(token_data or {}).get("id"),
             status="pending",
             tipo="Falta criada pela indisponibilidade da reserva",
