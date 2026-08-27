@@ -169,6 +169,10 @@ def request_permission(path, method):
         ("/repo/request/importar", "reposicoes", {"POST": "create"}),
         ("/repo/request/modelo-importacao", "reposicoes", {"GET": "view"}),
         ("/repo/request/export", "reposicoes", {"GET": "view"}),
+        ("/repo/request/contexto-disciplinar", "reposicoes", {"POST": "create"}),
+        ("/repo/request/contexto-adicional", "reposicoes", {"POST": "create"}),
+        ("/repo/request/solicitante", "reposicoes", {"GET": "create"}),
+        ("/repo/reservas-uso", "reposicoes", {"GET": "create"}),
         ("/repo/request", "reposicoes", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/repo", "reposicoes", {"POST": "edit"}),
         ("/reservas", "reservas", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
@@ -213,20 +217,6 @@ def enforce_request_permission():
     if request.method == "OPTIONS":
         return None
     normalized_path = request.path.rstrip("/") or "/"
-    public_requisition_paths = {
-        "/repo/request",
-        "/repo/request/contexto-disciplinar",
-        "/repo/request/contexto-adicional",
-    }
-    # O formulário de reposições é público para os supervisores. As rotas de
-    # contexto só retornam os dados necessários para montar esse formulário.
-    if (
-        normalized_path in public_requisition_paths
-        and request.method == "POST"
-        and not request.headers.get("Access-Token")
-    ):
-        return None
-
     # A consulta de colaboradores também alimenta seletores de módulos como
     # Reposições, Glosas, Rotinas e Estoque. Esses campos só retornam dados
     # operacionais e continuam limitados ao escopo de filial dentro do próprio

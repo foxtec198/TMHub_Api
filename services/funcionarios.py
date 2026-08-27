@@ -15,7 +15,6 @@ from utils.db import db
 from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope, is_admin
 from utils.safe_route import safe_route
 from utils.socket import socketio
-from utils.token import decode_token
 
 
 def _ids(value):
@@ -65,14 +64,9 @@ class EmployeesService:
     @safe_route
     def read(self, token_data):
         if str(rq.args.get("fields") or "").lower() == "tm_ops": return self._read_tm_ops_lookup(token_data)
-        public = str(rq.args.get("publico") or "").lower() in {"1", "true", "sim"}
         query = apply_active_department_scope(self._query(), Employees.centro_id)
-        if not public:
-            query = apply_cost_center_scope(query, Employees.centro_id, token_data)
+        query = apply_cost_center_scope(query, Employees.centro_id, token_data)
         query = self._apply_filters(query).order_by(Employees.nome.asc(), Employees.id.asc())
-        if public:
-            limit = min(max(rq.args.get("limit", 50, type=int), 1), 50)
-            return jsonify([row._asdict() for row in query.limit(limit).all()]), 200
         if str(rq.args.get("paginado") or "").lower() in {"1", "true"}:
             page = max(rq.args.get("page", 1, type=int), 1); per_page = min(max(rq.args.get("per_page", 25, type=int), 1), 100)
             pagination = query.paginate(page=page, per_page=per_page, error_out=False)

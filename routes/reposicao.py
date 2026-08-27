@@ -28,6 +28,9 @@ def request():
         case "PATCH": return rq_service.update()
         case "DELETE": return rq_service.delete()
 
+@replace_bp.get("/request/solicitante")
+def requester(): return rq_service.requester()
+
 @replace_bp.get("/request/export")
 def export_requests(): return rq_service.export()
 

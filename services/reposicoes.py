@@ -33,8 +33,9 @@ from utils.filial_scope import (
     apply_cost_center_scope,
     can_access_cost_center,
     can_access_supervisor,
+    is_admin,
 )
-from utils.token import decode_token
+from utils.permissions import has_permission
 from services.controle_faltas import AbsenceControlService
 from services.medidas_disciplinares import disciplinary_guidance
 
@@ -73,6 +74,70 @@ class RequestService:
     }
     INSALUBRIDADE_PATTERN = re.compile(r"INSALUB(?:RIDADE|\.)?\s*(10|20|40)\s*%")
     GAF_PATTERN = re.compile(r"G[\s./-]*A[\s./-]*F")
+
+    @staticmethod
+    def _normalized_person_name(value):
+        """Compara nomes sem depender de caixa, acento ou espaços duplicados."""
+        import unicodedata
+
+        normalized = "".join(
+            character
+            for character in unicodedata.normalize("NFKD", str(value or ""))
+            if not unicodedata.combining(character)
+        )
+        return " ".join(normalized.upper().split())
+
+    @classmethod
+    def _linked_supervisor_for_user(cls, token_data):
+        """Localiza o supervisor da sessão somente dentro da filial permitida."""
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return None
+        supervisors = apply_cost_center_scope(
+            Supervisors.query.join(CostCenters, CostCenters.supervisor_id == Supervisors.id).distinct(),
+            CostCenters.id,
+            token_data,
+        ).all()
+        user_name = cls._normalized_person_name(user.nome)
+        matches = [
+            item for item in supervisors
+            if cls._normalized_person_name(item.nome) == user_name
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    @safe_route
+    def requester(self, token_data):
+        """Resolve a identidade do supervisor antes de criar uma requisição."""
+        user = db.session.get(Users, token_data.get("id"))
+        if not user:
+            return jsonify("Usuário autenticado não encontrado."), 401
+        if not has_permission(token_data, "reposicoes", "create"):
+            return jsonify("Você não possui permissão para criar requisições."), 403
+
+        supervisors = apply_cost_center_scope(
+            Supervisors.query.join(CostCenters, CostCenters.supervisor_id == Supervisors.id).distinct(),
+            CostCenters.id,
+            token_data,
+        ).order_by(Supervisors.nome).all()
+        options = [{"id": item.id, "nome": item.nome} for item in supervisors]
+        if is_admin(token_data):
+            return jsonify({
+                "pode_selecionar_supervisor": True,
+                "supervisor": None,
+                "supervisores": options,
+            }), 200
+
+        supervisor = self._linked_supervisor_for_user(token_data)
+        if not supervisor:
+            return jsonify(
+                "Seu usuário não está vinculado a um supervisor cadastrado. "
+                "Peça a um administrador para conferir o nome do usuário e do supervisor."
+            ), 403
+        return jsonify({
+            "pode_selecionar_supervisor": False,
+            "supervisor": {"id": supervisor.id, "nome": supervisor.nome},
+            "supervisores": [],
+        }), 200
 
     @classmethod
     def _additional_data(cls, cargo):
@@ -185,8 +250,11 @@ class RequestService:
             for employee, cargo in rows
         ]
 
-    def additional_context(self):
-        """Prepara o item 3 sem expor colaboradores de outros centros de custo."""
+    @safe_route
+    def additional_context(self, token_data):
+        """Prepara o item 3 dentro do escopo da sessão autenticada."""
+        if not has_permission(token_data, "reposicoes", "create"):
+            return jsonify("Você não possui permissão para consultar este contexto."), 403
         body = request.get_json(silent=True) or {}
         try:
             absent_id = int(body.get("ausente_id"))
@@ -199,8 +267,12 @@ class RequestService:
             return jsonify("Colaborador ausente não encontrado."), 404
         if not absent_employee.centro_id:
             return jsonify("O colaborador ausente não possui centro de custo cadastrado."), 400
+        if not can_access_cost_center(token_data, absent_employee.centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador."), 403
 
         coverage_employee = db.session.get(Employees, reserve_id) if reserve_id else None
+        if coverage_employee and not can_access_cost_center(token_data, coverage_employee.centro_id):
+            return jsonify("Você não possui acesso à filial desta cobertura."), 403
         context = self._additional_context(absent_employee, coverage_employee)
         if not context["has_additional"]:
             return jsonify({
@@ -506,16 +578,22 @@ class RequestService:
         )
         return {"contagens": counts, "avisos": warnings}
 
-    def disciplinary_context(self):
-        """Expõe somente os totais e avisos do colaborador no fluxo público de reposição."""
+    @safe_route
+    def disciplinary_context(self, token_data):
+        """Expõe totais e avisos somente no escopo da sessão autenticada."""
+        if not has_permission(token_data, "reposicoes", "create"):
+            return jsonify("Você não possui permissão para consultar este contexto."), 403
         try:
             body = request.get_json(silent=True) or {}
             employee_id = int(body.get("colaborador_id"))
         except (TypeError, ValueError):
             return jsonify("Colaborador inválido."), 400
 
-        if not db.session.get(Employees, employee_id):
+        employee = db.session.get(Employees, employee_id)
+        if not employee:
             return jsonify("Colaborador não encontrado."), 404
+        if not can_access_cost_center(token_data, employee.centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador."), 403
 
         return jsonify(self._disciplinary_context(employee_id)), 200
 
@@ -691,9 +769,11 @@ class RequestService:
             } for row in rows],
         }), 200
 
-    def create(self):
-        bd = request.get_json()
-        public_request = str(bd.get("publico", "")).strip().lower() in {"1", "true", "sim"}
+    @safe_route
+    def create(self, token_data):
+        if not has_permission(token_data, "reposicoes", "create"):
+            return jsonify("Você não possui permissão para criar requisições."), 403
+        bd = request.get_json(silent=True) or {}
 
         supervisor_id = bd.get("supervisor_id")
         reserva_id = bd.get("reserva_id")
@@ -741,15 +821,14 @@ class RequestService:
             centro_id = absent_employee.centro_id
         if not centro_id:
             return jsonify("O colaborador ausente não possui um local cadastrado."), 400
-        access_token = request.headers.get("Access-Token")
-        if access_token:
-            token_data = decode_token(access_token)
-            if not can_access_cost_center(token_data, centro_id):
-                return jsonify("Você não possui acesso à filial deste colaborador."), 403
-            # A tela pública registra o supervisor que abriu a requisição, mas
-            # não limita o colaborador aos contratos desse supervisor.
-            if not public_request and not can_access_supervisor(token_data, supervisor_id):
-                return jsonify("Você não possui acesso à filial deste supervisor."), 403
+        if not can_access_cost_center(token_data, centro_id):
+            return jsonify("Você não possui acesso à filial deste colaborador."), 403
+        if not can_access_supervisor(token_data, supervisor_id):
+            return jsonify("Você não possui acesso à filial deste supervisor."), 403
+        if not is_admin(token_data):
+            linked_supervisor = self._linked_supervisor_for_user(token_data)
+            if not linked_supervisor or linked_supervisor.id != supervisor_id:
+                return jsonify("A requisição deve ser registrada pelo supervisor autenticado."), 403
 
         try:
             reserva_id = int(reserva_id or 0)
@@ -763,7 +842,7 @@ class RequestService:
             if not reservation.disponivel:
                 reason = (reservation.indisponibilidade_motivo or "indisponível").lower()
                 return jsonify(f"Esta reserva está indisponível por {reason}."), 409
-            if access_token and not _can_access_employee(token_data, reserva_id):
+            if not _can_access_employee(token_data, reserva_id):
                 return jsonify("Você não possui acesso à filial desta reserva."), 403
             day_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = created_at.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -793,7 +872,7 @@ class RequestService:
                 return jsonify(
                     "A cobertura manual deve ser um colaborador ativo do mesmo centro de custo."
                 ), 400
-            if access_token and not _can_access_employee(token_data, coverage_employee.id):
+            if not _can_access_employee(token_data, coverage_employee.id):
                 return jsonify("Você não possui acesso à filial da cobertura informada."), 403
         else:
             manual_coverage_id = None
@@ -1153,7 +1232,8 @@ class RequestService:
         _emit_kds_update("imported")
         return jsonify({"message": f"{len(created)} requisições importadas com sucesso.", "total": len(created)}), 201
 
-    def daily_reservations(self):
+    @safe_route
+    def daily_reservations(self, token_data):
         """Split technical reserves by availability for one requested calendar day."""
         value = request.args.get("data")
         try:
@@ -1217,18 +1297,11 @@ class RequestService:
         reservation_query = apply_active_department_scope(
             reservation_query, Employees.centro_id
         )
-        access_token = request.headers.get("Access-Token")
-        public_lookup = str(request.args.get("publico", "")).strip().lower() in {"1", "true", "sim"}
-        if access_token and not public_lookup:
-            reservation_query = apply_cost_center_scope(
-                reservation_query, Employees.centro_id, decode_token(access_token)
-            )
-        elif not public_lookup:
-            supervisor_id = request.args.get("supervisor_id", type=int)
-            if not supervisor_id:
-                return jsonify("Selecione o supervisor para consultar as reservas."), 400
-            if not db.session.get(Supervisors, supervisor_id):
-                return jsonify("Supervisor não encontrado."), 404
+        if not has_permission(token_data, "reposicoes", "create"):
+            return jsonify("Você não possui permissão para consultar reservas."), 403
+        reservation_query = apply_cost_center_scope(
+            reservation_query, Employees.centro_id, token_data
+        )
         reservations = reservation_query.all()
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({

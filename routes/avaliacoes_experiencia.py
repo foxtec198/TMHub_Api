@@ -8,38 +8,7 @@ experience_evaluations_bp = Blueprint("Avaliações de Experiência", __name__)
 service = ExperienceEvaluationService()
 
 
-# Tela pública: o supervisor informa o nome e conclui somente sua etapa.
-@experience_evaluations_bp.get("/publico/supervisores")
-def public_supervisors():
-    return service.public_supervisors()
-
-
-@experience_evaluations_bp.post("/publico/tarefas")
-def public_tasks():
-    return service.public_tasks()
-
-
-@experience_evaluations_bp.post("/publico/detalhe")
-def public_detail():
-    return service.public_detail()
-
-
-@experience_evaluations_bp.post("/publico/salvar")
-def public_save():
-    return service.public_save()
-
-
-@experience_evaluations_bp.post("/publico/assinatura")
-def public_signature():
-    return service.public_upload_signature()
-
-
-@experience_evaluations_bp.post("/publico/concluir")
-def public_complete():
-    return service.public_save(complete=True)
-
-
-# Tela do supervisor: seleciona o próprio nome e consulta somente tarefas abertas.
+# Tela do supervisor: consulta somente tarefas abertas da sessão autenticada.
 @experience_evaluations_bp.get("/supervisores")
 def supervisors():
     return service.supervisors()
