@@ -8,10 +8,10 @@ from models.colaboradores import Employees
 from utils.safe_route import safe_route
 from utils.check_field import check_field
 from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope
-from utils.token import decode_token
 
 class ServiceSupervisors():
-    def read(self):
+    @safe_route
+    def read(self, token_data):
         query = Supervisors.query.join(
             CostCenters, CostCenters.supervisor_id == Supervisors.id
         ).distinct()
@@ -20,12 +20,7 @@ class ServiceSupervisors():
             return jsonify("Local selecionado inválido."), 400
         if center_id:
             query = query.filter(CostCenters.id == center_id)
-        access_token = rq.headers.get("Access-Token")
-        if access_token:
-            token_data = decode_token(access_token)
-            query = apply_cost_center_scope(query, CostCenters.id, token_data)
-        else:
-            query = apply_active_department_scope(query, CostCenters.id)
+        query = apply_cost_center_scope(query, CostCenters.id, token_data)
         sups = query.order_by(Supervisors.nome).all()
         return jsonify([s.to_dict() for s in sups]), 200
     
