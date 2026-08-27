@@ -26,6 +26,7 @@ import pypdfium2 as pdfium
 from PIL import Image, ImageDraw, ImageOps, ImageStat, UnidentifiedImageError
 # Módulos internos da aplicação.
 from models.filiais import Branch, filial_usuarios
+from models.colaboradores import Employees
 from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
 from utils.password_security import (
@@ -498,6 +499,28 @@ class UserServices:
         email = str(body.get("email") or "").strip().lower() or None
         role = str(body.get("role") or "USER").strip().upper()
         password = str(body.get("password") or "")
+
+        # A seleção de colaborador é opcional e serve como origem segura para
+        # preencher os dados básicos da nova conta. Campos informados
+        # explicitamente pelo administrador continuam podendo ser ajustados.
+        collaborator_id = body.get("colaborador_id")
+        if collaborator_id not in (None, ""):
+            try:
+                collaborator = db.session.get(Employees, int(collaborator_id))
+            except (TypeError, ValueError):
+                collaborator = None
+            if not collaborator:
+                return None, "Colaborador não encontrado."
+
+            collaborator_name = " ".join(str(collaborator.nome or "").split())
+            name_parts = collaborator_name.split()
+            collaborator_short_name = (
+                f"{name_parts[0]} {name_parts[-1]}" if len(name_parts) > 1 else collaborator_name
+            )
+            if not nome:
+                nome = collaborator_short_name
+            if not cpf:
+                cpf = self._normalize_cpf(collaborator.cpf) or None
 
         ok, error = check_field(nome=nome, senha=password)
         if not ok:
