@@ -135,6 +135,10 @@ class ExperienceDashboardService:
             "situacoes": [
                 {"value": value, "label": label}
                 for value, label in STATUS_LABELS.items()
+                if any(
+                    row.ExperienceEvaluation.status == value
+                    for row in rows
+                )
             ],
         }
 
@@ -168,8 +172,10 @@ class ExperienceDashboardService:
             Employees.centro_id,
             token_data,
         )
+        # Mantém uma fotografia completa do escopo para não projetar uma
+        # avaliação futura que já existe, mas os filtros do painel partem do
+        # mesmo recorte que alimenta a tabela e os indicadores.
         option_rows = base_query.all()
-        options = self._filter_options(option_rows)
         query = base_query
 
         if filters["start"]:
@@ -197,6 +203,7 @@ class ExperienceDashboardService:
             ExperienceEvaluation.prazo_supervisor_em.asc(),
             ExperienceEvaluation.id.asc(),
         ).all()
+        options = self._filter_options(rows)
         evaluations = [row.ExperienceEvaluation for row in rows]
         status_counts = Counter(evaluation.status for evaluation in evaluations)
 

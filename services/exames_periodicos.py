@@ -269,7 +269,9 @@ class PeriodicExamService:
         rows = self._filtered_rows(token_data)
         records = [self._serialize(*row) for row in rows]
         filters = {
-            "status": list(ALLOWED_STATUSES),
+            # O filtro deve refletir o recorte que a tela realmente recebeu;
+            # status sem nenhum exame no período não são opções válidas.
+            "status": sorted({record["status"] for record in records if record.get("status")}),
             "departamento": sorted({str(row[2].departamento) for row in rows if row[2]}),
             "supervisor": sorted({row[3].nome for row in rows if row[3] and row[3].nome}),
             "contrato": sorted({row[2].local for row in rows if row[2] and row[2].local}),

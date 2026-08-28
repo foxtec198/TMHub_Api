@@ -145,16 +145,6 @@ class TerminationDashboardService:
         )
         base_query = apply_cost_center_scope(base_query, Employees.centro_id, token_data)
 
-        # As opcoes partem do periodo e do escopo de filial, antes dos filtros locais.
-        option_rows = base_query.all()
-        filter_options = {
-            "departamentos": sorted({row.departamento for row in option_rows if row.departamento is not None}),
-            "motivos": sorted({row[0].motivo_rescisao for row in option_rows if row[0].motivo_rescisao}, key=str.casefold),
-            "contratos": sorted({row.centro_custo for row in option_rows if row.centro_custo}, key=str.casefold),
-            "supervisores": sorted({row.supervisor_nome for row in option_rows if row.supervisor_nome}, key=str.casefold),
-            "avisos": sorted({row[0].aviso for row in option_rows if row[0].aviso}, key=str.casefold),
-        }
-
         query = base_query
         departments = _csv_values("departamento")
         reasons = _csv_values("motivo")
@@ -174,6 +164,13 @@ class TerminationDashboardService:
             query = query.filter(Termination.aviso.in_(notices))
 
         rows = query.order_by(Termination.data_demissao.desc(), Termination.id.desc()).all()
+        filter_options = {
+            "departamentos": sorted({row.departamento for row in rows if row.departamento is not None}),
+            "motivos": sorted({row[0].motivo_rescisao for row in rows if row[0].motivo_rescisao}, key=str.casefold),
+            "contratos": sorted({row.centro_custo for row in rows if row.centro_custo}, key=str.casefold),
+            "supervisores": sorted({row.supervisor_nome for row in rows if row.supervisor_nome}, key=str.casefold),
+            "avisos": sorted({row[0].aviso for row in rows if row[0].aviso}, key=str.casefold),
+        }
         branches_by_center = _branch_map(row.centro_custo_id for row in rows)
 
         totals = {

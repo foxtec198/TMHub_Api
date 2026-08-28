@@ -204,10 +204,12 @@ def selected_values(args, name):
 
 def parse_filters(args):
     raw_departments = selected_values(args, "departamento")
+    raw_centers = selected_values(args, "centro_custo")
     try:
         departments = {int(value) for value in raw_departments}
+        centers = {int(value) for value in raw_centers}
     except ValueError as error:
-        raise ValueError("Filtro de departamento inválido.") from error
+        raise ValueError("Filtro de departamento ou centro de custo inválido.") from error
 
     filters = {
         "tipos": selected_values(args, "tipo"),
@@ -216,6 +218,7 @@ def parse_filters(args):
         "supervisores": selected_values(args, "supervisor"),
         "busca": str(args.get("busca") or "").strip(),
         "departamentos": departments,
+        "centros": centers,
         "inicio": parse_date(args.get("inicio")) if args.get("inicio") else None,
         "fim": parse_date(args.get("fim")) if args.get("fim") else None,
     }
@@ -485,6 +488,7 @@ class DisciplinaryMeasureService:
             "colaborador_id": record.colaborador_id,
             "matricula": employee.matricula if employee else None,
             "colaborador": employee.nome if employee else None,
+            "centro_custo_id": center.id if center else None,
             "centro_custo": center.local if center else None,
             "departamento": center.departamento if center else None,
             "tipo": record.tipo,
@@ -531,6 +535,8 @@ class DisciplinaryMeasureService:
         if filters["departamentos"]:
             query = query.join(CostCenters,CostCenters.id == Employees.centro_id,)               
             query = query.filter(CostCenters.departamento.in_(filters["departamentos"]))
+        if filters["centros"]:
+            query = query.filter(Employees.centro_id.in_(filters["centros"]))
         if filters["supervisores"]:
             query = query.filter(DisciplinaryMeasure.supervisor_nome.in_(filters["supervisores"]))
         if filters["inicio"]:
@@ -546,6 +552,21 @@ class DisciplinaryMeasureService:
                 DisciplinaryMeasure.motivo_detalhe.ilike(term),
                 DisciplinaryMeasure.observacao.ilike(term),
             ))
+        # As opções são facetas do mesmo conjunto filtrado, nunca um catálogo
+        # fixo. Assim um tipo ou alínea sem ocorrência no recorte não aparece.
+        option_values = query.with_entities(
+            DisciplinaryMeasure.tipo,
+            DisciplinaryMeasure.motivo,
+            DisciplinaryMeasure.motivo_detalhe,
+        ).distinct().all()
+        available_types = {
+            tipo for tipo, _motivo, _detail in option_values if tipo in MEASURE_TYPES
+        }
+        available_reasons = {
+            (motivo, detail)
+            for _tipo, motivo, detail in option_values
+            if motivo
+        }
         summary = query.with_entities(
             func.count(DisciplinaryMeasure.id).label("total"),
             func.sum(case((DisciplinaryMeasure.tipo == "advertencia", 1), else_=0)).label("advertencias"),
@@ -580,8 +601,18 @@ class DisciplinaryMeasureService:
                 "total": int(summary.total or 0),
             },
             "opcoes": {
-                "tipos": [{"value": key, "label": label} for key, label in MEASURE_TYPES.items()],
-                "motivos": reason_filter_options(),
+                "tipos": [
+                    {"value": key, "label": label}
+                    for key, label in MEASURE_TYPES.items()
+                    if key in available_types
+                ],
+                "motivos": [
+                    {"value": motivo, "label": reason_label(motivo, detail)}
+                    for motivo, detail in sorted(
+                        available_reasons,
+                        key=lambda item: reason_label(item[0], item[1]).casefold(),
+                    )
+                ],
             },
         }),200
 
@@ -590,9 +621,16 @@ class DisciplinaryMeasureService:
         denied = self._permission(token_data, "view")
         if denied:
             return denied
-        query = db.session.query(Employees.id, Employees.matricula, Employees.nome).filter(Employees.situacao != 8)
+        query = (
+            db.session.query(
+                Employees.id,
+                Employees.matricula,
+                Employees.nome,
+            )
+            .join(DisciplinaryMeasure, DisciplinaryMeasure.colaborador_id == Employees.id)
+        )
         query = apply_cost_center_scope(query, Employees.centro_id, token_data)
-        employees = query.order_by(Employees.nome).all()
+        employees = query.distinct().order_by(Employees.nome).all()
         supervisor_query = (
             db.session.query(DisciplinaryMeasure.supervisor_nome)
             .join(Employees, Employees.id == DisciplinaryMeasure.colaborador_id)
@@ -600,14 +638,27 @@ class DisciplinaryMeasureService:
         )
         supervisor_query = apply_cost_center_scope(supervisor_query, Employees.centro_id, token_data)
         supervisors = [name for name, in supervisor_query.distinct().order_by(DisciplinaryMeasure.supervisor_nome).all()]
-        department_query = (db.session.query(CostCenters.departamento).filter(CostCenters.departamento.isnot(None)))
+        department_query = (
+            db.session.query(CostCenters.departamento)
+            .join(Employees, Employees.centro_id == CostCenters.id)
+            .join(DisciplinaryMeasure, DisciplinaryMeasure.colaborador_id == Employees.id)
+            .filter(CostCenters.departamento.isnot(None))
+        )
         department_query = apply_cost_center_scope(department_query, CostCenters.id, token_data)
         departments = [department for department, in department_query.distinct().order_by(CostCenters.departamento).all()]
+        center_query = (
+            db.session.query(CostCenters.id, CostCenters.local)
+            .join(Employees, Employees.centro_id == CostCenters.id)
+            .join(DisciplinaryMeasure, DisciplinaryMeasure.colaborador_id == Employees.id)
+        )
+        center_query = apply_cost_center_scope(center_query, CostCenters.id, token_data)
+        centers = center_query.distinct().order_by(CostCenters.local).all()
         
         return jsonify({
             "colaboradores": [{"id": employee.id, "matricula": employee.matricula, "nome": employee.nome}for employee in employees],
             "supervisores": [{"value": name, "label": name} for name in supervisors],
             "departamentos": [{"value": department, "label": f"DPTO. {department}"}for department in departments],        
+            "centros": [{"value": center_id, "label": local or "Sem local"} for center_id, local in centers],
         }), 200
 
     @safe_route

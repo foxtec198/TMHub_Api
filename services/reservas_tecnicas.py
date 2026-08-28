@@ -146,6 +146,7 @@ class FloaterService:
             Employees.nome,
             Cargos.nome.label("cargo"),
             Situations.tipo.label("situacao"),
+            CostCenters.id.label("centro_custo_id"),
             CostCenters.departamento.label("departamento"),
             CostCenters.local.label("centro_custo"),
             CostCenters.supervisor_usuario_id,

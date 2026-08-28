@@ -397,6 +397,9 @@ class VacationService:
                 [{"label": item["centro_custo"], "value": item["centro_custo_id"]} for item in {item["centro_custo_id"]: item for item in all_records}.values()],
                 key=lambda item: item["label"].casefold(),
             ),
+            # Somente situações presentes no recorte atual podem ser
+            # selecionadas; a lista não é um catálogo fixo de estados.
+            "situacoes": sorted({item["situacao"] for item in all_records if item.get("situacao")}),
             "supervisores": sorted(
                 [{"label": item["supervisor"], "value": item["supervisor_id"]} for item in {item["supervisor_id"]: item for item in all_records if item["supervisor_id"]}.values()],
                 key=lambda item: item["label"].casefold(),
