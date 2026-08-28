@@ -9,6 +9,14 @@ class Supervisors(BaseModel):
 
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String)
+    # Usuário autenticável que responde pelo supervisor operacional. Registros
+    # sem esse vínculo são mantidos apenas para leitura histórica.
+    usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     colaborador_id = db.Column(
         db.Integer,
         db.ForeignKey("colaboradores.id", ondelete="SET NULL"),

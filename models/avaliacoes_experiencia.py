@@ -32,7 +32,16 @@ class ExperienceEvaluation(BaseModel):
     supervisor_id = db.Column(
         db.Integer,
         db.ForeignKey("supervisores.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    # Vínculo oficial com o usuário que possui a role SUPERVISOR. O campo
+    # supervisor_id permanece somente para compatibilidade com avaliações
+    # históricas já gravadas.
+    supervisor_usuario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("usuarios.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 
@@ -81,3 +90,8 @@ class ExperienceEvaluation(BaseModel):
 
     colaborador = db.relationship("Employees", lazy="joined")
     supervisor = db.relationship("Supervisors", lazy="joined")
+    supervisor_usuario = db.relationship(
+        "Users",
+        foreign_keys=[supervisor_usuario_id],
+        lazy="joined",
+    )
