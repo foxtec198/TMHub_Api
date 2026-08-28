@@ -16,7 +16,8 @@ from utils.db import db
 
 from models.colaboradores import Employees
 from models.reservas_tecnicas import Floaters
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from models.usuarios import Users
+from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, can_access_supervisor_user
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
@@ -29,18 +30,23 @@ class FloaterService:
     SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 
     @classmethod
-    def _create_absence(cls, employee, token_data, absence_reason):
+    def _create_absence(cls, employee, token_data, absence_reason, supervisor_usuario_id=None):
         """Cria uma única requisição sem cobertura para a falta da reserva no dia."""
         center = db.session.get(CostCenters, employee.centro_id)
         if not center:
             return None, (jsonify("O local vinculado à reserva não foi encontrado."), 404)
 
-        supervisor_usuario_id = center.supervisor_usuario_id
+        supervisor_usuario_id = supervisor_usuario_id or center.supervisor_usuario_id
         if not supervisor_usuario_id:
             return None, (
                 jsonify("Defina um usuário com role SUPERVISOR no contrato da reserva antes de registrar a falta."),
                 400,
             )
+        supervisor = db.session.get(Users, supervisor_usuario_id)
+        if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
+            return None, (jsonify("O supervisor informado não possui a role SUPERVISOR."), 400)
+        if not can_access_supervisor_user(token_data, supervisor.id, center.id):
+            return None, (jsonify("Você não possui acesso ao supervisor deste contrato."), 403)
 
         now = dt.now(cls.SAO_PAULO)
         scheduled_at = now.replace(tzinfo=None)
@@ -111,6 +117,7 @@ class FloaterService:
             Situations.tipo.label("situacao"),
             CostCenters.departamento.label("departamento"),
             CostCenters.local.label("centro_custo"),
+            CostCenters.supervisor_usuario_id,
             Floaters.created_at.label("data"),
             Floaters.disponivel,
             Floaters.indisponibilidade_motivo,
@@ -182,7 +189,12 @@ class FloaterService:
                 absence_reason = str(body.get("motivo_falta") or "").strip().upper()
                 if absence_reason not in self.ABSENCE_REASONS:
                     return jsonify("Selecione o motivo da falta."), 400
-                requisition, error = self._create_absence(employee, token_data, absence_reason)
+                supervisor_usuario_id = body.get("supervisor_usuario_id")
+                if not supervisor_usuario_id and body.get("requisicao_id"):
+                    source_request = db.session.get(Requisicao, body.get("requisicao_id"))
+                    if source_request and source_request.cc == employee.centro_id:
+                        supervisor_usuario_id = source_request.supervisor_usuario_id
+                requisition, error = self._create_absence(employee, token_data, absence_reason, supervisor_usuario_id)
                 if error:
                     return error
             floater.disponivel = False
