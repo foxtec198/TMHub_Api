@@ -19,6 +19,7 @@ from utils.filial_scope import (
     allowed_cost_center_ids,
     can_select_branches,
     requested_branch_ids,
+    requested_company_ids,
 )
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
@@ -222,7 +223,7 @@ class QLDashboardService:
             QLDailySnapshot.filial_id.in_(branch_ids),
             QLDailySnapshot.data_referencia >= start_date,
         )
-        if company_ids:
+        if company_ids is not None:
             query = query.filter(QLDailySnapshot.empresa_id.in_(company_ids))
         if departments:
             query = query.filter(QLDailySnapshot.departamento.in_(departments))
@@ -387,6 +388,9 @@ class QLDashboardService:
 
         selected_departments = _selected_values("departamento")
         selected_companies = _selected_values("empresa")
+        global_company_ids = requested_company_ids()
+        if global_company_ids is not None:
+            selected_companies = global_company_ids
         selected_company_departments = _selected_company_departments()
         departments = [
             self._serialize_department(row)
@@ -455,6 +459,9 @@ class QLDashboardService:
 
         selected_departments = _selected_values("departamento")
         selected_companies = _selected_values("empresa")
+        global_company_ids = requested_company_ids()
+        if global_company_ids is not None:
+            selected_companies = global_company_ids
         selected_company_departments = _selected_company_departments()
         departments = [
             self._serialize_department(row)
