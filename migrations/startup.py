@@ -218,13 +218,22 @@ def _migrate_usage_control(table_names):
 
 
 def _migrate_supervisor_users(table_names):
-    """Migra os vínculos novos para usuários sem tocar no histórico legado.
+    """Promove vínculos legados para usuários de forma idempotente.
 
     O cadastro ``supervisores`` não é removido: ids e nomes antigos ainda são
     necessários para relatórios e timelines já gravados. A partir desta
     alteração, os fluxos novos usam exclusivamente ``usuarios.id``.
     """
     migrations = {
+        "supervisores": (
+            "usuario_id",
+            (
+                "ALTER TABLE supervisores ADD COLUMN usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_supervisores_usuario_id "
+                "ON supervisores (usuario_id)",
+            ),
+        ),
         "centro_de_custo": (
             "supervisor_usuario_id",
             (
@@ -270,6 +279,15 @@ def _migrate_supervisor_users(table_names):
                 "ON controle_faltas (supervisor_usuario_id)",
             ),
         ),
+        "avaliacoes_experiencia": (
+            "supervisor_usuario_id",
+            (
+                "ALTER TABLE avaliacoes_experiencia ADD COLUMN supervisor_usuario_id INTEGER "
+                "REFERENCES usuarios(id) ON DELETE SET NULL",
+                "CREATE INDEX IF NOT EXISTS ix_avaliacoes_experiencia_supervisor_usuario_id "
+                "ON avaliacoes_experiencia (supervisor_usuario_id)",
+            ),
+        ),
     }
 
     for table_name, (column_name, statements) in migrations.items():
@@ -290,6 +308,55 @@ def _migrate_supervisor_users(table_names):
             # Bancos instalados antes da constraint, ou dialetos sem a sintaxe,
             # continuam funcionais com o default do ORM.
             continue
+
+    # Backfill único e idempotente: somente o cadastro legado que já possui
+    # usuário associado pode virar vínculo oficial. Supervisores sem
+    # ``usuario_id`` continuam deliberadamente sem uso nos fluxos atuais.
+    backfill_tables = (
+        "centro_de_custo",
+        "rp_requisicoes",
+        "rp_historico",
+        "rp_timeline",
+        "controle_faltas",
+        "avaliacoes_experiencia",
+    )
+    if "supervisores" in table_names:
+        available_tables = [
+            table_name
+            for table_name in backfill_tables
+            if table_name in table_names
+        ]
+        if available_tables:
+            try:
+                with db.engine.begin() as connection:
+                    for table_name in available_tables:
+                        connection.execute(text(
+                            f"UPDATE {table_name} AS target "
+                            "SET supervisor_usuario_id = supervisor.usuario_id "
+                            "FROM supervisores AS supervisor "
+                            f"WHERE target.supervisor_usuario_id IS NULL "
+                            "AND target.supervisor_id = supervisor.id "
+                            "AND supervisor.usuario_id IS NOT NULL"
+                        ))
+            except SQLAlchemyError:
+                # Um backfill incompleto é erro de schema e deve interromper o
+                # startup para não expor avaliações com escopo incorreto.
+                raise
+
+    # As avaliações novas não precisam mais de um id do cadastro legado.
+    if "avaliacoes_experiencia" in table_names:
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE avaliacoes_experiencia "
+                    "ALTER COLUMN supervisor_id DROP NOT NULL"
+                ))
+        except SQLAlchemyError:
+            # Bancos que já tinham a coluna opcional ou não aceitam a sintaxe
+            # continuam cobertos pela nulabilidade do modelo e do novo campo.
+            pass
+
+
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():

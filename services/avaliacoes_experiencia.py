@@ -20,10 +20,13 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
 from models.medidas_disciplinares import DisciplinaryMeasure
-from models.supervisores import Supervisors
 from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import apply_cost_center_scope, can_access_supervisor, is_admin
+from utils.filial_scope import (
+    apply_cost_center_scope,
+    can_access_supervisor_user,
+    is_admin,
+)
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
 
@@ -199,12 +202,12 @@ class ExperienceEvaluationService:
                 Employees,
                 CostCenters.local.label("centro_custo_nome"),
                 CostCenters.departamento.label("departamento"),
-                CostCenters.supervisor_id.label("supervisor_id"),
-                Supervisors.nome.label("supervisor_nome"),
+                CostCenters.supervisor_usuario_id.label("supervisor_usuario_id"),
+                Users.nome.label("supervisor_nome"),
                 Cargos.nome.label("cargo_nome"),
             )
             .join(CostCenters, CostCenters.id == Employees.centro_id)
-            .join(Supervisors, Supervisors.id == CostCenters.supervisor_id)
+            .outerjoin(Users, Users.id == CostCenters.supervisor_usuario_id)
             .outerjoin(Cargos, Cargos.id == Employees.cargo)
             .filter(Employees.situacao == 1, Employees.data_admissao.isnot(None))
         )
@@ -219,7 +222,8 @@ class ExperienceEvaluationService:
         employee = employee_row.Employees
         evaluation = ExperienceEvaluation(
             colaborador_id=employee.id,
-            supervisor_id=employee_row.supervisor_id,
+            supervisor_id=None,
+            supervisor_usuario_id=employee_row.supervisor_usuario_id,
             data_fim_experiencia=end_date,
             data_referencia_util=business_reference,
             aberta_em=dt.combine(opening_date, time.min, tzinfo=SAO_PAULO),
@@ -250,7 +254,7 @@ class ExperienceEvaluationService:
             ).first()
             if existing:
                 continue
-            if not employee_row.supervisor_id:
+            if not employee_row.supervisor_usuario_id:
                 skipped_without_supervisor += 1
                 continue
 
@@ -280,7 +284,7 @@ class ExperienceEvaluationService:
         employee = evaluation.colaborador
         center = db.session.get(CostCenters, employee.centro_id) if employee else None
         cargo = db.session.get(Cargos, employee.cargo) if employee and employee.cargo else None
-        supervisor = evaluation.supervisor
+        supervisor = evaluation.supervisor_usuario
         payload = {
             "id": evaluation.id,
             "status": evaluation.status,
@@ -296,8 +300,9 @@ class ExperienceEvaluationService:
                 "data_referencia_util": _date_iso(evaluation.data_referencia_util),
             },
             "supervisor": {
-                "id": evaluation.supervisor_id,
-                "nome": supervisor.nome if supervisor else "Supervisor removido",
+                "id": evaluation.supervisor_usuario_id,
+                "usuario_id": evaluation.supervisor_usuario_id,
+                "nome": supervisor.nome if supervisor else "Supervisor não informado",
             },
             "aberta_em": _datetime_iso(evaluation.aberta_em),
             "prazo_supervisor_em": _datetime_iso(evaluation.prazo_supervisor_em),
@@ -324,7 +329,15 @@ class ExperienceEvaluationService:
 
     @staticmethod
     def _supervisor_can_access(token_data, evaluation):
-        return can_access_supervisor(token_data, evaluation.supervisor_id)
+        return bool(
+            evaluation.supervisor_usuario_id
+            and evaluation.colaborador
+            and can_access_supervisor_user(
+                token_data,
+                evaluation.supervisor_usuario_id,
+                evaluation.colaborador.centro_id,
+            )
+        )
 
     @staticmethod
     def _get_evaluation_in_scope(evaluation_id, token_data):
@@ -425,13 +438,14 @@ class ExperienceEvaluationService:
             return jsonify("Você não possui acesso às avaliações de experiência."), 403
         rows = (
             apply_cost_center_scope(
-                db.session.query(Supervisors.id, Supervisors.nome)
-                .join(CostCenters, CostCenters.supervisor_id == Supervisors.id)
+                db.session.query(Users.id, Users.nome)
+                .join(CostCenters, CostCenters.supervisor_usuario_id == Users.id)
+                .filter(func.upper(func.trim(Users.role)) == "SUPERVISOR")
                 .distinct(),
                 CostCenters.id,
                 token_data,
             )
-            .order_by(Supervisors.nome)
+            .order_by(Users.nome)
             .all()
         )
         return jsonify([{"id": row.id, "nome": row.nome} for row in rows]), 200
@@ -440,17 +454,27 @@ class ExperienceEvaluationService:
     def supervisor_tasks(self, token_data):
         if not has_permission(token_data, "avaliacao_experiencia_supervisor", "view"):
             return jsonify("Você não possui acesso às avaliações de experiência."), 403
-        try:
-            supervisor_id = int(request.args.get("supervisor_id"))
-        except (TypeError, ValueError):
-            return jsonify("Informe um supervisor válido."), 400
-        if not can_access_supervisor(token_data, supervisor_id):
+        if is_admin(token_data):
+            try:
+                supervisor_usuario_id = int(request.args.get("supervisor_id"))
+            except (TypeError, ValueError):
+                return jsonify("Informe um supervisor válido."), 400
+        else:
+            # Supervisores nunca escolhem outra identidade no cliente: o
+            # usuário autenticado é a única fonte do filtro.
+            supervisor_usuario_id = token_data.get("id")
+            try:
+                supervisor_usuario_id = int(supervisor_usuario_id)
+            except (TypeError, ValueError):
+                return jsonify("Usuário supervisor inválido."), 403
+
+        if not can_access_supervisor_user(token_data, supervisor_usuario_id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
 
         self.process_pending_tasks()
         evaluations = apply_cost_center_scope(
             ExperienceEvaluation.query.join(Employees, Employees.id == ExperienceEvaluation.colaborador_id).filter(
-                ExperienceEvaluation.supervisor_id == supervisor_id,
+                ExperienceEvaluation.supervisor_usuario_id == supervisor_usuario_id,
                 ExperienceEvaluation.status.in_(OPEN_STATUSES),
             ),
             Employees.centro_id,

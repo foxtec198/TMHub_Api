@@ -9,7 +9,6 @@ from models.empresas import Company
 from models.estrutura import StructureAsset, StructureLocation
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
-from models.supervisores import Supervisors
 from models.usuarios import Users
 from services.tm_ops import TMOpsService
 from utils.db import db
@@ -50,11 +49,6 @@ class StructureService:
             .all()
             if center_ids else []
         )
-        legacy_supervisor_ids = {center.supervisor_id for center in centers if center.supervisor_id}
-        legacy_supervisors = {
-            row.id: row.nome
-            for row in Supervisors.query.filter(Supervisors.id.in_(legacy_supervisor_ids)).all()
-        } if legacy_supervisor_ids else {}
         supervisor_user_ids = {
             center.supervisor_usuario_id
             for center in centers
@@ -80,15 +74,11 @@ class StructureService:
                 "contrato": center.local,
                 "empresa_id": center.empresa_id,
                 "empresa_nome": center.empresa.nome if center.empresa else "SEM EMPRESA",
-                # ``supervisor_id`` continua disponível apenas para consumidores
-                # antigos. A edição usa sempre supervisor_usuario_id.
-                "supervisor_id": center.supervisor_id,
+                # O cadastro legado não define mais o responsável atual. Se o
+                # backfill não encontrou usuario_id, o contrato fica sem
+                # supervisor deliberadamente.
                 "supervisor_usuario_id": center.supervisor_usuario_id,
-                "supervisor": (
-                    supervisor_users.get(center.supervisor_usuario_id)
-                    or legacy_supervisors.get(center.supervisor_id)
-                    or "SEM SUPERVISOR"
-                ),
+                "supervisor": supervisor_users.get(center.supervisor_usuario_id) or "SEM SUPERVISOR",
                 "locais": locations_by_center.get(center.id, []),
                 "estrutura": self._location_tree(locations_by_center.get(center.id, [])),
                 "ativos": assets_by_center.get(center.id, []),

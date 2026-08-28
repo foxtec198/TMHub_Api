@@ -7,7 +7,7 @@ from flask import jsonify, request
 from models.avaliacoes_experiencia import ExperienceEvaluation
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
-from models.supervisores import Supervisors
+from models.usuarios import Users
 from utils.filial_scope import apply_cost_center_scope
 from utils.permissions import has_permission
 from utils.safe_route import safe_route
@@ -109,9 +109,9 @@ class ExperienceDashboardService:
             if row.centro_custo_id is not None and row.centro_custo
         }
         supervisors = {
-            row.ExperienceEvaluation.supervisor_id: row.supervisor
+            row.ExperienceEvaluation.supervisor_usuario_id: row.supervisor
             for row in rows
-            if row.ExperienceEvaluation.supervisor_id is not None and row.supervisor
+            if row.ExperienceEvaluation.supervisor_usuario_id is not None and row.supervisor
         }
         return {
             "departamentos": [
@@ -152,7 +152,7 @@ class ExperienceDashboardService:
             ExperienceEvaluation.query
             .join(Employees, Employees.id == ExperienceEvaluation.colaborador_id)
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
-            .outerjoin(Supervisors, Supervisors.id == ExperienceEvaluation.supervisor_id)
+            .outerjoin(Users, Users.id == ExperienceEvaluation.supervisor_usuario_id)
             .with_entities(
                 ExperienceEvaluation,
                 Employees.nome.label("colaborador_nome"),
@@ -160,7 +160,7 @@ class ExperienceDashboardService:
                 Employees.centro_id.label("centro_custo_id"),
                 CostCenters.local.label("centro_custo"),
                 CostCenters.departamento.label("departamento"),
-                Supervisors.nome.label("supervisor"),
+                Users.nome.label("supervisor"),
             )
         )
         base_query = apply_cost_center_scope(
@@ -188,7 +188,7 @@ class ExperienceDashboardService:
             query = query.filter(Employees.centro_id.in_(filters["cost_centers"]))
         if filters["supervisors"]:
             query = query.filter(
-                ExperienceEvaluation.supervisor_id.in_(filters["supervisors"])
+                ExperienceEvaluation.supervisor_usuario_id.in_(filters["supervisors"])
             )
         if filters["statuses"]:
             query = query.filter(ExperienceEvaluation.status.in_(filters["statuses"]))
@@ -204,7 +204,7 @@ class ExperienceDashboardService:
         employee_query = (
             Employees.query
             .outerjoin(CostCenters, CostCenters.id == Employees.centro_id)
-            .outerjoin(Supervisors, Supervisors.id == CostCenters.supervisor_id)
+            .outerjoin(Users, Users.id == CostCenters.supervisor_usuario_id)
             .with_entities(
                 Employees.nome.label("colaborador"),
                 Employees.id.label("colaborador_id"),
@@ -212,7 +212,7 @@ class ExperienceDashboardService:
                 Employees.data_admissao.label("data_admissao"),
                 CostCenters.local.label("centro_custo"),
                 CostCenters.departamento.label("departamento"),
-                Supervisors.nome.label("supervisor"),
+                Users.nome.label("supervisor"),
             )
             .filter(
                 Employees.situacao == 1,
@@ -230,7 +230,7 @@ class ExperienceDashboardService:
             )
         if filters["supervisors"]:
             employee_query = employee_query.filter(
-                CostCenters.supervisor_id.in_(filters["supervisors"])
+                CostCenters.supervisor_usuario_id.in_(filters["supervisors"])
             )
         employee_query = apply_cost_center_scope(
             employee_query,
