@@ -99,6 +99,25 @@ def requested_company_ids():
         return set()
 
 
+def _requested_integer_ids(header_name):
+    raw_value = request.headers.get(header_name) if has_request_context() else None
+    if raw_value is None:
+        return None
+    try:
+        values = json.loads(raw_value)
+        return {int(value) for value in values} if isinstance(values, list) else set()
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def requested_department_ids():
+    return _requested_integer_ids("X-Departamento-Ids")
+
+
+def requested_cost_center_ids():
+    return _requested_integer_ids("X-Centro-Custo-Ids")
+
+
 def _apply_company_scope(center_ids):
     company_ids = requested_company_ids()
     if company_ids is None:
@@ -106,6 +125,22 @@ def _apply_company_scope(center_ids):
     query = db.session.query(CostCenters.id).filter(CostCenters.empresa_id.in_(company_ids))
     if center_ids is not None:
         query = query.filter(CostCenters.id.in_(center_ids))
+    return {row[0] for row in query.all()}
+
+
+def _apply_structural_scope(center_ids):
+    department_ids = requested_department_ids()
+    requested_center_ids = requested_cost_center_ids()
+    if department_ids is None and requested_center_ids is None:
+        return center_ids
+
+    query = db.session.query(CostCenters.id)
+    if center_ids is not None:
+        query = query.filter(CostCenters.id.in_(center_ids))
+    if department_ids is not None:
+        query = query.filter(CostCenters.departamento.in_(department_ids))
+    if requested_center_ids is not None:
+        query = query.filter(CostCenters.id.in_(requested_center_ids))
     return {row[0] for row in query.all()}
 
 
@@ -174,14 +209,21 @@ def allowed_cost_center_ids(token_data, include_company=True):
 
     if selectable:
         if requested_ids is None:
-            return _apply_company_scope(None) if include_company else None
+            scoped_ids = _apply_company_scope(None) if include_company else None
+            return _apply_structural_scope(scoped_ids)
         scoped_ids = _cost_center_ids_for_branches(requested_ids)
-        return _apply_company_scope(scoped_ids) if include_company else scoped_ids
+        scoped_ids = _apply_company_scope(scoped_ids) if include_company else scoped_ids
+        return _apply_structural_scope(scoped_ids)
 
     user_id = user.id
     request_cache = getattr(g, "_filial_scope_cache", {}) if has_request_context() else {}
 
-    cache_key = (user_id, tuple(sorted(requested_company_ids() or [])) if include_company else None)
+    cache_key = (
+        user_id,
+        tuple(sorted(requested_company_ids() or [])) if include_company else None,
+        tuple(sorted(requested_department_ids() or [])),
+        tuple(sorted(requested_cost_center_ids() or [])),
+    )
     if cache_key in request_cache:
         return request_cache[cache_key]
 
@@ -195,6 +237,7 @@ def allowed_cost_center_ids(token_data, include_company=True):
     allowed_ids = _cost_center_ids_for_branches(user_branch_ids)
     if include_company:
         allowed_ids = _apply_company_scope(allowed_ids)
+    allowed_ids = _apply_structural_scope(allowed_ids)
 
     if has_request_context():
         request_cache[cache_key] = allowed_ids
