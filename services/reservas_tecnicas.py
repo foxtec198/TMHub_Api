@@ -30,6 +30,35 @@ class FloaterService:
     SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 
     @classmethod
+    def _mark_todays_requests_uncovered(cls, employee, scheduled_at, source_requisition_id=None):
+        """Remove uma reserva indisponível de todas as requisições do dia."""
+        day_start = scheduled_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = scheduled_at.replace(hour=23, minute=59, second=59, microsecond=999999)
+        linked = Requisicao.query.filter(
+            Requisicao.reserva_id == employee.id,
+            Requisicao.created_at.between(day_start, day_end),
+        ).all()
+        changed = []
+        for req in linked:
+            if source_requisition_id and req.id == source_requisition_id:
+                continue
+            req.reserva_id = 0
+            changed.append(req.id)
+            db.session.add(Timeline(
+                requisicao_id=req.id,
+                reserva_id=0,
+                ausente_id=req.ausente_id,
+                cc=req.cc,
+                supervisor_id=req.supervisor_id,
+                supervisor_usuario_id=req.supervisor_usuario_id,
+                status=req.status or "pending",
+                tipo="Reserva técnica indisponível; requisição ficou sem cobertura",
+                motivo="FALTA",
+                obs=cls.RESERVE_ABSENCE_NOTE,
+            ))
+        return changed
+
+    @classmethod
     def _create_absence(cls, employee, token_data, absence_reason, supervisor_usuario_id=None):
         """Cria uma única requisição sem cobertura para a falta da reserva no dia."""
         center = db.session.get(CostCenters, employee.centro_id)
@@ -59,6 +88,7 @@ class FloaterService:
             Requisicao.created_at.between(day_start, day_end),
         ).first()
         if requisition:
+            cls._mark_todays_requests_uncovered(employee, scheduled_at, requisition.id)
             return requisition, None
 
         from services.controle_faltas import AbsenceControlService
@@ -101,6 +131,7 @@ class FloaterService:
             motivo=absence_reason,
             obs=cls.RESERVE_ABSENCE_NOTE,
         ))
+        cls._mark_todays_requests_uncovered(employee, scheduled_at, requisition.id)
         return requisition, None
 
     @safe_route
