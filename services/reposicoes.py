@@ -623,6 +623,7 @@ class RequestService:
                     Supervisors.nome,
                     "SEM SUPERVISOR",
                 ).label("supervisor"),
+                Requisicao.supervisor_usuario_id,
                 Requisicao.warning,
                 Requisicao.origem,
                 Requisicao.motivo,
