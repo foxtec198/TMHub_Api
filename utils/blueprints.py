@@ -43,6 +43,7 @@ from routes.dashboard_experiencias import experience_dashboard_bp
 from routes.avaliacoes_experiencia import experience_evaluations_bp
 from routes.exames_periodicos import periodic_exams_bp
 from routes.uso_tmhub import usage_bp
+from routes.marketplace import marketplace_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -104,4 +105,5 @@ blueprints = {
     experience_evaluations_bp: "/avaliacoes-experiencia",
     periodic_exams_bp: "/exames-periodicos",
     usage_bp: "/uso",
+    marketplace_bp: "/marketplace",
 }
