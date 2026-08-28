@@ -13,6 +13,7 @@ Uso:
 from argparse import ArgumentParser
 from datetime import date, datetime
 from decimal import Decimal
+from math import isnan
 from os import getenv
 from re import fullmatch, sub
 from unicodedata import combining, normalize
@@ -296,25 +297,60 @@ def create_employees(connection, employees, positions=None, progress_callback=No
     ignored = 0
 
     def comparable(field, value):
-        if isinstance(value, Decimal):
-            return value.normalize()
+        if value is None:
+            return None
         if field == "data_admissao":
             return normalize_import_date(value, field="data de admissão")
+        if field in {"situacao", "cargo", "centro_id", "carga_horaria"}:
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return value
+        if field == "salario":
+            try:
+                return Decimal(str(value)).normalize()
+            except (TypeError, ValueError):
+                return value
+        if field == "cpf":
+            digits = sub(r"\D", "", str(value))
+            return digits or None
         return value
+
+    def informed(item, field):
+        """Campo ausente ou vazio preserva o valor que já está no TMHub."""
+        if field not in item:
+            return False
+        value = item.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return False
+        try:
+            return not isnan(value)
+        except (TypeError, ValueError):
+            return True
 
     for processed, item in enumerate(tqdm(employees, desc="Sincronizando colaboradores"), start=1):
         name = sub(r"[\d'\".,]", "", str(item.get("nome") or "")).strip()
+        cpf = comparable("cpf", item.get("cpf")) if informed(item, "cpf") else None
         values = {
             "matricula": item["_matricula"],
             "empresa_id": item["_empresa_id"],
             "nome": name,
             "centro_id": item.get("_centro_db_id"),
             "data_admissao": item["_admissao"],
-            "situacao": item.get("situacao"),
-            "cargo": positions.get(normalize_name(item.get("cargo"))),
-            "carga_horaria": parse_decimal(item.get("hor")),
-            "salario": parse_decimal(item.get("salario")),
-            "cpf": item.get("cpf"),
+            "situacao": comparable("situacao", item.get("situacao")) if informed(item, "situacao") else None,
+            "cargo": (
+                positions.get(normalize_name(item.get("cargo")))
+                if informed(item, "cargo") else None
+            ),
+            "carga_horaria": (
+                parse_decimal(item.get("hor"), default=None)
+                if informed(item, "hor") else None
+            ),
+            "salario": (
+                parse_decimal(item.get("salario"), default=None)
+                if informed(item, "salario") else None
+            ),
+            "cpf": cpf,
         }
         current = existing.get((values["empresa_id"], values["matricula"]))
         if current is None:
@@ -330,12 +366,21 @@ def create_employees(connection, employees, positions=None, progress_callback=No
             if current_admission and values["data_admissao"] < current_admission:
                 ignored += 1
             else:
+                candidate_fields = ["nome", "centro_id", "data_admissao"]
+                if informed(item, "situacao"):
+                    candidate_fields.append("situacao")
+                if informed(item, "cargo"):
+                    candidate_fields.append("cargo")
+                if informed(item, "hor"):
+                    candidate_fields.append("carga_horaria")
+                if informed(item, "salario"):
+                    candidate_fields.append("salario")
+                if informed(item, "cpf"):
+                    candidate_fields.append("cpf")
+
                 changed_fields = tuple(
                     field
-                    for field in (
-                        "nome", "centro_id", "data_admissao",
-                        "situacao", "cargo", "carga_horaria", "salario", "cpf",
-                    )
+                    for field in candidate_fields
                     if comparable(field, current.get(field)) != comparable(field, values.get(field))
                 )
                 if changed_fields:
