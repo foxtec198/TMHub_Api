@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
@@ -23,6 +24,8 @@ from import_col.cadInBd import (
     validate_cost_center_identities,
 )
 from models.empresas import Company
+from models.importacao_colaboradores import CollaboratorImportLog
+from models.usuarios import Users
 from services.employee_spreadsheet_parser import parse_employee_spreadsheet
 from utils.db import db
 from utils.filial_scope import is_admin
@@ -49,6 +52,45 @@ def _update(job_id: str, **values):
         if job_id in _jobs:
             _jobs[job_id].update(values)
             _jobs[job_id]["updated_at"] = time()
+    _update_log(job_id, **values)
+
+
+def _update_log(job_id: str, **values):
+    log = CollaboratorImportLog.query.filter_by(job_id=job_id).first()
+    if not log:
+        return
+    fields = {
+        "status", "phase", "total", "processados", "colaboradores_criados",
+        "colaboradores_atualizados", "colaboradores_ignorados", "cargos_criados",
+        "registros_invalidos", "duplicidades", "erro",
+    }
+    for key, value in values.items():
+        target = "fase" if key == "phase" else key
+        if key in fields and hasattr(log, target):
+            setattr(log, target, value)
+    log.atualizado_em = datetime.now(timezone.utc)
+    if values.get("status") in {"completed", "error"}:
+        log.finalizado_em = datetime.now(timezone.utc)
+    db.session.commit()
+
+
+def _create_log(job_id, company, origin, total, invalid, duplicates, user_id=None, filename=None):
+    user = db.session.get(Users, user_id) if user_id else None
+    db.session.add(CollaboratorImportLog(
+        job_id=job_id,
+        origem=origin,
+        empresa_id=company.id,
+        empresa_nome=company.nome,
+        usuario_id=user.id if user else None,
+        usuario_nome=user.nome if user else None,
+        arquivo=filename,
+        status="queued",
+        fase="preparando",
+        total=total,
+        registros_invalidos=len(invalid),
+        duplicidades=duplicates,
+    ))
+    db.session.commit()
 
 
 def _cleanup():
@@ -83,6 +125,39 @@ def _prepare(path: Path, filename: str, company: Company):
     employees, dedupe_errors, duplicates = latest_employees(parsed["employees"])
     validate_cost_center_identities(employees)
     return employees, [*parsed["invalid"], *dedupe_errors], duplicates
+
+
+def _prepare_data(records, company: Company):
+    if not isinstance(records, list):
+        raise ValueError("Envie 'colaboradores' como uma lista.")
+    if not records:
+        raise ValueError("A lista de colaboradores está vazia.")
+    if len(records) > 50000:
+        raise ValueError("Cada carga pode conter no máximo 50.000 colaboradores.")
+
+    prepared = []
+    invalid = []
+    for index, record in enumerate(records, start=1):
+        if not isinstance(record, dict):
+            invalid.append(f"Registro {index}: conteúdo inválido.")
+            continue
+        employee = dict(record)
+        employee["codigo"] = employee.get("codigo", employee.get("matricula"))
+        employee["admissao"] = employee.get("admissao", employee.get("data_admissao"))
+        employee["centro_custo_num"] = employee.get(
+            "centro_custo_num", employee.get("codigo_centro_custo")
+        )
+        employee["hor"] = employee.get("hor", employee.get("carga_horaria"))
+        employee["empresa_nome"] = company.nome
+        employee["_empresa_id"] = company.id
+        if not str(employee.get("nome") or "").strip():
+            invalid.append(f"Registro {index}: nome não informado.")
+            continue
+        prepared.append(employee)
+
+    employees, dedupe_errors, duplicates = latest_employees(prepared)
+    validate_cost_center_identities(employees)
+    return employees, [*invalid, *dedupe_errors], duplicates
 
 
 def _emit(job_id: str, severity: str, summary: str, detail: str, changed=False):
@@ -132,7 +207,10 @@ def _run(app, job_id: str, employees: list[dict], invalid: list[str], duplicates
             _emit(job_id, "error", "Erro na importação", str(error))
 
 
-def _queue(employees, invalid, duplicates, company: Company, job_id=None, user_id=None):
+def _queue(
+    employees, invalid, duplicates, company: Company, job_id=None, user_id=None,
+    *, origin="sistema", filename=None,
+):
     job_id = job_id or uuid4().hex
     now = time()
     with _jobs_lock:
@@ -143,6 +221,11 @@ def _queue(employees, invalid, duplicates, company: Company, job_id=None, user_i
                          "empresa_id": company.id, "empresa_nome": company.nome,
                          "user_id": current.get("user_id", user_id),
                          "created_at": current.get("created_at", now), "updated_at": now}
+    _create_log(
+        job_id, company, origin, len(employees), invalid, duplicates,
+        user_id=user_id if origin == "sistema" else None,
+        filename=filename,
+    )
     app = current_app._get_current_object()
     Thread(target=_run, args=(app, job_id, employees, invalid, duplicates), daemon=True,
            name=f"importacao-colaboradores-{job_id[:8]}").start()
@@ -180,7 +263,46 @@ class CollaboratorImportService:
         if not employees:
             return jsonify("O arquivo não contém colaboradores válidos."), 400
         _cleanup()
-        return jsonify(_queue(employees, invalid, duplicates, company, user_id=token_data.get("id"))), 202
+        return jsonify(_queue(
+            employees, invalid, duplicates, company,
+            user_id=token_data.get("id"), origin="sistema", filename=uploaded.filename,
+        )), 202
+
+    @safe_route
+    def create_from_data(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem importar colaboradores."), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            company = _selected_company(data.get("empresa_id") or data.get("empresa_nome"))
+            employees, invalid, duplicates = _prepare_data(
+                data.get("colaboradores", data.get("employees")), company
+            )
+        except (TypeError, ValueError) as error:
+            return jsonify(f"Não foi possível preparar os colaboradores: {error}"), 400
+        if not employees:
+            return jsonify("A carga não contém colaboradores válidos."), 400
+        _cleanup()
+        return jsonify(_queue(
+            employees, invalid, duplicates, company,
+            origin="script", filename=data.get("identificador") or "sc.py",
+        )), 202
+
+    @safe_route
+    def history(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem consultar importações."), 403
+        try:
+            limit = min(max(int(request.args.get("limit", 20)), 1), 100)
+        except (TypeError, ValueError):
+            limit = 20
+        rows = (
+            CollaboratorImportLog.query
+            .order_by(CollaboratorImportLog.iniciado_em.desc(), CollaboratorImportLog.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return jsonify([row.to_dict() for row in rows]), 200
 
     @safe_route
     def start_upload(self, token_data):
@@ -253,10 +375,16 @@ class CollaboratorImportService:
         finally:
             shutil.rmtree(directory, ignore_errors=True)
         if not employees: return jsonify("O arquivo não contém colaboradores válidos."), 400
-        return jsonify(_queue(employees, invalid, duplicates, company, job_id, token_data.get("id"))), 202
+        return jsonify(_queue(
+            employees, invalid, duplicates, company, job_id, token_data.get("id"),
+            origin="sistema", filename=job.get("filename"),
+        )), 202
 
     @safe_route
     def read(self, job_id, token_data):
         if not is_admin(token_data): return jsonify("Apenas administradores podem acompanhar importações."), 403
         job = _snapshot(job_id)
-        return (jsonify(job), 200) if job else (jsonify("Importação não encontrada ou expirada."), 404)
+        if job:
+            return jsonify(job), 200
+        persisted = CollaboratorImportLog.query.filter_by(job_id=job_id).first()
+        return (jsonify(persisted.to_dict()), 200) if persisted else (jsonify("Importação não encontrada ou expirada."), 404)
