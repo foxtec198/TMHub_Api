@@ -709,6 +709,7 @@ class RequestService:
                     History.ended_at.between(day_start, day_end),
                 ),
             ))
+            .filter(Requisicao.origem != "controle_faltas")
         )
         rows = apply_cost_center_scope(kds_query, Requisicao.cc, token_data).all()
 
