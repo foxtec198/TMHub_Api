@@ -12,7 +12,7 @@ from models.colaboradores import Employees
 from models.filiais import Branch,filial_centros_custo,filial_departamentos,filial_usuarios
 
 
-from utils.filial_scope import is_admin
+from utils.filial_scope import is_admin, requested_branch_ids, requested_company_ids
 from utils.safe_route import safe_route
 
 
@@ -118,15 +118,16 @@ class PcdDashboardService:
         )
         available_ids = {branch.id for branch in available_branches}
 
-        requested_ids = _parse_branch_ids(
-            rq.headers.get("X-Filial-Ids") or rq.args.get("filiais"),
-        )
+        requested_ids = requested_branch_ids()
         if requested_ids is None:
-            return jsonify("Informe filiais válidas."), 400
-        if requested_ids - available_ids:
+            raw_query_ids = rq.args.get("filiais")
+            requested_ids = _parse_branch_ids(raw_query_ids) if raw_query_ids is not None else None
+        if requested_ids is not None and requested_ids - available_ids:
             return jsonify("Você não possui acesso a uma ou mais filiais selecionadas."), 403
 
-        selected_ids = requested_ids or available_ids
+        # Uma lista vazia enviada pelo seletor global representa um recorte
+        # vazio, nunca o catálogo inteiro.
+        selected_ids = available_ids if requested_ids is None else requested_ids
         selected_branches = [
             branch
             for branch in available_branches
@@ -171,6 +172,19 @@ class PcdDashboardService:
         )
         for branch_id, center_id in department_rows:
             branch_centers[branch_id].add(center_id)
+
+        company_ids = requested_company_ids()
+        if company_ids is not None:
+            all_center_ids = set().union(*branch_centers.values()) if branch_centers else set()
+            company_center_ids = {
+                center_id
+                for center_id, in db.session.query(CostCenters.id).filter(
+                    CostCenters.id.in_(all_center_ids),
+                    CostCenters.empresa_id.in_(company_ids),
+                ).all()
+            }
+            for branch_id in branch_centers:
+                branch_centers[branch_id].intersection_update(company_center_ids)
 
         # Regra exclusiva do Dashboard PCD: contratos ou departamentos
         # 306, 308 e 312 não compõem SOMENTE a base da filial Londrina.
