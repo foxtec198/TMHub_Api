@@ -15,6 +15,11 @@ def companies():
     return service.companies()
 
 
+@collaborator_import_bp.post("/empresas")
+def sync_companies():
+    return service.sync_companies()
+
+
 @collaborator_import_bp.post("")
 def create_import():
     return service.create()

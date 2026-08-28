@@ -14,6 +14,7 @@ from time import time
 from uuid import uuid4
 
 from flask import current_app, jsonify, request
+from sqlalchemy import text
 
 from import_col.cadInBd import (
     create_cost_centers,
@@ -113,6 +114,32 @@ def _selected_company(value) -> Company:
     if not company or not company.ativa:
         raise ValueError("Selecione uma empresa ativa já cadastrada no sistema.")
     return company
+
+
+def _company_catalog(records):
+    if not isinstance(records, list) or not records:
+        raise ValueError("Envie 'empresas' como uma lista não vazia.")
+    if len(records) > 1000:
+        raise ValueError("Cada carga pode conter no máximo 1.000 empresas.")
+    companies = {}
+    for index, record in enumerate(records, start=1):
+        if not isinstance(record, dict):
+            raise ValueError(f"Empresa {index}: conteúdo inválido.")
+        try:
+            company_id = int(record.get("id", record.get("empresa_id")))
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Empresa {index}: ID e nome são obrigatórios.") from error
+        name = " ".join(str(record.get("nome", record.get("empresa_nome")) or "").split()).upper()
+        if company_id <= 0 or not name:
+            raise ValueError(f"Empresa {index}: ID e nome são obrigatórios.")
+        previous = companies.get(company_id)
+        if previous and previous != name:
+            raise ValueError(
+                f"Empresa {company_id}: nomes divergentes na mesma carga "
+                f"('{previous}' e '{name}')."
+            )
+        companies[company_id] = name
+    return companies
 
 
 def _prepare(path: Path, filename: str, company: Company):
@@ -239,6 +266,62 @@ class CollaboratorImportService:
             return jsonify("Apenas administradores podem consultar empresas."), 403
         return jsonify([{"id": item.id, "nome": item.nome, "ativa": bool(item.ativa)}
                         for item in Company.query.order_by(Company.ativa.desc(), Company.nome).all()]), 200
+
+    @safe_route
+    def sync_companies(self, token_data):
+        """Sincroniza IDs e nomes corporativos antes da carga automática."""
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem sincronizar empresas."), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            companies = _company_catalog(data.get("empresas"))
+        except ValueError as error:
+            return jsonify(str(error) or "Existem empresas inválidas na carga."), 400
+
+        ids = sorted(companies)
+        existing_by_id = {
+            company.id: company
+            for company in Company.query.filter(Company.id.in_(ids)).all()
+        }
+        existing_by_name = {
+            company.nome.upper(): company
+            for company in Company.query.filter(
+                db.func.upper(Company.nome).in_(list(companies.values()))
+            ).all()
+        }
+        for company_id, name in companies.items():
+            same_name = existing_by_name.get(name)
+            if same_name and same_name.id != company_id:
+                return jsonify(
+                    f"A empresa '{name}' já está cadastrada com o ID {same_name.id}; "
+                    f"a origem enviou o ID {company_id}."
+                ), 409
+
+        created = updated = ignored = 0
+        for company_id, name in companies.items():
+            company = existing_by_id.get(company_id)
+            if company is None:
+                db.session.add(Company(id=company_id, nome=name, ativa=True))
+                created += 1
+            elif company.nome != name or not company.ativa:
+                company.nome = name
+                company.ativa = True
+                updated += 1
+            else:
+                ignored += 1
+        db.session.flush()
+        if created:
+            db.session.execute(text(
+                "SELECT setval(pg_get_serial_sequence('empresas', 'id'), "
+                "(SELECT MAX(id) FROM empresas), true)"
+            ))
+        db.session.commit()
+        return jsonify({
+            "total": len(companies),
+            "empresas_criadas": created,
+            "empresas_atualizadas": updated,
+            "empresas_ignoradas": ignored,
+        }), 200
 
     @safe_route
     def create(self, token_data):
