@@ -293,6 +293,7 @@ class ExperienceEvaluationService:
                 "matricula": str(employee.matricula) if employee and employee.matricula else None,
                 "nome": employee.nome if employee else "Colaborador removido",
                 "cargo": cargo.nome if cargo else None,
+                "centro_id": employee.centro_id if employee else None,
                 "centro_custo": center.local if center else None,
                 "departamento": str(center.departamento) if center and center.departamento is not None else None,
                 "data_admissao": _date_iso(_as_date(employee.data_admissao)) if employee else None,

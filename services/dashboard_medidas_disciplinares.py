@@ -87,9 +87,12 @@ def _filter_options(rows):
     supervisors = set()
     reasons = {}
     origins = set()
+    measure_types = set()
 
     for row in rows:
         measure = row[0]
+        if measure.tipo:
+            measure_types.add(measure.tipo)
         collaborators[row.colaborador_id] = {
             "value": str(row.colaborador_id),
             "label": (
@@ -137,6 +140,7 @@ def _filter_options(rows):
         "tipos": [
             {"value": value, "label": label}
             for value, label in MEASURE_TYPES.items()
+            if value in measure_types
         ],
         "motivos": sorted(
             [
@@ -193,7 +197,6 @@ class DisciplinaryMeasuresDashboardService:
 
         # Opções, indicadores, gráficos e registros partem do mesmo escopo seguro.
         option_rows = base_query.all()
-        options = _filter_options(option_rows)
         query = base_query
 
         # Advertencia e a metrica fixa deste comparativo. O filtro de tipo nao
@@ -234,6 +237,7 @@ class DisciplinaryMeasuresDashboardService:
             DisciplinaryMeasure.data_medida.desc(),
             DisciplinaryMeasure.id.desc(),
         ).all()
+        options = _filter_options(rows)
 
         monthly = {
             key: {

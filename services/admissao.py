@@ -378,23 +378,6 @@ class VacancyService:
                 "data_saida_prevista": vacancy.data_saida is not None,
             })
 
-        # As opções são montadas antes do recorte para o painel não perder escolhas
-        # quando um filtro estiver ativo.
-        filter_options = {
-            "departamentos": sorted(
-                {str(record["departamento"]) for record in records if record["departamento"] is not None},
-                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
-            ),
-            "status": sorted({record["status"] for record in records if record["status"]}),
-            "contratos": sorted({record["contrato"] for record in records if record["contrato"]}),
-            "responsaveis": sorted({record["responsavel"] for record in records if record["responsavel"]}),
-            "colaboradores": sorted({
-                value
-                for record in records
-                for value in (record.get("colaborador_saida"), record.get("candidato"))
-                if value
-            }),
-        }
         def selected_values(name):
             return {
                 value.strip()
@@ -420,6 +403,24 @@ class VacancyService:
                 or record.get("candidato") in collaborator_filter
             )
         ]
+
+        # Facetas são calculadas sobre o mesmo conjunto que será exibido;
+        # valores sem ocorrência no recorte atual não aparecem no dropdown.
+        filter_options = {
+            "departamentos": sorted(
+                {str(record["departamento"]) for record in records if record["departamento"] is not None},
+                key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value),
+            ),
+            "status": sorted({record["status"] for record in records if record["status"]}),
+            "contratos": sorted({record["contrato"] for record in records if record["contrato"]}),
+            "responsaveis": sorted({record["responsavel"] for record in records if record["responsavel"]}),
+            "colaboradores": sorted({
+                value
+                for record in records
+                for value in (record.get("colaborador_saida"), record.get("candidato"))
+                if value
+            }),
+        }
 
         # Tempos em aberto usam o instante atual; tempos concluídos usam datas persistidas.
         now = dt.now(TIMEZONE)

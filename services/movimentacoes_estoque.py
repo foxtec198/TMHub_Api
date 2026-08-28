@@ -339,6 +339,7 @@ class MovementService:
         movement_types = selected_values("tipo", lambda value: value.lower())
         employee_ids = selected_values("colaborador_id", int)
         center_ids = selected_values("centro_custo_id", int)
+        department_ids = selected_values("departamento", int)
         if movement_types and not set(movement_types).issubset({"entrada", "saida"}):
             return jsonify("Tipo de movimentação inválido."), 400
         if any(not can_access_cost_center(token_data, center_id) for center_id in center_ids):
@@ -356,6 +357,15 @@ class MovementService:
         movements = query.order_by(Movement.data_hora.desc()).all()
 
         allowed_ids = allowed_cost_center_ids(token_data)
+        scoped_centers = (
+            apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
+            .order_by(CostCenters.local)
+            .all()
+        )
+        department_center_ids = {
+            center.id for center in scoped_centers
+            if not department_ids or center.departamento in department_ids
+        }
         filtered = []
         for movement in movements:
             recipients = list(movement.destinatarios)
@@ -369,6 +379,10 @@ class MovementService:
                     continue
             if center_ids:
                 recipients = [r for r in recipients if r.centro_custo_id in center_ids]
+                if not recipients:
+                    continue
+            if department_ids:
+                recipients = [r for r in recipients if r.centro_custo_id in department_center_ids]
                 if not recipients:
                     continue
             visible_quantity = (
@@ -413,11 +427,16 @@ class MovementService:
                     if is_epi:
                         epi_delivered += recipient.quantidade
 
-        scoped_centers = (
-            apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
-            .order_by(CostCenters.local)
-            .all()
-        )
+        available_product_ids = {movement.item_id for movement, _recipients, _quantity in filtered}
+        available_center_ids = {
+            recipient.centro_custo_id
+            for _movement, recipients, _quantity in filtered
+            for recipient in recipients
+            if recipient.centro_custo_id is not None
+        }
+        available_centers = [
+            center for center in scoped_centers if center.id in available_center_ids
+        ]
         return jsonify({
             "indicadores": {
                 "produtos": len(products),
@@ -470,7 +489,24 @@ class MovementService:
                 for movement, recipients, _ in filtered[:15]
             ],
             "filtros": {
-                "produtos": [{"label": product.nome, "value": product.id} for product in Product.query.order_by(Product.nome).all()],
+                "produtos": [
+                    {"label": product.nome, "value": product.id}
+                    for product in sorted(
+                        (product for product in products if product.id in available_product_ids),
+                        key=lambda item: item.nome.casefold(),
+                    )
+                ],
+                "tipos": [
+                    {"label": "Entrada" if movement_type == "entrada" else "Saída", "value": movement_type}
+                    for movement_type in sorted({movement.tipo for movement, _recipients, _quantity in filtered})
+                ],
+                "departamentos": [
+                    {"label": f"DPTO. {department}", "value": department}
+                    for department in sorted({
+                        center.departamento for center in available_centers
+                        if center.departamento is not None
+                    })
+                ],
                 "colaboradores": [{
                     "label": label,
                     "value": employee_id,
@@ -480,6 +516,7 @@ class MovementService:
                 "centros_custo": [{
                     "label": f"{center.id} - {center.local}",
                     "value": center.id,
-                } for center in scoped_centers],
+                    "departamento": center.departamento,
+                } for center in available_centers],
             },
         }), 200
