@@ -178,6 +178,98 @@ class CostsCenterService:
         Thread(target=self._run_center_import, args=(app, job_id, path, company.id), daemon=True).start()
         return jsonify(_import_snapshot(job_id)), 202
 
+    @safe_route
+    def sync_from_data(self, token_data):
+        """Sincroniza o catálogo enviado pelo importador automático, sem exclusões."""
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem sincronizar centros de custo."), 403
+        body = rq.get_json(silent=True) or {}
+        try:
+            company = self._company(body.get("empresa_id"))
+        except LookupError as error:
+            return jsonify(str(error)), 404
+        except (TypeError, ValueError) as error:
+            return jsonify(str(error) or "Empresa inválida."), 400
+
+        records = body.get("centros")
+        if not isinstance(records, list) or not records:
+            return jsonify("Envie 'centros' como uma lista não vazia."), 400
+        if len(records) > 10000:
+            return jsonify("Cada carga pode conter no máximo 10.000 centros de custo."), 400
+
+        centers = {}
+        try:
+            for index, record in enumerate(records, start=1):
+                if not isinstance(record, dict):
+                    raise ValueError(f"Centro {index}: conteúdo inválido.")
+                number = int(record.get("codigo", record.get("centro_id")))
+                name = " ".join(str(record.get("nome") or "").split()).upper()
+                if number <= 0 or not name:
+                    raise ValueError(f"Centro {index}: código e nome são obrigatórios.")
+                previous = centers.get(number)
+                if previous and previous != name:
+                    raise ValueError(
+                        f"Centro {number}: nomes divergentes na mesma carga "
+                        f"('{previous}' e '{name}')."
+                    )
+                centers[number] = name
+        except (TypeError, ValueError) as error:
+            return jsonify(str(error) or "Existem centros inválidos na carga."), 400
+
+        created = updated = ignored = 0
+        with db.engine.begin() as connection:
+            existing = {
+                row["centro_id"]: dict(row)
+                for row in connection.execute(
+                    text(
+                        "SELECT id, centro_id, nome, local FROM centro_de_custo "
+                        "WHERE empresa_id = :company AND centro_id = ANY(:codes)"
+                    ),
+                    {"company": company.id, "codes": sorted(centers)},
+                ).mappings()
+            }
+            for number, name in centers.items():
+                current = existing.get(number)
+                if current is None:
+                    connection.execute(
+                        text(
+                            "INSERT INTO centro_de_custo "
+                            "(empresa_id, centro_id, nome, local) "
+                            "VALUES (:empresa_id, :centro_id, :nome, :local)"
+                        ),
+                        {"empresa_id": company.id, "centro_id": number, "nome": name, "local": name},
+                    )
+                    created += 1
+                elif current["nome"] != name or current["local"] != name:
+                    connection.execute(
+                        text(
+                            "UPDATE centro_de_custo SET nome = :nome, local = :local "
+                            "WHERE id = :id"
+                        ),
+                        {"id": current["id"], "nome": name, "local": name},
+                    )
+                    updated += 1
+                else:
+                    ignored += 1
+
+        if created or updated:
+            socketio.emit("data_changed", {
+                "channel": "centros_custo",
+                "resource": "centros_custo",
+                "action": "script_sync_completed",
+            })
+        current_app.logger.info(
+            "Sincronização automática de centros: empresa=%s total=%s criados=%s atualizados=%s ignorados=%s",
+            company.id, len(centers), created, updated, ignored,
+        )
+        return jsonify({
+            "empresa_id": company.id,
+            "total": len(centers),
+            "centros_criados": created,
+            "centros_atualizados": updated,
+            "centros_ignorados": ignored,
+        }), 200
+
     @staticmethod
     def _run_center_import(app, job_id, path: Path, company_id: int):
         with app.app_context():
