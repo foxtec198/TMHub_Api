@@ -20,6 +20,16 @@ def create_import():
     return service.create()
 
 
+@collaborator_import_bp.post("/dados")
+def import_data():
+    return service.create_from_data()
+
+
+@collaborator_import_bp.get("/historico")
+def import_history():
+    return service.history()
+
+
 @collaborator_import_bp.post("/upload/iniciar")
 def start_import_upload():
     return service.start_upload()
