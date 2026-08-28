@@ -88,6 +88,27 @@ def requested_branch_ids():
     return _requested_branch_ids()
 
 
+def requested_company_ids():
+    raw_value = request.headers.get("X-Empresa-Ids") if has_request_context() else None
+    if raw_value is None:
+        return None
+    try:
+        values = json.loads(raw_value)
+        return {int(value) for value in values} if isinstance(values, list) else set()
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def _apply_company_scope(center_ids):
+    company_ids = requested_company_ids()
+    if company_ids is None:
+        return center_ids
+    query = db.session.query(CostCenters.id).filter(CostCenters.empresa_id.in_(company_ids))
+    if center_ids is not None:
+        query = query.filter(CostCenters.id.in_(center_ids))
+    return {row[0] for row in query.all()}
+
+
 def _cost_center_ids_for_branches(branch_ids):
     if not branch_ids:
         return set()
@@ -108,11 +129,17 @@ def _cost_center_ids_for_branches(branch_ids):
         return set()
 
     direct_rows = (
-        db.session.query(filial_centros_custo.c.centro_custo_id)
+        db.session.query(
+            filial_centros_custo.c.filial_id,
+            filial_centros_custo.c.centro_custo_id,
+        )
         .filter(filial_centros_custo.c.filial_id.in_(valid_branch_ids))
         .distinct()
         .all()
     )
+
+    explicit_branch_ids = {row[0] for row in direct_rows}
+    legacy_branch_ids = valid_branch_ids - explicit_branch_ids
 
     department_rows = (
         db.session.query(CostCenters.id)
@@ -120,15 +147,17 @@ def _cost_center_ids_for_branches(branch_ids):
             filial_departamentos,
             filial_departamentos.c.departamento == CostCenters.departamento,
         )
-        .filter(filial_departamentos.c.filial_id.in_(valid_branch_ids))
+        .filter(filial_departamentos.c.filial_id.in_(legacy_branch_ids))
         .distinct()
         .all()
+        if legacy_branch_ids
+        else []
     )
 
-    return {row[0] for row in [*direct_rows, *department_rows]}
+    return {row[1] for row in direct_rows} | {row[0] for row in department_rows}
 
 
-def allowed_cost_center_ids(token_data):
+def allowed_cost_center_ids(token_data, include_company=True):
     """
     Retorna:
     - None: acesso global sem filtro;
@@ -145,47 +174,30 @@ def allowed_cost_center_ids(token_data):
 
     if selectable:
         if requested_ids is None:
-            return None
-        return _cost_center_ids_for_branches(requested_ids)
+            return _apply_company_scope(None) if include_company else None
+        scoped_ids = _cost_center_ids_for_branches(requested_ids)
+        return _apply_company_scope(scoped_ids) if include_company else scoped_ids
 
     user_id = user.id
     request_cache = getattr(g, "_filial_scope_cache", {}) if has_request_context() else {}
 
-    if user_id in request_cache:
-        return request_cache[user_id]
+    cache_key = (user_id, tuple(sorted(requested_company_ids() or [])) if include_company else None)
+    if cache_key in request_cache:
+        return request_cache[cache_key]
 
-    direct_rows = (
-        db.session.query(filial_centros_custo.c.centro_custo_id)
-        .join(Branch, Branch.id == filial_centros_custo.c.filial_id)
-        .join(filial_usuarios, filial_usuarios.c.filial_id == Branch.id)
-        .filter(
-            filial_usuarios.c.usuario_id == user_id,
-            Branch.ativa.is_(True),
-        )
-        .distinct()
+    user_branch_ids = {
+        row[0]
+        for row in db.session.query(filial_usuarios.c.filial_id)
+        .join(Branch, Branch.id == filial_usuarios.c.filial_id)
+        .filter(filial_usuarios.c.usuario_id == user_id, Branch.ativa.is_(True))
         .all()
-    )
-
-    department_rows = (
-        db.session.query(CostCenters.id)
-        .join(
-            filial_departamentos,
-            filial_departamentos.c.departamento == CostCenters.departamento,
-        )
-        .join(Branch, Branch.id == filial_departamentos.c.filial_id)
-        .join(filial_usuarios, filial_usuarios.c.filial_id == Branch.id)
-        .filter(
-            filial_usuarios.c.usuario_id == user_id,
-            Branch.ativa.is_(True),
-        )
-        .distinct()
-        .all()
-    )
-
-    allowed_ids = {row[0] for row in [*direct_rows, *department_rows]}
+    }
+    allowed_ids = _cost_center_ids_for_branches(user_branch_ids)
+    if include_company:
+        allowed_ids = _apply_company_scope(allowed_ids)
 
     if has_request_context():
-        request_cache[user_id] = allowed_ids
+        request_cache[cache_key] = allowed_ids
         g._filial_scope_cache = request_cache
 
     return allowed_ids
@@ -287,22 +299,29 @@ def _branch_ids_for_cost_centers(center_ids):
         return set()
 
     direct_rows = (
-        db.session.query(filial_centros_custo.c.filial_id)
+        db.session.query(
+            filial_centros_custo.c.filial_id,
+            filial_centros_custo.c.centro_custo_id,
+        )
         .filter(filial_centros_custo.c.centro_custo_id.in_(center_ids))
         .distinct()
         .all()
     )
+    explicitly_linked_center_ids = {row[1] for row in direct_rows}
+    legacy_center_ids = set(center_ids) - explicitly_linked_center_ids
     department_rows = (
         db.session.query(filial_departamentos.c.filial_id)
         .join(
             CostCenters,
             CostCenters.departamento == filial_departamentos.c.departamento,
         )
-        .filter(CostCenters.id.in_(center_ids))
+        .filter(CostCenters.id.in_(legacy_center_ids))
         .distinct()
         .all()
+        if legacy_center_ids
+        else []
     )
-    return {row[0] for row in [*direct_rows, *department_rows]}
+    return {row[0] for row in direct_rows} | {row[0] for row in department_rows}
 
 
 def can_access_supervisor_user(token_data, user_id, center_id=None):

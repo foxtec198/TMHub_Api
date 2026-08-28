@@ -17,17 +17,19 @@ from utils.db import db
 from models.colaboradores import Employees
 from models.reservas_tecnicas import Floaters
 from utils.filial_scope import apply_cost_center_scope, can_access_cost_center
+from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
 
 class FloaterService:
     UNAVAILABILITY_REASONS = {"FALTA", "APOIO"}
+    ABSENCE_REASONS = {"ATESTADO", "DECLARAÇÃO", "INJUSTIFICADA", "OUTROS"}
     RESERVE_ABSENCE_NOTE = "FALTA REGISTRADA PELA INDISPONIBILIDADE DA RESERVA TÉCNICA · SEM COBERTURA"
     SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 
     @classmethod
-    def _create_unjustified_absence(cls, employee, token_data):
+    def _create_absence(cls, employee, token_data, absence_reason):
         """Cria uma única requisição sem cobertura para a falta da reserva no dia."""
         center = db.session.get(CostCenters, employee.centro_id)
         if not center:
@@ -47,7 +49,6 @@ class FloaterService:
         requisition = Requisicao.query.filter(
             Requisicao.ausente_id == employee.id,
             Requisicao.cc == employee.centro_id,
-            Requisicao.motivo == "INJUSTIFICADA",
             Requisicao.obs == cls.RESERVE_ABSENCE_NOTE,
             Requisicao.created_at.between(day_start, day_end),
         ).first()
@@ -71,7 +72,7 @@ class FloaterService:
             supervisor_usuario_id=supervisor_usuario_id,
             warning=False,
             origem="reserva_tecnica",
-            motivo="INJUSTIFICADA",
+            motivo=absence_reason,
             obs=cls.RESERVE_ABSENCE_NOTE,
             created_at=scheduled_at,
             opened_at=now,
@@ -91,7 +92,7 @@ class FloaterService:
             criado_por_usuario_id=(token_data or {}).get("id"),
             status="pending",
             tipo="Falta criada pela indisponibilidade da reserva",
-            motivo="INJUSTIFICADA",
+            motivo=absence_reason,
             obs=cls.RESERVE_ABSENCE_NOTE,
         ))
         return requisition, None
@@ -176,7 +177,12 @@ class FloaterService:
             is_new_absence = floater.disponivel or floater.indisponibilidade_motivo != "FALTA"
             requisition = None
             if reason == "FALTA" and is_new_absence:
-                requisition, error = self._create_unjustified_absence(employee, token_data)
+                if not has_permission(token_data, "controle_faltas", "edit"):
+                    return jsonify("Você não possui permissão para lançar faltas no Controle de Faltas."), 403
+                absence_reason = str(body.get("motivo_falta") or "").strip().upper()
+                if absence_reason not in self.ABSENCE_REASONS:
+                    return jsonify("Selecione o motivo da falta."), 400
+                requisition, error = self._create_absence(employee, token_data, absence_reason)
                 if error:
                     return error
             floater.disponivel = False

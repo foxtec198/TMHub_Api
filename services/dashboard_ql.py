@@ -5,21 +5,19 @@ from zoneinfo import ZoneInfo
 from flask import jsonify, request
 from sqlalchemy import and_, func, or_
 
-from models.centros_de_custo import CostCenters, DepartmentConfiguration
+from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.filiais import (
     Branch,
     filial_centros_custo,
-    filial_departamentos,
     filial_usuarios,
 )
-from models.ql_historico import QLDailySnapshot
+from models.empresas import Company
+from models.ql_historico import QLDailySnapshot, QLDepartmentCapacity
 from utils.db import db
 from utils.filial_scope import (
     allowed_cost_center_ids,
-    apply_active_department_scope,
     can_select_branches,
-    is_admin,
     requested_branch_ids,
 )
 from utils.permissions import has_permission
@@ -44,6 +42,16 @@ def _selected_values(name):
     }
 
 
+def _selected_company_departments():
+    selected = set()
+    for raw in request.args.getlist("departamento_empresa"):
+        for value in str(raw).split(","):
+            company_id, separator, department = value.partition(":")
+            if separator and company_id.isdigit() and department.isdigit():
+                selected.add((int(company_id), int(department)))
+    return selected
+
+
 class QLDashboardService:
     """Dashboard e memória diária do Quadro de Lotação (QL)."""
 
@@ -64,18 +72,8 @@ class QLDashboardService:
         for branch_id, center_id in direct_rows:
             mapping[branch_id].add(center_id)
 
-        department_rows = (
-            db.session.query(filial_departamentos.c.filial_id, CostCenters.id)
-            .select_from(filial_departamentos)
-            .join(
-                CostCenters,
-                CostCenters.departamento == filial_departamentos.c.departamento,
-            )
-            .filter(filial_departamentos.c.filial_id.in_(mapping))
-            .all()
-        )
-        for branch_id, center_id in department_rows:
-            mapping[branch_id].add(center_id)
+        # O vínculo direto é a fonte oficial: o mesmo DPTO pode existir em
+        # empresas e filiais diferentes, portanto o número isolado é ambíguo.
         return mapping
 
     @staticmethod
@@ -85,14 +83,20 @@ class QLDashboardService:
         query = (
             db.session.query(
                 CostCenters.departamento.label("departamento"),
-                DepartmentConfiguration.capacidade_pessoas.label("capacidade_esperada"),
+                CostCenters.empresa_id.label("empresa_id"),
+                Company.nome.label("empresa_nome"),
+                QLDepartmentCapacity.capacidade_esperada.label("capacidade_esperada"),
                 func.count(func.distinct(CostCenters.id)).label("centros_quantidade"),
                 func.count(Employees.id).label("colaboradores_ativos"),
             )
             .outerjoin(
-                DepartmentConfiguration,
-                DepartmentConfiguration.departamento == CostCenters.departamento,
+                QLDepartmentCapacity,
+                and_(
+                    QLDepartmentCapacity.empresa_id == CostCenters.empresa_id,
+                    QLDepartmentCapacity.departamento == CostCenters.departamento,
+                ),
             )
+            .join(Company, Company.id == CostCenters.empresa_id)
             .outerjoin(
                 Employees,
                 and_(
@@ -104,10 +108,14 @@ class QLDashboardService:
                 CostCenters.id.in_(center_ids),
                 CostCenters.departamento.isnot(None),
             )
-            .group_by(CostCenters.departamento, DepartmentConfiguration.capacidade_pessoas)
-            .order_by(CostCenters.departamento)
+            .group_by(
+                CostCenters.empresa_id,
+                Company.nome,
+                CostCenters.departamento,
+                QLDepartmentCapacity.capacidade_esperada,
+            )
+            .order_by(Company.nome, CostCenters.departamento)
         )
-        query = apply_active_department_scope(query, CostCenters.id)
         return query.all()
 
     @classmethod
@@ -120,7 +128,7 @@ class QLDashboardService:
 
         branch_map = cls._branch_center_map([branch.id for branch in branches])
         existing_snapshots = {
-            (snapshot.filial_id, snapshot.departamento): snapshot
+            (snapshot.filial_id, snapshot.empresa_id, snapshot.departamento): snapshot
             for snapshot in QLDailySnapshot.query.filter(
                 QLDailySnapshot.data_referencia == day,
                 QLDailySnapshot.filial_id.in_([branch.id for branch in branches]),
@@ -130,15 +138,16 @@ class QLDashboardService:
 
         for branch in branches:
             for row in cls._department_rows(branch_map.get(branch.id, set())):
-                snapshot = existing_snapshots.get((branch.id, row.departamento))
+                snapshot = existing_snapshots.get((branch.id, row.empresa_id, row.departamento))
                 if not snapshot:
                     snapshot = QLDailySnapshot(
                         data_referencia=day,
                         filial_id=branch.id,
+                        empresa_id=row.empresa_id,
                         departamento=row.departamento,
                     )
                     db.session.add(snapshot)
-                    existing_snapshots[(branch.id, row.departamento)] = snapshot
+                    existing_snapshots[(branch.id, row.empresa_id, row.departamento)] = snapshot
 
                 ativos = int(row.colaboradores_ativos or 0)
                 meta = (
@@ -189,6 +198,8 @@ class QLDashboardService:
         difference = active - expected if expected is not None else None
         return {
             "departamento": row.departamento,
+            "empresa_id": row.empresa_id,
+            "empresa_nome": row.empresa_nome,
             "colaboradores_ativos": active,
             "capacidade_esperada": expected,
             "centros_quantidade": int(row.centros_quantidade or 0),
@@ -205,22 +216,27 @@ class QLDashboardService:
         }
 
     @classmethod
-    def _history(cls, branch_ids, departments):
+    def _history(cls, branch_ids, company_ids, departments, company_departments=None):
         start_date = _today() - timedelta(days=HISTORY_DAYS - 1)
         query = QLDailySnapshot.query.filter(
             QLDailySnapshot.filial_id.in_(branch_ids),
             QLDailySnapshot.data_referencia >= start_date,
         )
+        if company_ids:
+            query = query.filter(QLDailySnapshot.empresa_id.in_(company_ids))
         if departments:
             query = query.filter(QLDailySnapshot.departamento.in_(departments))
 
         by_day = defaultdict(lambda: {"ativos": 0, "metas": {}, "departamentos": set()})
         for row in query.order_by(QLDailySnapshot.data_referencia).all():
+            if company_departments and (row.empresa_id, row.departamento) not in company_departments:
+                continue
             day = by_day[row.data_referencia.isoformat()]
             day["ativos"] += int(row.colaboradores_ativos or 0)
-            day["departamentos"].add(row.departamento)
+            identity = (row.empresa_id, row.departamento)
+            day["departamentos"].add(identity)
             if row.capacidade_esperada is not None:
-                day["metas"][row.departamento] = int(row.capacidade_esperada)
+                day["metas"][identity] = int(row.capacidade_esperada)
 
         return [
             {
@@ -274,7 +290,7 @@ class QLDashboardService:
             daily = []
             for day in month_days:
                 key = day.isoformat()
-                snapshot = snapshot_lookup.get((key, department["departamento"]))
+                snapshot = snapshot_lookup.get((key, department["empresa_id"], department["departamento"]))
                 ativos = int(snapshot["ativos"]) if snapshot else None
                 meta = (
                     int(snapshot["meta"])
@@ -338,6 +354,8 @@ class QLDashboardService:
 
             rows.append({
                 "departamento": department["departamento"],
+                "empresa_id": department["empresa_id"],
+                "empresa_nome": department["empresa_nome"],
                 "dias": daily,
                 "media_real": media_real,
                 "media_meta": media_meta,
@@ -368,10 +386,14 @@ class QLDashboardService:
             center_ids.intersection_update(allowed_centers)
 
         selected_departments = _selected_values("departamento")
+        selected_companies = _selected_values("empresa")
+        selected_company_departments = _selected_company_departments()
         departments = [
             self._serialize_department(row)
             for row in self._department_rows(center_ids)
-            if not selected_departments or row.departamento in selected_departments
+            if (not selected_departments or row.departamento in selected_departments)
+            and (not selected_companies or row.empresa_id in selected_companies)
+            and (not selected_company_departments or (row.empresa_id, row.departamento) in selected_company_departments)
         ]
 
         month_days = self._month_days(reference_month)
@@ -382,10 +404,14 @@ class QLDashboardService:
             QLDailySnapshot.data_referencia <= month_days[-1],
             QLDailySnapshot.departamento.in_(department_filter),
         ).all()
+        if selected_companies:
+            snapshots = [row for row in snapshots if row.empresa_id in selected_companies]
+        if selected_company_departments:
+            snapshots = [row for row in snapshots if (row.empresa_id, row.departamento) in selected_company_departments]
 
         lookup = {}
         for row in snapshots:
-            key = (row.data_referencia.isoformat(), row.departamento)
+            key = (row.data_referencia.isoformat(), row.empresa_id, row.departamento)
             values = lookup.setdefault(key, {"ativos": 0, "meta": None})
             values["ativos"] += int(row.colaboradores_ativos or 0)
             if row.capacidade_esperada is not None:
@@ -399,9 +425,13 @@ class QLDashboardService:
             "departamentos": self._build_daily_payload(departments, month_days, lookup),
             "filtros": {
                 "departamentos": [
-                    {"label": f"DPTO. {row['departamento']}", "value": row["departamento"]}
+                    {"label": f"{row['empresa_nome']} · DPTO. {row['departamento']}", "value": f"{row['empresa_id']}:{row['departamento']}"}
                     for row in departments
                 ],
+                "empresas": sorted(
+                    {row["empresa_id"]: {"label": row["empresa_nome"], "value": row["empresa_id"]} for row in departments}.values(),
+                    key=lambda item: item["label"],
+                ),
             },
             "atualizado_em": datetime.now(SAO_PAULO).isoformat(),
         })
@@ -424,10 +454,14 @@ class QLDashboardService:
             center_ids.intersection_update(allowed_centers)
 
         selected_departments = _selected_values("departamento")
+        selected_companies = _selected_values("empresa")
+        selected_company_departments = _selected_company_departments()
         departments = [
             self._serialize_department(row)
             for row in self._department_rows(center_ids)
-            if not selected_departments or row.departamento in selected_departments
+            if (not selected_departments or row.departamento in selected_departments)
+            and (not selected_companies or row.empresa_id in selected_companies)
+            and (not selected_company_departments or (row.empresa_id, row.departamento) in selected_company_departments)
         ]
         expected_rows = [row for row in departments if row["capacidade_esperada"] is not None]
         summary = {
@@ -441,12 +475,16 @@ class QLDashboardService:
         return jsonify({
             "resumo": summary,
             "departamentos": departments,
-            "evolucao": self._history([branch.id for branch in branches], selected_departments),
+            "evolucao": self._history([branch.id for branch in branches], selected_companies, selected_departments, selected_company_departments),
             "filtros": {
                 "departamentos": [
-                    {"label": f"DPTO. {row['departamento']}", "value": row["departamento"]}
+                    {"label": f"{row['empresa_nome']} · DPTO. {row['departamento']}", "value": f"{row['empresa_id']}:{row['departamento']}"}
                     for row in departments
                 ],
+                "empresas": sorted(
+                    {row["empresa_id"]: {"label": row["empresa_nome"], "value": row["empresa_id"]} for row in departments}.values(),
+                    key=lambda item: item["label"],
+                ),
             },
             "filiais": [{"id": branch.id, "nome": branch.nome} for branch in branches],
             "atualizado_em": datetime.now(SAO_PAULO).isoformat(),

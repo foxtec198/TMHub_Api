@@ -15,7 +15,7 @@ from models.colaboradores import Employees
 from models.empresas import Company
 from services.cost_center_spreadsheet_parser import parse_cost_center_spreadsheet
 from utils.db import db
-from utils.filial_scope import apply_cost_center_scope, can_access_cost_center, is_admin
+from utils.filial_scope import allowed_cost_center_ids, apply_cost_center_scope, can_access_cost_center, is_admin, is_matrix_user
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
@@ -60,10 +60,14 @@ class CostsCenterService:
 
     @safe_route
     def companies(self, token_data):
-        if not is_admin(token_data):
-            return jsonify("Apenas administradores podem consultar empresas."), 403
+        query = Company.query
+        if not (is_admin(token_data) or is_matrix_user(token_data)):
+            center_ids = allowed_cost_center_ids(token_data, include_company=False)
+            query = query.filter(Company.id.in_(
+                db.session.query(CostCenters.empresa_id).filter(CostCenters.id.in_(center_ids or set()))
+            ))
         return jsonify([{"id": item.id, "nome": item.nome, "ativa": bool(item.ativa)}
-                        for item in Company.query.order_by(Company.ativa.desc(), Company.nome).all()]), 200
+                        for item in query.order_by(Company.ativa.desc(), Company.nome).all()]), 200
 
     @safe_route
     def read(self, token_data):
