@@ -15,9 +15,12 @@ from calendar import monthrange
 # Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters, db
 from models.colaboradores import Employees
+from models.empresas import Company
+from models.filiais import Branch, filial_centros_custo
 from models.rp_historico import History
 from models.rp_requisicao import Requisicao
 from models.supervisores import Supervisors
+from models.usuarios import Users
 from models.cargos import Cargos
 from models.cidades import Cities
 from models.situacoes import Situations
@@ -90,6 +93,14 @@ class DashboardService:
 
         Ausente = aliased(Employees)
         Reserva = aliased(Employees)
+        SupervisorUsuario = aliased(Users)
+        branch_name = (
+            db.session.query(func.min(Branch.nome))
+            .join(filial_centros_custo, filial_centros_custo.c.filial_id == Branch.id)
+            .filter(filial_centros_custo.c.centro_custo_id == CostCenters.id)
+            .correlate(CostCenters)
+            .scalar_subquery()
+        )
         # Keep one closed history row per request so dashboard totals are not inflated by legacy duplicates.
         latest_history = (
             db.session.query(
@@ -110,9 +121,11 @@ class DashboardService:
                     ),
                     else_=Reserva.nome,
                 ).label("reserva"),
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(SupervisorUsuario.nome, Supervisors.nome).label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
+                Company.nome.label("empresa"),
+                branch_name.label("filial"),
                 History.created_at,
                 History.status,
                 Cargos.multa,
@@ -125,7 +138,9 @@ class DashboardService:
             .outerjoin(Reserva, Reserva.id == History.reserva_id)
             .outerjoin(Cargos, Cargos.id == Reserva.cargo)
             .join(CostCenters, CostCenters.id == History.cc)
-            .join(Supervisors, Supervisors.id == History.supervisor_id)
+            .join(Company, Company.id == CostCenters.empresa_id)
+            .outerjoin(Supervisors, Supervisors.id == History.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == History.supervisor_usuario_id)
             .filter(
                 History.created_at.between(init, end),
                 History.status.in_(["approved", "reproved"]),
@@ -151,9 +166,11 @@ class DashboardService:
                     ),
                     else_=Reserva.nome,
                 ).label("reserva"),
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(SupervisorUsuario.nome, Supervisors.nome).label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
+                Company.nome.label("empresa"),
+                branch_name.label("filial"),
                 Requisicao.created_at,
                 Requisicao.status,
                 Requisicao.motivo,
@@ -164,7 +181,9 @@ class DashboardService:
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .outerjoin(Reserva, Reserva.id == Requisicao.reserva_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .join(Company, Company.id == CostCenters.empresa_id)
             .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Requisicao.supervisor_usuario_id)
             .filter(
                 Requisicao.created_at.between(init, end),
                 Requisicao.status.in_(["pending", "updated"]),
@@ -181,9 +200,11 @@ class DashboardService:
             db.session.query(
                 Requisicao.id,
                 Ausente.nome.label("ausente"),
-                Supervisors.nome.label("supervisor"),
+                func.coalesce(SupervisorUsuario.nome, Supervisors.nome).label("supervisor"),
                 CostCenters.local.label("local"),
                 CostCenters.departamento.label("dpto"),
+                Company.nome.label("empresa"),
+                branch_name.label("filial"),
                 Requisicao.created_at,
                 Requisicao.status,
                 Requisicao.motivo,
@@ -192,7 +213,9 @@ class DashboardService:
             .select_from(Requisicao)
             .join(Ausente, Ausente.id == Requisicao.ausente_id)
             .join(CostCenters, CostCenters.id == Requisicao.cc)
+            .join(Company, Company.id == CostCenters.empresa_id)
             .outerjoin(Supervisors, Supervisors.id == Requisicao.supervisor_id)
+            .outerjoin(SupervisorUsuario, SupervisorUsuario.id == Requisicao.supervisor_usuario_id)
             .filter(
                 Requisicao.created_at.between(init, end),
                 Requisicao.obs == self.RESERVE_ABSENCE_NOTE,
