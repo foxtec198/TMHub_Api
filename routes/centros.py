@@ -18,6 +18,11 @@ def import_centers():
     return service.import_centers()
 
 
+@center_bp.post("/dados")
+def sync_centers_from_data():
+    return service.sync_from_data()
+
+
 @center_bp.get("/importacoes/<string:job_id>")
 def center_import_status(job_id):
     return service.import_status(job_id)
