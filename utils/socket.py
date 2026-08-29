@@ -36,6 +36,8 @@ def register_authenticated_client(auth=None):
         if auth_requirements(user)["interacao_pendente"]:
             return False
         join_room(f"user:{user_id}")
+        if str(user.role or "").upper() == "ADMIN":
+            join_room("role:admin")
     except Exception:
         # RPA agents share this namespace and authenticate through "register".
         return
