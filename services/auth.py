@@ -78,6 +78,7 @@ class AuthService:
             "modo_tema": user.modo_tema or "light",
             "particulas_ativas": bool(user.particulas_ativas),
             "temas_disponiveis": available_themes_for(user),
+            "adorno_foto": user.adorno_foto,
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
             "last_login": last_login,

@@ -78,6 +78,51 @@ def _migrate_timo_user_preference():
     )
 
 
+def _migrate_marketplace(table_names):
+    """Evolui o catálogo mantendo compras antigas e posse ativa única."""
+    _run_column_migration(
+        "usuarios",
+        "adorno_foto",
+        ("ALTER TABLE usuarios ADD COLUMN adorno_foto VARCHAR(80)",),
+    )
+    if "marketplace_produtos" not in table_names or "marketplace_compras" not in table_names:
+        return
+
+    product_columns = (
+        ("codigo", "ALTER TABLE marketplace_produtos ADD COLUMN codigo VARCHAR(80)"),
+        ("destaque", "ALTER TABLE marketplace_produtos ADD COLUMN destaque BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("reembolsavel", "ALTER TABLE marketplace_produtos ADD COLUMN reembolsavel BOOLEAN NOT NULL DEFAULT TRUE"),
+    )
+    for column_name, statement in product_columns:
+        _run_column_migration("marketplace_produtos", column_name, (statement,))
+    _run_column_migration(
+        "marketplace_compras",
+        "refunded_at",
+        ("ALTER TABLE marketplace_compras ADD COLUMN refunded_at TIMESTAMP",),
+    )
+
+    with db.engine.begin() as connection:
+        # Instalações de teste podiam comprar o mesmo item várias vezes. Para
+        # preservar o histórico, somente a compra ativa mais recente mantém a posse.
+        connection.execute(text(
+            "UPDATE marketplace_compras AS antiga SET status = 'duplicada_legado' "
+            "WHERE antiga.status = 'concluida' AND EXISTS ("
+            "SELECT 1 FROM marketplace_compras AS recente "
+            "WHERE recente.usuario_id = antiga.usuario_id "
+            "AND recente.produto_id = antiga.produto_id "
+            "AND recente.status = 'concluida' AND recente.id > antiga.id)"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_compra_ativa "
+            "ON marketplace_compras (usuario_id, produto_id) "
+            "WHERE status = 'concluida'"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_produtos_codigo "
+            "ON marketplace_produtos (codigo) WHERE codigo IS NOT NULL"
+        ))
+
+
 def _migrate_requisition_origin(table_names):
     if "rp_requisicoes" not in table_names:
         return
@@ -365,6 +410,7 @@ def initialize_database(app):
 
         _migrate_user_theme()
         _migrate_timo_user_preference()
+        _migrate_marketplace(table_names)
         _migrate_requisition_origin(table_names)
         _migrate_department_capacity(table_names)
         _migrate_timo_configuration(table_names)
