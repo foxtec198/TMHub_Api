@@ -40,7 +40,7 @@ from utils.maintenance import maintenance_mode_enabled, update_maintenance_mode
 from utils.theme_access import (
     CUSTOM_THEMES,
     available_themes_for,
-    can_use_custom_themes,
+    can_use_theme,
     effective_theme_for,
 )
 from utils.user_requirements import (
@@ -109,6 +109,7 @@ class UserServices:
             return jsonify([{
                 "id": user.id,
                 "nome": user.nome,
+                "adorno_foto": user.adorno_foto,
                 **({"foto_perfil": user.foto_perfil} if include_photo else {}),
             } for user in users]), 200
 
@@ -708,7 +709,7 @@ class UserServices:
                     user.modo_tema = tema
                 user.tema = "tmhub"
             else:
-                if tema != "tmhub" and not can_use_custom_themes(user):
+                if tema != "tmhub" and not can_use_theme(user, tema):
                     return jsonify("Este tema ainda não está liberado para sua conta."), 403
                 user.tema = tema
 
@@ -899,6 +900,7 @@ class UserServices:
             "modo_tema": user.modo_tema or "light",
             "particulas_ativas": bool(user.particulas_ativas),
             "temas_disponiveis": available_themes_for(user),
+            "adorno_foto": user.adorno_foto,
             "role": user.role,
             "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),
