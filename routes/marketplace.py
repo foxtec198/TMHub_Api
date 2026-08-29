@@ -18,4 +18,19 @@ def purchases():
 
 @marketplace_bp.post("/compras")
 def buy():
-    return service.buy()
+    return service.checkout()
+
+
+@marketplace_bp.post("/checkout")
+def checkout():
+    return service.checkout()
+
+
+@marketplace_bp.post("/compras/<int:purchase_id>/reembolso")
+def refund(purchase_id):
+    return service.refund(purchase_id=purchase_id)
+
+
+@marketplace_bp.patch("/equipar")
+def equip():
+    return service.equip()
