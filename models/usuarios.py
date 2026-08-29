@@ -29,6 +29,9 @@ class Users(BaseModel):
     # Liberação administrativa para as identidades visuais extras. A edição
     # é deliberadamente feita no banco enquanto o catálogo está em testes.
     temas_extras_liberados = db.Column(db.Boolean, nullable=False, default=False)
+    # Código do adorno de foto equipado pelo marketplace. O item comprado
+    # continua sendo a fonte de verdade da posse.
+    adorno_foto = db.Column(db.String(80), nullable=True)
     timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)
