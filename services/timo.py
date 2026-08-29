@@ -181,21 +181,20 @@ class TimoCommandService:
         }
 
     @classmethod
-    def _emit_learning_update(cls, user_id, event, item=None):
+    def _emit_learning_update(cls, event, item=None):
         """Sincroniza a fila de aprendizado aberta pelo administrador."""
         from utils.socket import socketio
 
-        socketio.emit(
-            "timo_learning_updated",
-            {
-                "event": event,
-                "aprendizado": cls._serialize_learning(item) if item else None,
-                "aprendizados_aprovados": TimoLearningExample.query.filter_by(
-                    status="aprovado"
-                ).count(),
-            },
-            to=f"user:{user_id}",
-        )
+        payload = {
+            "event": event,
+            "aprendizado": cls._serialize_learning(item) if item else None,
+            "aprendizados_aprovados": TimoLearningExample.query.filter_by(
+                status="aprovado"
+            ).count(),
+        }
+        # A revisão pertence aos administradores. A sala por role garante que
+        # frases enviadas por qualquer usuário apareçam na fila sem recarregar.
+        socketio.emit("timo_learning_updated", payload, to="role:admin")
 
     @classmethod
     def _capture_learning_candidate(cls, command, prediction, token_data):
@@ -221,7 +220,7 @@ class TimoCommandService:
             )
             db.session.add(item)
         db.session.commit()
-        cls._emit_learning_update((token_data or {}).get("id"), "capturado", item)
+        cls._emit_learning_update("capturado", item)
 
     @classmethod
     def _trained_learning_intent_for_command(cls, command):
@@ -678,7 +677,7 @@ class TimoCommandService:
         item.revisado_por_usuario_id = token_data.get("id")
         item.revisado_em = datetime.now(SAO_PAULO)
         db.session.commit()
-        self._emit_learning_update(token_data.get("id"), "revisado", item)
+        self._emit_learning_update("revisado", item)
         return jsonify({"message": "Frase revisada.", "aprendizado": self._serialize_learning(item)}), 200
 
     @safe_route
@@ -712,7 +711,7 @@ class TimoCommandService:
                 TimoLearningExample.id.in_(approved_ids)
             ).update({"status": "treinado"}, synchronize_session=False)
             db.session.commit()
-        self._emit_learning_update(token_data.get("id"), "treinado")
+        self._emit_learning_update("treinado")
         return jsonify({
             "message": "Modelo do Timo treinado com as frases revisadas.",
             "frases_treinadas": len(examples),

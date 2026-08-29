@@ -135,6 +135,32 @@ class MarketplaceService:
         return jsonify({"saldo_edinhos": self._balance(user.id), "compras": [self._purchase(item, user) for item in rows]}), 200
 
     @safe_route
+    def owned_adornments(self, token_data):
+        """Lista somente adornos adquiridos pelo próprio usuário autenticado."""
+        self._ensure_catalog()
+        user = db.session.get(Users, token_data["id"])
+        purchases = (
+            MarketplacePurchase.query
+            .join(MarketplaceProduct, MarketplaceProduct.id == MarketplacePurchase.produto_id)
+            .filter(
+                MarketplacePurchase.usuario_id == user.id,
+                MarketplacePurchase.status == "concluida",
+                MarketplaceProduct.categoria == "adorno",
+                MarketplaceProduct.ativo.is_(True),
+            )
+            .order_by(MarketplacePurchase.created_at.desc())
+            .all()
+        )
+        products = []
+        seen = set()
+        for purchase in purchases:
+            if purchase.produto_id in seen:
+                continue
+            seen.add(purchase.produto_id)
+            products.append(self._product(purchase.produto, user, {purchase.produto_id}))
+        return jsonify({"adornos": products, "equipado": user.adorno_foto}), 200
+
+    @safe_route
     def checkout(self, token_data):
         denied = self._guard(token_data)
         if denied:
@@ -222,9 +248,6 @@ class MarketplaceService:
             user.adorno_foto = None
             db.session.commit()
             return jsonify({"tema": user.tema or DEFAULT_THEME, "adorno": None}), 200
-        denied = self._guard(token_data)
-        if denied:
-            return denied
         try:
             product_id = int(product_id)
         except (TypeError, ValueError):
@@ -236,6 +259,9 @@ class MarketplaceService:
         if not owned:
             return jsonify("Adquira esse item antes de equipá-lo."), 403
         if category == "tema":
+            denied = self._guard(token_data)
+            if denied:
+                return denied
             user.tema = product.codigo.removeprefix("tema_")
         else:
             user.adorno_foto = product.codigo
