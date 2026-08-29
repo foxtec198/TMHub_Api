@@ -16,6 +16,11 @@ def purchases():
     return service.purchases()
 
 
+@marketplace_bp.get("/adornos")
+def owned_adornments():
+    return service.owned_adornments()
+
+
 @marketplace_bp.post("/compras")
 def buy():
     return service.checkout()
