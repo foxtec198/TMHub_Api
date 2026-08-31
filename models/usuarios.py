@@ -35,6 +35,9 @@ class Users(BaseModel):
     # Skin visual do modelo 3D do Timo. ``default`` usa o acabamento branco
     # canônico; as demais opções são liberadas pelo Marketplace.
     timo_skin = db.Column(db.String(80), nullable=False, default="default")
+    # Ambiente escolhido na tela imersiva e preferência de entrada do usuário.
+    timo_cenario = db.Column(db.String(24), nullable=False, default="workshop")
+    timo_tela_inicial = db.Column(db.Boolean, nullable=False, default=False)
     timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)

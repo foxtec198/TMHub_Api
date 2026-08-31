@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw, ImageOps, ImageStat, UnidentifiedImageError
 # Módulos internos da aplicação.
 from models.filiais import Branch, filial_usuarios
 from models.colaboradores import Employees
+from models.marketplace import MarketplaceProduct, MarketplacePurchase
 from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
 from utils.password_security import (
@@ -688,6 +689,9 @@ class UserServices:
         nova_senha = body.get("nova_senha")
         has_timo_update = "timo_ativo" in body
         timo_ativo = body.get("timo_ativo")
+        has_timo_home_update = "timo_tela_inicial" in body
+        timo_tela_inicial = body.get("timo_tela_inicial")
+        timo_cenario = body.get("timo_cenario")
 
         if nome is not None:
             nome = nome.strip()
@@ -730,6 +734,33 @@ class UserServices:
             if not isinstance(timo_ativo, bool):
                 return jsonify("Informe um valor válido para ativar ou desativar o Timo."), 400
             user.timo_ativo = timo_ativo
+
+        if has_timo_home_update:
+            if not isinstance(timo_tela_inicial, bool):
+                return jsonify("Informe um valor válido para a tela inicial do Timo."), 400
+            user.timo_tela_inicial = timo_tela_inicial
+
+        if timo_cenario is not None:
+            timo_cenario = str(timo_cenario).strip().lower()
+            base_scenarios = {"workshop", "orbit", "garden"}
+            premium_scenarios = {"christmas", "halloween", "muertos"}
+            if timo_cenario not in base_scenarios | premium_scenarios:
+                return jsonify("Cenário do Timo inválido."), 400
+            if timo_cenario in premium_scenarios:
+                owned = (
+                    MarketplacePurchase.query
+                    .join(MarketplaceProduct, MarketplaceProduct.id == MarketplacePurchase.produto_id)
+                    .filter(
+                        MarketplacePurchase.usuario_id == user.id,
+                        MarketplacePurchase.status == "concluida",
+                        MarketplaceProduct.codigo == f"timo_cenario_{timo_cenario}",
+                        MarketplaceProduct.ativo.is_(True),
+                    )
+                    .first()
+                )
+                if not owned:
+                    return jsonify("Adquira esse cenário no Marketplace antes de usá-lo."), 403
+            user.timo_cenario = timo_cenario
 
         if nova_senha is not None:
             valid_password, _, _ = verify_password(str(senha_atual or ""), user.hash)
@@ -902,6 +933,8 @@ class UserServices:
             "temas_disponiveis": available_themes_for(user),
             "adorno_foto": user.adorno_foto,
             "timo_skin": user.timo_skin or "default",
+            "timo_cenario": user.timo_cenario or "workshop",
+            "timo_tela_inicial": bool(user.timo_tela_inicial),
             "role": user.role,
             "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),

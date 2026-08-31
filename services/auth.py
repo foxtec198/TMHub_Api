@@ -80,6 +80,8 @@ class AuthService:
             "temas_disponiveis": available_themes_for(user),
             "adorno_foto": user.adorno_foto,
             "timo_skin": user.timo_skin or "default",
+            "timo_cenario": user.timo_cenario or "workshop",
+            "timo_tela_inicial": bool(user.timo_tela_inicial),
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
             "last_login": last_login,
