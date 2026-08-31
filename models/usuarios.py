@@ -32,6 +32,9 @@ class Users(BaseModel):
     # Código do adorno de foto equipado pelo marketplace. O item comprado
     # continua sendo a fonte de verdade da posse.
     adorno_foto = db.Column(db.String(80), nullable=True)
+    # Skin visual do modelo 3D do Timo. ``default`` usa o acabamento branco
+    # canônico; as demais opções são liberadas pelo Marketplace.
+    timo_skin = db.Column(db.String(80), nullable=False, default="default")
     timo_ativo = db.Column(db.Boolean, nullable=False, default=False)
     gerencia_faltas = db.Column(db.Boolean, nullable=False, default=False)
     email_pendente = db.Column(db.String)

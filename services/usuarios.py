@@ -901,6 +901,7 @@ class UserServices:
             "particulas_ativas": bool(user.particulas_ativas),
             "temas_disponiveis": available_themes_for(user),
             "adorno_foto": user.adorno_foto,
+            "timo_skin": user.timo_skin or "default",
             "role": user.role,
             "timo_ativo": bool(user.timo_ativo) if str(user.role or "").upper() == "ADMIN" else False,
             "gerencia_faltas": bool(user.gerencia_faltas),
