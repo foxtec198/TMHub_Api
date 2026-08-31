@@ -21,6 +21,11 @@ def owned_adornments():
     return service.owned_adornments()
 
 
+@marketplace_bp.get("/cenarios")
+def owned_scenarios():
+    return service.owned_scenarios()
+
+
 @marketplace_bp.post("/compras")
 def buy():
     return service.checkout()

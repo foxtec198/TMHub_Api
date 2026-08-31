@@ -93,6 +93,22 @@ def _migrate_marketplace(table_names):
             "ADD COLUMN timo_skin VARCHAR(80) NOT NULL DEFAULT 'default'",
         ),
     )
+    _run_column_migration(
+        "usuarios",
+        "timo_cenario",
+        (
+            "ALTER TABLE usuarios "
+            "ADD COLUMN timo_cenario VARCHAR(24) NOT NULL DEFAULT 'workshop'",
+        ),
+    )
+    _run_column_migration(
+        "usuarios",
+        "timo_tela_inicial",
+        (
+            "ALTER TABLE usuarios "
+            "ADD COLUMN timo_tela_inicial BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+    )
     if "marketplace_produtos" not in table_names or "marketplace_compras" not in table_names:
         return
 
