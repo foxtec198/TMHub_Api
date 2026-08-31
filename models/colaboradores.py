@@ -22,6 +22,12 @@ class Employees(BaseModel):
     # A coluna ja e preenchida pela importacao de colaboradores e e usada
     # somente como base da provisao no Controle de Rescisoes.
     salario = db.Column(db.Numeric(14, 2))
+    # Valores atuais de benefícios. O VA nominal é separado do desconto e do
+    # custo empresarial para preservar a composição usada na DRE.
+    valor_va = db.Column(db.Numeric(12, 2), nullable=True)
+    desconto_va = db.Column(db.Numeric(12, 2), nullable=True)
+    valor_va_empresa = db.Column(db.Numeric(12, 2), nullable=True)
+    valor_vt = db.Column(db.Numeric(12, 2), nullable=True)
     empresa_id = db.Column(db.Integer, db.ForeignKey("empresas.id", ondelete="RESTRICT"), index=True)
 
     # Controle de PCD (Pessoa com Deficiência)

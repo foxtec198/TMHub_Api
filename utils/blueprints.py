@@ -43,6 +43,7 @@ from routes.dashboard_experiencias import experience_dashboard_bp
 from routes.avaliacoes_experiencia import experience_evaluations_bp
 from routes.exames_periodicos import periodic_exams_bp
 from routes.uso_tmhub import usage_bp
+from routes.dre import dre_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -69,6 +70,8 @@ blueprints = {
     termination_dashboard_bp: "/dash/rescisoes",
     disciplinary_measures_dashboard_bp: "/dash/medidas-disciplinares",
     experience_dashboard_bp: "/dash/experiencias",
+    dashboard_pcd_bp: "/dash/pcd",
+    dashboard_ql_bp: "/dash/ql",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
@@ -88,13 +91,15 @@ blueprints = {
     #Indicadores
     pcd_bp: "/pcd",
 
-    #Dashboards PCD
-    dashboard_pcd_bp: "/dash/pcd",
-    dashboard_ql_bp: "/dash/ql",
+    # Tm Ops
     schedular_bp: "/schedular",
     tm_ops_bp: "/tm-ops",
+
+    # Timo
     timo_bp: "/timo",
     timo_voice_agents_bp: "/timo/agentes",
+
+    # Tickets
     tickets_bp: "/tickets",
 
     #Medidas Disciplinares
@@ -104,4 +109,7 @@ blueprints = {
     experience_evaluations_bp: "/avaliacoes-experiencia",
     periodic_exams_bp: "/exames-periodicos",
     usage_bp: "/uso",
+
+    # DRE
+    dre_bp: "/dre",
 }

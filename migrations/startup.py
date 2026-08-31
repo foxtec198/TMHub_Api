@@ -217,6 +217,113 @@ def _migrate_usage_control(table_names):
         return
 
 
+def _migrate_dre_company(table_names):
+    """Vincula as importações e lançamentos da DRE à empresa proprietária."""
+    required_tables = {"dre_importacoes", "dre_lancamentos", "empresas"}
+    if not required_tables.issubset(table_names):
+        return
+
+    # As colunas começam aceitando nulo para permitir o preenchimento seguro
+    # de bases já existentes; ao final, a restrição torna a separação
+    # multiempresa obrigatória para os próximos lançamentos.
+    _run_column_migration(
+        "dre_importacoes",
+        "empresa_id",
+        ("ALTER TABLE dre_importacoes ADD COLUMN empresa_id INTEGER",),
+    )
+    _run_column_migration(
+        "dre_lancamentos",
+        "empresa_id",
+        ("ALTER TABLE dre_lancamentos ADD COLUMN empresa_id INTEGER",),
+    )
+
+    with db.engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE dre_lancamentos AS lancamento "
+            "SET empresa_id = centro.empresa_id "
+            "FROM centro_de_custo AS centro "
+            "WHERE centro.id = lancamento.centro_custo_id "
+            "AND lancamento.empresa_id IS NULL"
+        ))
+        connection.execute(text(
+            "UPDATE dre_importacoes AS importacao "
+            "SET empresa_id = origem.empresa_id "
+            "FROM ("
+            "  SELECT importacao_id, MIN(empresa_id) AS empresa_id "
+            "  FROM dre_lancamentos "
+            "  WHERE empresa_id IS NOT NULL "
+            "  GROUP BY importacao_id"
+            ") AS origem "
+            "WHERE origem.importacao_id = importacao.id "
+            "AND importacao.empresa_id IS NULL"
+        ))
+        connection.execute(text(
+            "UPDATE dre_importacoes AS importacao "
+            "SET empresa_id = ("
+            "  SELECT MIN(centro.empresa_id) "
+            "  FROM filial_centros_custo AS vinculo "
+            "  JOIN centro_de_custo AS centro ON centro.id = vinculo.centro_custo_id "
+            "  WHERE vinculo.filial_id = importacao.filial_id"
+            ") "
+            "WHERE importacao.empresa_id IS NULL"
+        ))
+
+        missing_entries = connection.execute(text(
+            "SELECT count(*) FROM dre_lancamentos WHERE empresa_id IS NULL"
+        )).scalar_one()
+        missing_imports = connection.execute(text(
+            "SELECT count(*) FROM dre_importacoes WHERE empresa_id IS NULL"
+        )).scalar_one()
+        if missing_entries or missing_imports:
+            raise RuntimeError(
+                "A migração multiempresa da DRE encontrou registros sem empresa. "
+                "Revise exclusivamente as tabelas dre_importacoes e dre_lancamentos."
+            )
+
+        connection.execute(text(
+            "ALTER TABLE dre_importacoes ALTER COLUMN empresa_id SET NOT NULL"
+        ))
+        connection.execute(text(
+            "ALTER TABLE dre_lancamentos ALTER COLUMN empresa_id SET NOT NULL"
+        ))
+        connection.execute(text(
+            "DO $$ BEGIN "
+            "IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+            "WHERE conname = 'fk_dre_importacoes_empresa') THEN "
+            "ALTER TABLE dre_importacoes ADD CONSTRAINT fk_dre_importacoes_empresa "
+            "FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE RESTRICT; "
+            "END IF; "
+            "IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+            "WHERE conname = 'fk_dre_lancamentos_empresa') THEN "
+            "ALTER TABLE dre_lancamentos ADD CONSTRAINT fk_dre_lancamentos_empresa "
+            "FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE RESTRICT; "
+            "END IF; END $$;"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_dre_importacoes_empresa_competencia "
+            "ON dre_importacoes (empresa_id, competencia)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_dre_lancamentos_empresa_competencia_departamento "
+            "ON dre_lancamentos (empresa_id, competencia, departamento)"
+        ))
+
+
+def _migrate_dre_manual_overrides(table_names):
+    """Permite substituir valores importados sem remover sua fonte original."""
+    if "dre_lancamentos" not in table_names:
+        return
+
+    _run_column_migration(
+        "dre_lancamentos",
+        "substitui_importacao",
+        (
+            "ALTER TABLE dre_lancamentos "
+            "ADD COLUMN substitui_importacao BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+    )
+
+
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():
@@ -231,3 +338,5 @@ def initialize_database(app):
         _migrate_floaters()
         _migrate_ticket_branch(table_names)
         _migrate_usage_control(table_names)
+        _migrate_dre_company(table_names)
+        _migrate_dre_manual_overrides(table_names)

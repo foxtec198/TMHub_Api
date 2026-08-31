@@ -40,6 +40,7 @@ PERMISSION_CATALOG = [
     {"key": "avaliacao_experiencia_supervisor","label": "Avaliações de experiência - Supervisor","group": "Operação","actions": ["view", "edit"],},
     {"key": "controle_experiencia_rh","label": "Controle de período de experiência - RH","group": "Operação","actions": ["view", "edit"],},
     {"key": "controle_exames_periodicos", "label": "Controle de exames periódicos", "group": "Operação", "actions": ["view", "create", "edit"]},
+    {"key": "controle_dre", "label": "Controle DRE", "group": "Operação", "actions": ["view", "create", "edit"]},
 ]
 
 CATALOG_BY_KEY = {item["key"]: item for item in PERMISSION_CATALOG}
@@ -199,6 +200,7 @@ def request_permission(path, method):
         ("/dash/medidas-disciplinares","dashboard_medidas_disciplinares",{"GET": "view"},),
         ("/dash/experiencias", "controle_experiencia_rh", {"GET": "view"}),
         ("/exames-periodicos", "controle_exames_periodicos", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
+        ("/dre", "controle_dre", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
     ]
     for prefix, screen, actions in rules:
         if path == prefix or path.startswith(f"{prefix}/"):
