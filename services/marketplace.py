@@ -9,7 +9,6 @@ from models.marketplace import MarketplaceProduct, MarketplacePurchase
 from models.uso_tmhub import TMHubEdinhoLedger
 from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import is_admin
 from utils.safe_route import safe_route
 from utils.theme_access import DEFAULT_THEME
 
@@ -113,17 +112,8 @@ class MarketplaceService:
             "refunded_at": purchase.refunded_at.isoformat() if purchase.refunded_at else None,
         }
 
-    @staticmethod
-    def _guard(token_data):
-        if not is_admin(token_data):
-            return jsonify("O marketplace está disponível somente para administradores durante os testes."), 403
-        return None
-
     @safe_route
     def catalog(self, token_data):
-        denied = self._guard(token_data)
-        if denied:
-            return denied
         self._ensure_catalog()
         user = db.session.get(Users, token_data["id"])
         owned_ids = {item.produto_id for item in MarketplacePurchase.query.filter_by(usuario_id=user.id, status="concluida").all()}
@@ -141,9 +131,6 @@ class MarketplaceService:
 
     @safe_route
     def purchases(self, token_data):
-        denied = self._guard(token_data)
-        if denied:
-            return denied
         self._ensure_catalog()
         user = db.session.get(Users, token_data["id"])
         rows = MarketplacePurchase.query.filter_by(usuario_id=user.id).order_by(MarketplacePurchase.created_at.desc()).all()
@@ -203,9 +190,6 @@ class MarketplaceService:
 
     @safe_route
     def checkout(self, token_data):
-        denied = self._guard(token_data)
-        if denied:
-            return denied
         self._ensure_catalog()
         body = request.get_json(silent=True) or {}
         raw_ids = body.get("produto_ids")
@@ -253,9 +237,6 @@ class MarketplaceService:
 
     @safe_route
     def refund(self, token_data, purchase_id):
-        denied = self._guard(token_data)
-        if denied:
-            return denied
         user = Users.query.filter_by(id=token_data["id"]).with_for_update().first()
         purchase = MarketplacePurchase.query.filter_by(id=purchase_id, usuario_id=user.id).with_for_update().first()
         if not purchase:
@@ -317,16 +298,10 @@ class MarketplaceService:
         if not owned:
             return jsonify("Adquira esse item antes de equipá-lo."), 403
         if category == "tema":
-            denied = self._guard(token_data)
-            if denied:
-                return denied
             user.tema = product.codigo.removeprefix("tema_")
         elif category == "adorno":
             user.adorno_foto = product.codigo
         elif category == "timo_skin":
-            denied = self._guard(token_data)
-            if denied:
-                return denied
             user.timo_skin = product.codigo
         else:
             user.timo_cenario = product.codigo.removeprefix("timo_cenario_")
