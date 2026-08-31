@@ -85,6 +85,14 @@ def _migrate_marketplace(table_names):
         "adorno_foto",
         ("ALTER TABLE usuarios ADD COLUMN adorno_foto VARCHAR(80)",),
     )
+    _run_column_migration(
+        "usuarios",
+        "timo_skin",
+        (
+            "ALTER TABLE usuarios "
+            "ADD COLUMN timo_skin VARCHAR(80) NOT NULL DEFAULT 'default'",
+        ),
+    )
     if "marketplace_produtos" not in table_names or "marketplace_compras" not in table_names:
         return
 

@@ -35,6 +35,7 @@ class MarketplaceService:
         {"codigo": "adorno_aniversario", "nome": "Aniversário", "descricao": "Confetes e cores para deixar o seu dia em evidência.", "categoria": "adorno", "preco": 75},
         {"codigo": "adorno_orgulho", "nome": "Orgulho", "descricao": "Um aro multicolorido para personalizar a foto de perfil.", "categoria": "adorno", "preco": 80},
         {"codigo": "adorno_conquista", "nome": "Conquista", "descricao": "Estrelas douradas para celebrar metas e reconhecimentos.", "categoria": "adorno", "preco": 100},
+        {"codigo": "timo_gold", "nome": "Timo Gold Premium", "descricao": "Metal escovado, brilho champanhe e acabamento premium para o Timo.", "categoria": "timo_skin", "preco": 20000, "destaque": True},
     )
 
     @staticmethod
@@ -79,7 +80,9 @@ class MarketplaceService:
     def _is_equipped(product, user):
         if product.categoria == "tema":
             return product.codigo == f"tema_{user.tema or DEFAULT_THEME}"
-        return product.categoria == "adorno" and product.codigo == user.adorno_foto
+        if product.categoria == "adorno":
+            return product.codigo == user.adorno_foto
+        return product.categoria == "timo_skin" and product.codigo == (user.timo_skin or "default")
 
     @classmethod
     def _product(cls, product, user=None, owned_ids=None):
@@ -121,7 +124,11 @@ class MarketplaceService:
         return jsonify({
             "saldo_edinhos": self._balance(user.id),
             "produtos": [self._product(item, user, owned_ids) for item in products],
-            "equipados": {"tema": user.tema or DEFAULT_THEME, "adorno": user.adorno_foto},
+            "equipados": {
+                "tema": user.tema or DEFAULT_THEME,
+                "adorno": user.adorno_foto,
+                "timo_skin": user.timo_skin or "default",
+            },
         }), 200
 
     @safe_route
@@ -229,6 +236,8 @@ class MarketplaceService:
             user.tema = DEFAULT_THEME
         if purchase.produto.categoria == "adorno" and self._is_equipped(purchase.produto, user):
             user.adorno_foto = None
+        if purchase.produto.categoria == "timo_skin" and self._is_equipped(purchase.produto, user):
+            user.timo_skin = "default"
         if purchase.preco_edinhos:
             db.session.add(TMHubEdinhoLedger(usuario_id=user.id, tipo="marketplace_reembolso", quantidade=purchase.preco_edinhos, descricao=f"Reembolso: {purchase.produto.nome} (compra {purchase.id})"))
         db.session.commit()
@@ -238,7 +247,7 @@ class MarketplaceService:
     def equip(self, token_data):
         body = request.get_json(silent=True) or {}
         category = str(body.get("categoria") or "").lower()
-        if category not in {"tema", "adorno"}:
+        if category not in {"tema", "adorno", "timo_skin"}:
             return jsonify("Selecione uma categoria de personalização válida."), 400
         user = Users.query.filter_by(id=token_data["id"]).with_for_update().first()
         product_id = body.get("produto_id")
@@ -247,7 +256,11 @@ class MarketplaceService:
         if product_id is None and category == "adorno":
             user.adorno_foto = None
             db.session.commit()
-            return jsonify({"tema": user.tema or DEFAULT_THEME, "adorno": None}), 200
+            return jsonify({"tema": user.tema or DEFAULT_THEME, "adorno": None, "timo_skin": user.timo_skin or "default"}), 200
+        if product_id is None and category == "timo_skin":
+            user.timo_skin = "default"
+            db.session.commit()
+            return jsonify({"tema": user.tema or DEFAULT_THEME, "adorno": user.adorno_foto, "timo_skin": "default"}), 200
         try:
             product_id = int(product_id)
         except (TypeError, ValueError):
@@ -263,7 +276,16 @@ class MarketplaceService:
             if denied:
                 return denied
             user.tema = product.codigo.removeprefix("tema_")
-        else:
+        elif category == "adorno":
             user.adorno_foto = product.codigo
+        else:
+            denied = self._guard(token_data)
+            if denied:
+                return denied
+            user.timo_skin = product.codigo
         db.session.commit()
-        return jsonify({"tema": user.tema or DEFAULT_THEME, "adorno": user.adorno_foto}), 200
+        return jsonify({
+            "tema": user.tema or DEFAULT_THEME,
+            "adorno": user.adorno_foto,
+            "timo_skin": user.timo_skin or "default",
+        }), 200

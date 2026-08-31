@@ -79,6 +79,7 @@ class AuthService:
             "particulas_ativas": bool(user.particulas_ativas),
             "temas_disponiveis": available_themes_for(user),
             "adorno_foto": user.adorno_foto,
+            "timo_skin": user.timo_skin or "default",
             "gerencia_faltas": bool(user.gerencia_faltas),
             "permissions": serialize_permissions(user),
             "last_login": last_login,
