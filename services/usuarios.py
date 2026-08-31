@@ -774,7 +774,15 @@ class UserServices:
             user.token_version = int(user.token_version or 0) + 1
             user.senha_alterada_em = dt.now()
 
-        if not any(value is not None for value in (nome, foto, tema, modo_tema, nova_senha)) and not has_timo_update and not has_particles_update:
+        has_profile_update = any(value is not None for value in (
+            nome,
+            foto,
+            tema,
+            modo_tema,
+            nova_senha,
+            timo_cenario,
+        ))
+        if not has_profile_update and not has_timo_update and not has_timo_home_update and not has_particles_update:
             return jsonify("Nenhuma alteração informada."), 400
 
         refresh_user_requirements(user)
