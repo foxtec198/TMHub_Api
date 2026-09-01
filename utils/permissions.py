@@ -199,6 +199,7 @@ def request_permission(path, method):
         ("/estrutura", "estrutura", {"GET": "view", "POST": "create", "PATCH": "edit", "DELETE": "edit"}),
         ("/dash/pcd", "dashboard_pcd", {"GET": "view"}),
         ("/dash/ql", "dashboard_ql", {"GET": "view"}),
+        ("/dash/reservas", "reservas", {"GET": "view"}),
         ("/dash/rescisoes", "dashboard_rescisoes", {"GET": "view"}),
         ("/dash/medidas-disciplinares","dashboard_medidas_disciplinares",{"GET": "view"},),
         ("/dash/experiencias", "controle_experiencia_rh", {"GET": "view"}),
