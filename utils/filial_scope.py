@@ -137,10 +137,16 @@ def _apply_structural_scope(center_ids):
     query = db.session.query(CostCenters.id)
     if center_ids is not None:
         query = query.filter(CostCenters.id.in_(center_ids))
+
+    structural_filters = []
     if department_ids is not None:
-        query = query.filter(CostCenters.departamento.in_(department_ids))
+        structural_filters.append(CostCenters.departamento.in_(department_ids))
     if requested_center_ids is not None:
-        query = query.filter(CostCenters.id.in_(requested_center_ids))
+        structural_filters.append(CostCenters.id.in_(requested_center_ids))
+
+    # Departamentos completos e contratos individuais formam um único recorte
+    # aditivo. Ex.: DPTO. 87 + contrato X do DPTO. 301.
+    query = query.filter(or_(*structural_filters))
     return {row[0] for row in query.all()}
 
 
@@ -173,22 +179,22 @@ def _cost_center_ids_for_branches(branch_ids):
         .all()
     )
 
-    explicit_branch_ids = {row[0] for row in direct_rows}
-    legacy_branch_ids = valid_branch_ids - explicit_branch_ids
-
     department_rows = (
         db.session.query(CostCenters.id)
         .join(
             filial_departamentos,
             filial_departamentos.c.departamento == CostCenters.departamento,
         )
-        .filter(filial_departamentos.c.filial_id.in_(legacy_branch_ids))
+        .filter(filial_departamentos.c.filial_id.in_(valid_branch_ids))
         .distinct()
         .all()
-        if legacy_branch_ids
+        if valid_branch_ids
         else []
     )
 
+    # A filial pode combinar departamentos completos com contratos adicionais
+    # de outros departamentos. Portanto, os dois vínculos são uma união; a
+    # existência de um contrato direto nunca deve anular os departamentos.
     return {row[1] for row in direct_rows} | {row[0] for row in department_rows}
 
 

@@ -1,5 +1,6 @@
 # Regras de negócio de assistente Timo.
 # Biblioteca padrão.
+import logging
 import re
 import unicodedata
 from datetime import datetime, time, timedelta
@@ -37,6 +38,7 @@ from utils.safe_route import safe_route
 
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
+logger = logging.getLogger(__name__)
 
 
 class SafeTemplateValues(dict):
@@ -221,6 +223,15 @@ class TimoCommandService:
             db.session.add(item)
         db.session.commit()
         cls._emit_learning_update("capturado", item)
+
+    @staticmethod
+    def _should_capture_learning(token_data):
+        """Aceita texto autenticado da interface ou voz com wake word validada."""
+        channel = str(request.headers.get("X-Timo-Channel") or "").strip().lower()
+        is_voice_agent = (token_data or {}).get("typ") == "timo_voice_agent"
+        is_web_text = channel == "web-text" and not is_voice_agent
+        wake_verified = request.headers.get("X-Timo-Wake-Verified") == "1"
+        return is_web_text or wake_verified
 
     @classmethod
     def _trained_learning_intent_for_command(cls, command):
@@ -570,15 +581,15 @@ class TimoCommandService:
             else prediction["confidence"]
         )
         definition = self.INTENT_CATALOG.get(intent)
-        wake_verified = request.headers.get("X-Timo-Wake-Verified") == "1"
         if not custom_configuration and (confidence < self.MIN_CONFIDENCE or not definition):
             try:
-                # Somente tentativas de comando que passaram pela wake word no
-                # agente local entram na fila de aprendizado.
-                if wake_verified:
+                # Texto digitado na interface já é uma tentativa explícita de
+                # comando. No agente local, a wake word continua obrigatória.
+                if self._should_capture_learning(token_data):
                     self._capture_learning_candidate(command, prediction or {}, token_data)
             except Exception:
                 db.session.rollback()
+                logger.exception("Falha ao registrar frase não reconhecida do Timo")
             return jsonify({
                 "success": False,
                 "understood": False,

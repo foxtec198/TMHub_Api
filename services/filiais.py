@@ -16,20 +16,24 @@ class BranchService:
     def _serialize(branch, detailed=False, departments=None):
         payload = {"id": branch.id, "nome": branch.nome, "ativa": branch.ativa}
         if detailed:
+            department_values = sorted(
+                departments.get(branch.id, []) if departments is not None else (
+                    row[0]
+                    for row in db.session.query(filial_departamentos.c.departamento)
+                    .filter(filial_departamentos.c.filial_id == branch.id)
+                    .all()
+                )
+            )
+            department_set = set(department_values)
             payload.update(
                 {
                     "usuario_ids": sorted(user.id for user in branch.usuarios),
                     "centro_custo_ids": sorted(
-                        center.id for center in branch.centros_custo
+                        center.id
+                        for center in branch.centros_custo
+                        if center.departamento not in department_set
                     ),
-                    "departamentos": sorted(
-                        departments.get(branch.id, []) if departments is not None else (
-                            row[0]
-                            for row in db.session.query(filial_departamentos.c.departamento)
-                            .filter(filial_departamentos.c.filial_id == branch.id)
-                            .all()
-                        )
-                    ),
+                    "departamentos": department_values,
                 }
             )
         return payload
@@ -116,12 +120,31 @@ class BranchService:
             branch.usuarios = users
         if "centro_custo_ids" in body:
             ids = {int(value) for value in (body.get("centro_custo_ids") or [])}
+            try:
+                selected_departments = (
+                    {int(value) for value in (body.get("departamentos") or [])}
+                    if "departamentos" in body
+                    else {
+                        row[0]
+                        for row in db.session.query(filial_departamentos.c.departamento)
+                        .filter(filial_departamentos.c.filial_id == branch.id)
+                        .all()
+                    }
+                )
+            except (TypeError, ValueError):
+                return "Informe departamentos válidos."
             centers = (
                 CostCenters.query.filter(CostCenters.id.in_(ids)).all() if ids else []
             )
             if len(centers) != len(ids):
                 return "Um ou mais contratos não foram encontrados."
-            branch.centros_custo = centers
+            # Contratos pertencentes a um departamento inteiro já selecionado
+            # são redundantes. Mantemos na relação apenas as exceções adicionais.
+            branch.centros_custo = [
+                center
+                for center in centers
+                if center.departamento not in selected_departments
+            ]
         if "departamentos" in body:
             try:
                 departments = {
