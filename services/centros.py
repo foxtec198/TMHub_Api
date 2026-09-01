@@ -79,6 +79,13 @@ class CostsCenterService:
             return (jsonify(self._serialize_center(center)), 200) if center else (jsonify("Centro de custo não encontrado."), 404)
 
         query = apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data).join(Company)
+        requested_ids = {
+            int(value)
+            for value in str(rq.args.get("ids") or "").split(",")
+            if value.strip().isdigit()
+        }
+        if requested_ids:
+            query = query.filter(CostCenters.id.in_(requested_ids))
         search = " ".join(str(rq.args.get("search") or "").split())
         if search:
             pattern = f"%{search}%"
@@ -96,6 +103,9 @@ class CostsCenterService:
             return jsonify({"items": [self._serialize_center(item) for item in pagination.items],
                             "page": pagination.page, "per_page": pagination.per_page,
                             "total": pagination.total, "pages": pagination.pages}), 200
+        limit = rq.args.get("limit", type=int)
+        if limit is not None:
+            query = query.limit(min(max(limit, 1), 50))
         return jsonify([self._serialize_center(item) for item in query.all()]), 200
 
     @safe_route

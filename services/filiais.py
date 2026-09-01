@@ -25,6 +25,13 @@ class BranchService:
                 )
             )
             department_set = set(department_values)
+            department_center_ids = {
+                row[0]
+                for row in db.session.query(CostCenters.id)
+                .filter(CostCenters.departamento.in_(department_set))
+                .all()
+            } if department_set else set()
+            direct_center_ids = {center.id for center in branch.centros_custo}
             payload.update(
                 {
                     "usuario_ids": sorted(user.id for user in branch.usuarios),
@@ -33,6 +40,23 @@ class BranchService:
                         for center in branch.centros_custo
                         if center.departamento not in department_set
                     ),
+                    "centros_custo": [
+                        {
+                            "id": center.id,
+                            "numero": center.centro_id,
+                            "local": center.local,
+                            "departamento": center.departamento,
+                        }
+                        for center in sorted(
+                            (
+                                item
+                                for item in branch.centros_custo
+                                if item.departamento not in department_set
+                            ),
+                            key=lambda item: (item.departamento or 0, item.local or ""),
+                        )
+                    ],
+                    "centros_custo_total": len(department_center_ids | direct_center_ids),
                     "departamentos": department_values,
                 }
             )
@@ -183,23 +207,21 @@ class BranchService:
     def options(self, token_data):
         if not is_admin(token_data):
             return jsonify("Apenas administradores podem configurar filiais."), 403
-        centers = db.session.query(
-            CostCenters.id, CostCenters.local, CostCenters.departamento
-        ).order_by(CostCenters.departamento, CostCenters.local).all()
+        departments = [
+            row[0]
+            for row in db.session.query(CostCenters.departamento)
+            .filter(CostCenters.departamento.isnot(None))
+            .distinct()
+            .order_by(CostCenters.departamento)
+            .all()
+        ]
         users = db.session.query(
             Users.id, Users.nome, Users.role
         ).order_by(Users.nome).all()
         return (
             jsonify(
                 {
-                    "centros_custo": [
-                        {
-                            "id": item.id,
-                            "local": item.local,
-                            "departamento": item.departamento,
-                        }
-                        for item in centers
-                    ],
+                    "departamentos": departments,
                     "usuarios": [
                         {"id": item.id, "nome": item.nome, "role": item.role}
                         for item in users

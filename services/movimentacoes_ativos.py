@@ -175,12 +175,6 @@ class StructureAssetMovementService:
                 "origem": self._center_label(center_map.get(item.centro_custo_id)),
                 "local": getattr(location_map.get(item.local_id), "nome", None),
             } for item in assets],
-            "centros_custo": [{
-                "id": item.id,
-                "departamento": item.departamento,
-                "local": item.local,
-                "label": f"{item.id} - {item.local}",
-            } for item in centers],
             "locais": [{
                 "id": item.id,
                 "centro_custo_id": item.centro_custo_id,

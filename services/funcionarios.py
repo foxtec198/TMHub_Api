@@ -87,11 +87,9 @@ class EmployeesService:
         def options(values, key, label):
             pairs = {(row._mapping[key], row._mapping[label]) for row in values if row._mapping[key] is not None}
             return [{"value": value, "label": label} for value, label in sorted(pairs, key=lambda item: str(item[1]))]
-        centers = sorted({(row.centro_id, row.centro_numero, row.centro_local) for row in rows if row.centro_id}, key=lambda item: str(item[2]))
         return jsonify({
             "empresas": options(rows, "empresa_id", "empresa_nome"),
             "departamentos": [{"value": value, "label": f"DPTO. {value}"} for value in sorted({row.departamento for row in rows if row.departamento is not None})],
-            "centros": [{"value": center_id, "label": f"{number or '—'} - {local or 'Sem local'}"} for center_id, number, local in centers],
             "cargos": options(rows, "cargo_id", "cargo"),
             "situacoes": options(rows, "situacao_id", "situacao"),
         }), 200
