@@ -13,6 +13,7 @@ from sqlalchemy import String, cast, or_, text
 from models.centros_de_custo import CostCenters, DepartmentConfiguration
 from models.colaboradores import Employees
 from models.empresas import Company
+from models.usuarios import Users
 from services.cost_center_spreadsheet_parser import parse_cost_center_spreadsheet
 from utils.db import db
 from utils.filial_scope import allowed_cost_center_ids, apply_cost_center_scope, can_access_cost_center, is_admin, is_matrix_user
@@ -39,12 +40,35 @@ def _update_import(job_id, **values):
 class CostsCenterService:
     @staticmethod
     def _serialize_center(center):
+        supervisors = list(center.supervisores_usuarios or [])
+        if not supervisors and center.supervisor_usuario_id:
+            legacy_responsible = db.session.get(Users, center.supervisor_usuario_id)
+            if legacy_responsible:
+                supervisors = [legacy_responsible]
         return {
             "id": center.id, "numero": center.centro_id, "nome": center.nome,
             "local": center.local, "departamento": center.departamento,
             "capacidade_pessoas": center.capacidade_pessoas, "empresa_id": center.empresa_id,
             "empresa_nome": center.empresa.nome if center.empresa else None,
+            "supervisor_usuario_ids": [item.id for item in supervisors],
+            "supervisores": [{"id": item.id, "nome": item.nome} for item in supervisors],
         }
+
+    @staticmethod
+    def _supervisors(values):
+        if not isinstance(values, list):
+            raise ValueError("Informe os supervisores em uma lista.")
+        try:
+            ids = list(dict.fromkeys(int(value) for value in values))
+        except (TypeError, ValueError):
+            raise ValueError("Informe supervisores válidos.") from None
+        supervisors = (Users.query.filter(
+            Users.id.in_(ids),
+            db.func.upper(db.func.trim(Users.role)) == "SUPERVISOR",
+        ).order_by(Users.nome).all()) if ids else []
+        if len(supervisors) != len(ids):
+            raise ValueError("Um ou mais usuários não possuem a role SUPERVISOR.")
+        return supervisors
 
     @staticmethod
     def _company(value):
@@ -68,6 +92,15 @@ class CostsCenterService:
             ))
         return jsonify([{"id": item.id, "nome": item.nome, "ativa": bool(item.ativa)}
                         for item in query.order_by(Company.ativa.desc(), Company.nome).all()]), 200
+
+    @safe_route
+    def supervisors(self, token_data):
+        if not is_admin(token_data):
+            return jsonify("Apenas administradores podem listar supervisores."), 403
+        rows = Users.query.filter(
+            db.func.upper(db.func.trim(Users.role)) == "SUPERVISOR"
+        ).order_by(Users.nome).all()
+        return jsonify([{"id": item.id, "nome": item.nome} for item in rows]), 200
 
     @safe_route
     def read(self, token_data):
@@ -116,6 +149,7 @@ class CostsCenterService:
         try:
             number = int(body.get("numero")); company = self._company(body.get("empresa_id"))
             capacity = None if body.get("capacidade_pessoas") in (None, "") else int(body["capacidade_pessoas"])
+            supervisors = self._supervisors(body.get("supervisor_usuario_ids", []))
         except LookupError as error: return jsonify(str(error)), 404
         except (TypeError, ValueError): return jsonify("Informe empresa, número e capacidade válidos."), 400
         if not name or number <= 0 or capacity is not None and capacity < 0:
@@ -123,6 +157,8 @@ class CostsCenterService:
         if CostCenters.query.filter_by(empresa_id=company.id, centro_id=number).first():
             return jsonify("Já existe um centro com este número para a empresa selecionada."), 409
         center = CostCenters(empresa_id=company.id, centro_id=number, nome=name, local=name, capacidade_pessoas=capacity)
+        center.supervisores_usuarios = supervisors
+        center.supervisor_usuario_id = supervisors[0].id if supervisors else None
         db.session.add(center); db.session.commit(); socketio.emit("data_changed", {"channel": "centros_custo", "resource": "centros_custo", "action": "created"})
         return jsonify({"message": "Centro de custo cadastrado com sucesso.", "centro": self._serialize_center(center)}), 201
 
@@ -153,6 +189,14 @@ class CostsCenterService:
                 capacity = None if body["capacidade_pessoas"] in (None, "") else int(body["capacidade_pessoas"])
                 if capacity is not None and capacity < 0: raise ValueError
                 center.capacidade_pessoas = capacity
+            if "supervisor_usuario_ids" in body:
+                supervisors = self._supervisors(body["supervisor_usuario_ids"])
+                center.supervisores_usuarios = supervisors
+                # Preserva um responsável principal para consumidores legados.
+                center.supervisor_usuario_id = supervisors[0].id if supervisors else None
+                if not supervisors:
+                    # Evita que o backfill legado reative um vínculo removido.
+                    center.supervisor_id = None
             db.session.commit()
         except LookupError as error: db.session.rollback(); return jsonify(str(error)), 404
         except (TypeError, ValueError): db.session.rollback(); return jsonify("Confira os dados do centro de custo."), 400
