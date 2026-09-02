@@ -4,7 +4,9 @@ from base64 import b64decode, urlsafe_b64encode
 from datetime import datetime as dt, timedelta, timezone
 from hashlib import sha256
 from os import getenv
+from re import sub
 from secrets import token_urlsafe
+from unicodedata import normalize
 from urllib.parse import urlencode
 
 import jwt
@@ -100,8 +102,11 @@ def _public_jwk():
 
 
 def _username(user):
-    # Nao colide com contas locais/administrativas preexistentes no Jellyfin.
-    return f"tmhub-{user.id}"
+    # O vinculo continua usando o sub (ID imutavel), nunca este nome legivel.
+    name = normalize("NFKD", user.nome or "").encode("ascii", "ignore").decode().lower()
+    parts = [sub(r"[^a-z0-9]", "", part) for part in name.split()]
+    parts = [part for part in parts if part]
+    return ".".join(parts[:2]) or f"tmhub-{user.id}"
 
 
 def _groups(user):
