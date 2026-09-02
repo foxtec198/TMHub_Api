@@ -3,6 +3,14 @@
 from utils.db import db
 from models.base_model import BaseModel
 from models.empresas import Company
+from models.usuarios import Users
+
+
+centro_custo_supervisores = db.Table(
+    "centro_custo_supervisores",
+    db.Column("centro_custo_id", db.Integer, db.ForeignKey("centro_de_custo.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("usuario_id", db.Integer, db.ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True, index=True),
+)
 
 # Define a entidade CostCenters persistida no banco de dados.
 class CostCenters(BaseModel):
@@ -40,6 +48,9 @@ class CostCenters(BaseModel):
     # Import explícito evita que o mapper dependa da ordem em que os módulos
     # são carregados pelo Gunicorn.
     empresa = db.relationship(Company)
+    supervisores_usuarios = db.relationship(
+        Users, secondary=centro_custo_supervisores, order_by=Users.nome
+    )
 
     __table_args__ = (
         db.UniqueConstraint("empresa_id", "centro_id", name="uq_centro_empresa_codigo"),

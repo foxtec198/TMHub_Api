@@ -13,6 +13,11 @@ def companies():
     return service.companies()
 
 
+@center_bp.get("/supervisores")
+def supervisors():
+    return service.supervisors()
+
+
 @center_bp.post("/importar")
 def import_centers():
     return service.import_centers()
