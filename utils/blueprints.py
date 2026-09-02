@@ -31,6 +31,7 @@ from routes.importacao_colaboradores import collaborator_import_bp
 from routes.updates import updates_bp
 from routes.dashboard_pcd import dashboard_pcd_bp
 from routes.dashboard_ql import dashboard_ql_bp
+from routes.dashboard_reservas import dashboard_reservas_bp
 from routes.schedular import schedular_bp
 from routes.dashboard_rescisoes import termination_dashboard_bp
 from routes.tm_ops import tm_ops_bp
@@ -71,6 +72,7 @@ blueprints = {
     termination_dashboard_bp: "/dash/rescisoes",
     disciplinary_measures_dashboard_bp: "/dash/medidas-disciplinares",
     experience_dashboard_bp: "/dash/experiencias",
+    dashboard_reservas_bp: "/dash/reservas",
 
     #Estoque
     categorias_bp: "/estoque/categorias",
