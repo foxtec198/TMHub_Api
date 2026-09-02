@@ -11,8 +11,10 @@ from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.empresas import Company
 from models.situacoes import Situations
+from models.usuarios import Users
 from utils.db import db
-from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope, is_admin
+from utils.filial_scope import apply_active_department_scope, apply_cost_center_scope, is_admin, supervisor_cost_center_ids
+from utils.permissions import has_permission
 from utils.safe_route import safe_route
 from utils.socket import socketio
 
@@ -71,6 +73,23 @@ class EmployeesService:
         include_cpf = str(rq.args.get("include_cpf") or "").lower() in {"1", "true"} and is_admin(token_data)
         query = apply_active_department_scope(self._query(include_cpf=include_cpf), Employees.centro_id)
         query = apply_cost_center_scope(query, Employees.centro_id, token_data)
+        if str(rq.args.get("contexto") or "").lower() == "requisicao":
+            if not has_permission(token_data, "reposicoes", "create"):
+                return jsonify("Você não possui permissão para consultar colaboradores da requisição."), 403
+            user = db.session.get(Users, token_data.get("id"))
+            requested_supervisor_id = rq.args.get("supervisor_usuario_id", type=int)
+            if is_admin(token_data):
+                supervisor_id = requested_supervisor_id
+            else:
+                supervisor_id = user.id if user and str(user.role or "").upper() == "SUPERVISOR" else None
+                if requested_supervisor_id not in (None, supervisor_id):
+                    return jsonify("O supervisor informado não corresponde ao usuário autenticado."), 403
+            if not supervisor_id:
+                return jsonify("Selecione um supervisor responsável."), 400
+            supervisor = db.session.get(Users, supervisor_id)
+            if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
+                return jsonify("Supervisor não encontrado."), 404
+            query = query.filter(Employees.centro_id.in_(supervisor_cost_center_ids(supervisor_id)))
         query = self._apply_filters(query).order_by(Employees.nome.asc(), Employees.id.asc())
         if str(rq.args.get("paginado") or "").lower() in {"1", "true"}:
             page = max(rq.args.get("page", 1, type=int), 1); per_page = min(max(rq.args.get("per_page", 25, type=int), 1), 100)

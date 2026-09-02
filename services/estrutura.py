@@ -49,15 +49,6 @@ class StructureService:
             .all()
             if center_ids else []
         )
-        supervisor_user_ids = {
-            center.supervisor_usuario_id
-            for center in centers
-            if center.supervisor_usuario_id
-        }
-        supervisor_users = {
-            row.id: row.nome
-            for row in Users.query.filter(Users.id.in_(supervisor_user_ids)).all()
-        } if supervisor_user_ids else {}
         locations_by_center = {}
         assets_by_center = {}
         for item in locations:
@@ -78,7 +69,9 @@ class StructureService:
                 # backfill não encontrou usuario_id, o contrato fica sem
                 # supervisor deliberadamente.
                 "supervisor_usuario_id": center.supervisor_usuario_id,
-                "supervisor": supervisor_users.get(center.supervisor_usuario_id) or "SEM SUPERVISOR",
+                "supervisor_usuario_ids": [item.id for item in center.supervisores_usuarios],
+                "supervisores": [{"id": item.id, "nome": item.nome} for item in center.supervisores_usuarios],
+                "supervisor": ", ".join(item.nome for item in center.supervisores_usuarios) or "SEM SUPERVISOR",
                 "locais": locations_by_center.get(center.id, []),
                 "estrutura": self._location_tree(locations_by_center.get(center.id, [])),
                 "ativos": assets_by_center.get(center.id, []),
@@ -119,35 +112,46 @@ class StructureService:
             return jsonify("Você não possui acesso à filial deste contrato."), 403
 
         body = request.get_json(silent=True) or {}
+        values = body.get("supervisor_usuario_ids")
+        if values is None and body.get("supervisor_usuario_id") not in (None, ""):
+            # Compatibilidade temporária com clientes anteriores ao multivínculo.
+            values = [body.get("supervisor_usuario_id")]
+        if not isinstance(values, list) or not values:
+            return jsonify("Informe ao menos um supervisor."), 400
         try:
-            supervisor_user_id = int(body.get("supervisor_usuario_id"))
+            supervisor_user_ids = list(dict.fromkeys(int(value) for value in values))
         except (TypeError, ValueError):
-            return jsonify("Informe um supervisor válido."), 400
+            return jsonify("Informe supervisores válidos."), 400
+        supervisors = Users.query.filter(
+            Users.id.in_(supervisor_user_ids),
+            db.func.upper(db.func.trim(Users.role)) == "SUPERVISOR",
+        ).order_by(Users.nome).all()
+        if len(supervisors) != len(supervisor_user_ids):
+            return jsonify("Um ou mais supervisores não foram encontrados."), 404
+        if any(not can_access_supervisor_user(token_data, item.id, center.id) for item in supervisors):
+            return jsonify("Um ou mais supervisores não pertencem à filial deste contrato."), 403
 
-        supervisor = db.session.get(Users, supervisor_user_id)
-        if not supervisor or str(supervisor.role or "").upper() != "SUPERVISOR":
-            return jsonify("Supervisor não encontrado."), 404
-        if not can_access_supervisor_user(token_data, supervisor.id, center.id):
-            return jsonify("Você não possui acesso à filial deste supervisor."), 403
-
-        previous_supervisor_user_id = center.supervisor_usuario_id
-        center.supervisor_usuario_id = supervisor.id
+        previous_supervisor_user_ids = [item.id for item in center.supervisores_usuarios]
+        center.supervisores_usuarios = supervisors
+        center.supervisor_usuario_id = supervisors[0].id
         db.session.commit()
         current_app.logger.info(
             "Supervisor do contrato alterado",
             extra={
                 "centro_custo_id": center.id,
-                "supervisor_usuario_anterior_id": previous_supervisor_user_id,
-                "supervisor_usuario_novo_id": supervisor.id,
+                "supervisores_usuarios_anteriores_ids": previous_supervisor_user_ids,
+                "supervisores_usuarios_novos_ids": supervisor_user_ids,
                 "alterado_por_usuario_id": token_data.get("id"),
             },
         )
         return jsonify({
-            "message": "Supervisor alterado com sucesso.",
+            "message": "Supervisores alterados com sucesso.",
             "contrato": {
                 "id": center.id,
-                "supervisor_usuario_id": supervisor.id,
-                "supervisor": supervisor.nome,
+                "supervisor_usuario_id": supervisors[0].id,
+                "supervisor_usuario_ids": [item.id for item in supervisors],
+                "supervisores": [{"id": item.id, "nome": item.nome} for item in supervisors],
+                "supervisor": ", ".join(item.nome for item in supervisors),
             },
         })
 

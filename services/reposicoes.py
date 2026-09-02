@@ -33,6 +33,7 @@ from utils.filial_scope import (
     apply_cost_center_scope,
     can_access_cost_center,
     can_access_supervisor_user,
+    is_supervisor_responsible_for_center,
     is_admin,
     supervisor_users_query,
 )
@@ -769,6 +770,10 @@ class RequestService:
         absent_employee = db.session.get(Employees, ausente_id)
         if not absent_employee:
             return jsonify("Colaborador ausente não encontrado."), 404
+        # Valida o vínculo real do ausente antes de aceitar um centro enviado
+        # pelo cliente; trocar centro_id não pode contornar o escopo.
+        if not can_access_cost_center(token_data, absent_employee.centro_id) or not is_supervisor_responsible_for_center(supervisor_usuario_id, absent_employee.centro_id):
+            return jsonify("Este supervisor não é responsável pelo centro de custo do colaborador."), 403
         duplicate_message = AbsenceControlService.duplicate_request_message(
             absent_employee.id,
             created_at,
@@ -791,6 +796,8 @@ class RequestService:
             return jsonify("Você não possui acesso à filial deste colaborador."), 403
         if not can_access_supervisor_user(token_data, supervisor_usuario_id, centro_id):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
+        if not is_supervisor_responsible_for_center(supervisor_usuario_id, centro_id):
+            return jsonify("Este supervisor não é responsável pelo centro de custo do colaborador."), 403
         if not is_admin(token_data):
             if token_data.get("id") != supervisor_usuario_id:
                 return jsonify("A requisição deve ser registrada pelo supervisor autenticado."), 403
@@ -1123,6 +1130,7 @@ class RequestService:
             row_errors = []
             if supervisor_usuario_id not in supervisor_ids: row_errors.append("supervisor_usuario_id não encontrado")
             elif not can_access_supervisor_user(token_data, supervisor_usuario_id, centro_id): row_errors.append("supervisor_usuario_id não está disponível para este centro")
+            elif not is_supervisor_responsible_for_center(supervisor_usuario_id, centro_id): row_errors.append("supervisor_usuario_id não é responsável por este centro")
             if reserva_id != 0 and reserva_id not in reservation_ids: row_errors.append("reserva_id não pertence às reservas técnicas")
             if centro_id not in center_ids: row_errors.append("centro_id não encontrado")
             if ausente_id not in employee_ids: row_errors.append("ausente_id não encontrado")
@@ -1444,6 +1452,13 @@ class HistoryService:
             )
         ):
             return jsonify("Você não possui acesso à filial deste supervisor."), 403
+        if (
+            "supervisor_usuario_id" in bd
+            and not is_supervisor_responsible_for_center(
+                bd.get("supervisor_usuario_id"), target_center
+            )
+        ):
+            return jsonify("Este supervisor não é responsável pelo centro de custo informado."), 403
 
         req = Requisicao.query.filter(Requisicao.id == hist.requisicao_id).first()
         if not req:
