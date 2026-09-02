@@ -44,6 +44,7 @@ from routes.avaliacoes_experiencia import experience_evaluations_bp
 from routes.exames_periodicos import periodic_exams_bp
 from routes.uso_tmhub import usage_bp
 from routes.marketplace import marketplace_bp
+from routes.oidc import jellyfin_bp, oidc_bp
 
 blueprints = {
     rpa_bp: "/rpa",
@@ -106,4 +107,6 @@ blueprints = {
     periodic_exams_bp: "/exames-periodicos",
     usage_bp: "/uso",
     marketplace_bp: "/marketplace",
+    jellyfin_bp: "/jellyfin",
+    oidc_bp: "/oidc",
 }

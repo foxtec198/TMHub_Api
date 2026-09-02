@@ -17,7 +17,7 @@ ONBOARDING_PATHS = {
     "/usuarios/onboarding/senha-padrao/ignorar",
 }
 PUBLIC_PATHS = {"/", "/login", "/docs", "/openapi.json"}
-PUBLIC_PREFIXES = ("/updates/",)
+PUBLIC_PREFIXES = ("/updates/", "/oidc/")
 AGENT_ALLOWED_PATHS = {"/timo/process", "/timo/agentes/tema"}
 
 
