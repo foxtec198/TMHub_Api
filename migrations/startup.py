@@ -426,6 +426,19 @@ def _migrate_supervisor_users(table_names):
             pass
 
 
+def _migrate_cost_center_supervisors(table_names):
+    """Copia o responsável único atual para o novo vínculo muitos-para-muitos."""
+    if not {"centro_de_custo", "centro_custo_supervisores"}.issubset(table_names):
+        return
+    with db.engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO centro_custo_supervisores (centro_custo_id, usuario_id) "
+            "SELECT id, supervisor_usuario_id FROM centro_de_custo "
+            "WHERE supervisor_usuario_id IS NOT NULL "
+            "ON CONFLICT (centro_custo_id, usuario_id) DO NOTHING"
+        ))
+
+
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():
@@ -442,3 +455,5 @@ def initialize_database(app):
         _migrate_ticket_branch(table_names)
         _migrate_usage_control(table_names)
         _migrate_supervisor_users(table_names)
+        table_names = set(inspect(db.engine).get_table_names())
+        _migrate_cost_center_supervisors(table_names)

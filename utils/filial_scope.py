@@ -5,7 +5,7 @@ import json
 from flask import g, has_request_context, request
 from sqlalchemy import func, or_
 # Módulos internos da aplicação.
-from models.centros_de_custo import CostCenters, DepartmentConfiguration
+from models.centros_de_custo import CostCenters, DepartmentConfiguration, centro_custo_supervisores
 from models.filiais import Branch, filial_centros_custo, filial_departamentos, filial_usuarios
 from models.usuarios import Users
 from utils.db import db
@@ -323,7 +323,11 @@ def supervisor_users_query(token_data, center_id=None):
             return query.filter(db.false())
 
     if center_id is not None:
-        center_branch_ids = _branch_ids_for_cost_centers({int(center_id)})
+        try:
+            center_id = int(center_id)
+        except (TypeError, ValueError):
+            return query.filter(db.false())
+        center_branch_ids = _branch_ids_for_cost_centers({center_id})
         if not center_branch_ids:
             return query.filter(db.false())
         required_branch_ids = (
@@ -341,6 +345,27 @@ def supervisor_users_query(token_data, center_id=None):
         ))
 
     return query
+
+
+def supervisor_cost_center_ids(user_id):
+    """Centros atribuídos diretamente a um usuário com role SUPERVISOR."""
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return set()
+    return {
+        row[0]
+        for row in db.session.query(centro_custo_supervisores.c.centro_custo_id)
+        .filter(centro_custo_supervisores.c.usuario_id == user_id)
+        .all()
+    }
+
+
+def is_supervisor_responsible_for_center(user_id, center_id):
+    try:
+        return int(center_id) in supervisor_cost_center_ids(user_id)
+    except (TypeError, ValueError):
+        return False
 
 
 def _branch_ids_for_cost_centers(center_ids):
