@@ -4,6 +4,7 @@ from datetime import date, datetime as dt, timedelta
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
+import re
 from unicodedata import normalize
 
 # Dependências externas.
@@ -17,6 +18,7 @@ from sqlalchemy import String, cast, func, or_
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.controle_faltas import AbsenceControl
+from models.empresas import Company
 from models.ferias import VacationLeave, VacationPeriod
 from models.supervisores import Supervisors
 from models.usuarios import Users
@@ -101,6 +103,32 @@ def _is_vacation_continuation(row):
         _employee_code(_cell(row, 0)) is None
         and _cell(row, 10) not in (None, "")
         and _cell(row, 13) not in (None, "")
+    )
+
+
+def _report_company(rows, header_index):
+    """Lê o código e a razão social no cabeçalho da relação oficial de férias."""
+    for row in rows[:header_index]:
+        if _normalize(_cell(row, 0)).rstrip(":") != "EMPRESA":
+            continue
+        match = re.match(r"\s*(\d+)\s*-\s*(.+?)\s*$", str(_cell(row, 3) or ""))
+        if match:
+            return {"codigo": int(match.group(1)), "nome": match.group(2)}
+    return None
+
+
+def _same_company_name(first, second):
+    """Aceita a razão social do relatório com ou sem sufixos como LTDA."""
+    normalized_first = _normalize(first)
+    normalized_second = _normalize(second)
+    return bool(
+        normalized_first
+        and normalized_second
+        and (
+            normalized_first == normalized_second
+            or normalized_first in normalized_second
+            or normalized_second in normalized_first
+        )
     )
 
 
@@ -439,6 +467,10 @@ class VacationService:
         if header_index is None:
             return [], ["Planilha fora do padrão: cabeçalho Código/Nome do empregado não encontrado."]
 
+        report_company = _report_company(rows, header_index)
+        if report_company is None:
+            return [], ["Planilha fora do padrão: empresa do cabeçalho não encontrada."]
+
         parsed = []
         errors = []
         for index in range(header_index + 1, len(rows)):
@@ -467,6 +499,8 @@ class VacationService:
                 vacation_item = {
                     "linha": index + 1,
                     "matricula": code,
+                    "empresa_relatorio_codigo": report_company["codigo"],
+                    "empresa_relatorio_nome": report_company["nome"],
                     "nome": str(_cell(row, 2) or "").strip(),
                     "aquisitivo_inicio": acquisition_start,
                     "aquisitivo_fim": acquisition_end,
@@ -509,11 +543,14 @@ class VacationService:
         return parsed, errors[:50]
 
     @staticmethod
-    def _resolve_import_employees(parsed, token_data):
-        """Vincula as matrículas em lote e preserva apenas o escopo de filial."""
+    def _resolve_import_employees(parsed, company_id, token_data):
+        """Vincula matrícula e empresa, preservando o escopo de filial."""
         matriculas = {item["matricula"] for item in parsed}
         employees_by_registration = defaultdict(list)
-        for employee in Employees.query.filter(Employees.matricula.in_(matriculas)).all():
+        for employee in Employees.query.filter(
+            Employees.empresa_id == company_id,
+            Employees.matricula.in_(matriculas),
+        ).all():
             employees_by_registration[employee.matricula].append(employee)
 
         errors = []
@@ -525,7 +562,7 @@ class VacationService:
                 continue
             employees[registration] = options[0]
 
-        allowed_centers = allowed_cost_center_ids(token_data)
+        allowed_centers = None if is_admin(token_data) else allowed_cost_center_ids(token_data)
         if allowed_centers is not None:
             errors.extend(
                 f"Matrícula {registration}: filial fora do seu acesso."
@@ -533,6 +570,23 @@ class VacationService:
                 if not employee.centro_id or employee.centro_id not in allowed_centers
             )
         return employees, errors[:50]
+
+    @staticmethod
+    def _import_company(parsed):
+        """Valida a empresa escolhida contra o código impresso no relatório."""
+        try:
+            company_id = int(request.form.get("empresa_id") or "")
+        except (TypeError, ValueError):
+            return None, "Informe a empresa da planilha."
+
+        company = db.session.get(Company, company_id)
+        if not company or not company.ativa:
+            return None, "A empresa selecionada não existe ou está inativa."
+
+        report_company_names = {item.get("empresa_relatorio_nome") for item in parsed}
+        if len(report_company_names) != 1 or not _same_company_name(company.nome, next(iter(report_company_names))):
+            return None, "A empresa selecionada não corresponde à empresa informada no cabeçalho da planilha."
+        return company, None
 
     @staticmethod
     def _group_import_rows(parsed, employees):
@@ -569,7 +623,11 @@ class VacationService:
         if not parsed:
             return jsonify("Nenhuma férias completa foi encontrada na planilha."), 400
 
-        employees, errors = self._resolve_import_employees(parsed, token_data)
+        company, error = self._import_company(parsed)
+        if error:
+            return jsonify(error), 400
+
+        employees, errors = self._resolve_import_employees(parsed, company.id, token_data)
         if errors:
             return jsonify({"message": "A prévia não pôde ser concluída.", "errors": errors}), 400
 
@@ -582,6 +640,7 @@ class VacationService:
         return jsonify({
             "total_periodos": total_periods,
             "total_lancamentos": len(parsed),
+            "empresa": {"id": company.id, "nome": company.nome},
             "resumo": {
                 "colaboradores": len({employee_id for employee_id, _ in grouped}),
                 "novos_periodos": total_periods - total_updates,
@@ -605,7 +664,11 @@ class VacationService:
         if not parsed:
             return jsonify("Nenhuma férias completa foi encontrada na planilha."), 400
 
-        employees, errors = self._resolve_import_employees(parsed, token_data)
+        company, error = self._import_company(parsed)
+        if error:
+            return jsonify(error), 400
+
+        employees, errors = self._resolve_import_employees(parsed, company.id, token_data)
         if errors:
             return jsonify({"message": "A importação foi cancelada; nenhum registro foi gravado.", "errors": errors}), 400
 
