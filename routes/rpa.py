@@ -140,6 +140,7 @@ def _command_event(data, completed=False):
     if not tracked or not registered or registered["sid"] != rq.sid:
         return
     tracked["agent_id"] = agent_id
+    completed = completed or str(data.get("status") or "").strip().lower() == "completed"
     payload = {
         "command_id": command_id,
         "agent_id": agent_id,
