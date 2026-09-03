@@ -13,7 +13,7 @@ Uso:
 from argparse import ArgumentParser
 from datetime import date, datetime
 from decimal import Decimal
-from math import isnan
+from math import isfinite, isnan
 from os import getenv
 from re import fullmatch, sub
 from unicodedata import combining, normalize
@@ -56,9 +56,24 @@ def parse_admission(value):
 def parse_decimal(value, default=0.0):
     if value in (None, ""):
         return default
+    if isinstance(value, bool):
+        raise ValueError("valor booleano nao e um decimal valido")
     if isinstance(value, str):
-        value = value.replace(".", "").replace(",", ".")
-    return float(value)
+        value = value.strip()
+        if not value:
+            return default
+        if "," in value:
+            # Apenas a virgula explicita o formato brasileiro com milhar.
+            if not fullmatch(r"[+-]?(?:\d+|\d{1,3}(?:\.\d{3})+),\d+", value):
+                raise ValueError("formato decimal invalido")
+            value = value.replace(".", "").replace(",", ".")
+        elif not fullmatch(r"[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", value):
+            raise ValueError("formato decimal invalido")
+        # Um ponto sem virgula e decimal: '220.00' deve continuar sendo 220.
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError("decimal fora do intervalo permitido")
+    return result
 
 
 def normalize_name(value):
