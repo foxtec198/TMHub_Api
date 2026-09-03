@@ -2,23 +2,24 @@
 # Biblioteca padrão.
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import unicodedata
 # Dependências externas.
 from dateutil.relativedelta import relativedelta
 
-def normalize_text(text: str): return text.lower().strip()
+def normalize_text(text: str):
+    return "".join(c for c in unicodedata.normalize("NFD", text.lower().strip()) if not unicodedata.combining(c))
 
 def extract_period(text: str):
-    month_options = [
-        "esse mes",
-        "esse mês",
-        "este mes",
-        "este mês",
-        "mes atual",
-        "mês atual"
-    ]
+    month_options = ["esse mes", "este mes", "mes atual", "deste mes", "desse mes", "neste mes", "nesse mes"]
     
     text = normalize_text(text)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+    if re.search(r"\b(?:(?:essa|esta|nessa|nesta|dessa|desta) semana|semana atual)\b", text):
+        start = today - timedelta(days=today.weekday())
+        return {"type": "week", "start": start.isoformat(),
+                "end": (start + timedelta(days=6)).isoformat(), "label": "nesta semana"}
 
     # HOJE
     if re.search(r"\bhoje\b", text):
@@ -80,7 +81,7 @@ def extract_entities(text: str, intent: str):
     intents_with_period = {
         "faltas_periodo",
         "reposicoes_periodo",
-        "postos_descobertos"
+        "postos_descobertos", "vagas_concluidas_periodo", "resumo_admissoes",
     }
 
     if intent in intents_with_period: entities["period"] = extract_period(text)
