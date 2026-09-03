@@ -4,12 +4,17 @@ from jwt import encode, decode
 from dateutils import relativedelta
 # Biblioteca padrão.
 from os import getenv
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-def create_token(dados:dict, expires=True):
+def create_token(dados:dict, expires=True, expires_in_minutes=None):
     payload = dict(dados)
     if expires:
-        payload["exp"] = datetime.now() + relativedelta(hours=8)
+        now = datetime.now(timezone.utc)
+        payload["exp"] = (
+            now + timedelta(minutes=expires_in_minutes)
+            if expires_in_minutes is not None
+            else now + relativedelta(hours=8)
+        )
     token = str(encode(payload, getenv("SECRET"), algorithm="HS256"))
     return token
 
