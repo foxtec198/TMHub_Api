@@ -29,5 +29,5 @@ jobs: # Jobs will run
             venv/bin/pip install --no-cache-dir -r requirements.txt --upgrade
             venv/bin/python -m unittest discover -s tests -p test_timo_conversation.py
             sudo systemctl restart tm
-            sudo systemctl is-active --quiet tm
+            systemctl is-active --quiet tm
             venv/bin/python scripts/check_timo_ollama.py
