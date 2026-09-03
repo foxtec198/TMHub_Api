@@ -15,6 +15,16 @@ consultados novamente. O modelo não executa ferramentas, SQL ou navegação.
 Perguntas livres sobre dados que não correspondem ao catálogo ainda dependem
 de reformulação pelo usuário; não há planejamento geral de ferramentas nesta versão.
 
+`Quantas RTs disponíveis?` consulta reservas técnicas. `Quantos PCDs possuímos?`
+consulta o cadastro atual com o mesmo critério do Indicador PCD (todas as situações),
+exigindo `indicador_pcd:view` e aplicando o escopo por centro de custo. Aspas,
+pontuação e acentos não impedem o reconhecimento dos comandos analíticos.
+
+Respostas que só copiam ou reformulam muito de perto a pergunta são substituídas
+por um aviso de que o TIMO não conseguiu responder. Esses ecos também são
+removidos do histórico enviado ao modelo. A detecção é heurística; não garante
+qualidade de todas as respostas livres do modelo de 0,6B.
+
 ## Configuração no servidor
 
 Os padrões abaixo já permitem o teste no servidor onde o Ollama está instalado:

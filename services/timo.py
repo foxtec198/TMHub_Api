@@ -475,6 +475,15 @@ class TimoCommandService:
             total = apply_cost_center_scope(query, Employees.centro_id, token_data).count()
             return {"total": total}, None
 
+        if intent == "pcds_cadastrados":
+            if not has_permission(token_data, "indicador_pcd", "view"):
+                return None, "Você não possui acesso ao Indicador PCD."
+            # Mesmo critério do GET /pcd: marcação PCD, todas as situações e
+            # escopo por centro de custo. Não envia dados individuais ao Ollama.
+            query = Employees.query.filter(Employees.pcd.is_(True))
+            total = apply_cost_center_scope(query, Employees.centro_id, token_data).count()
+            return {"total": total}, None
+
         if intent == "faltas_periodo":
             if not (
                 has_permission(token_data, "dashboard_faltas", "view")

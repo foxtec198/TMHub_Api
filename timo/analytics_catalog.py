@@ -86,8 +86,21 @@ ANALYTICS_INTENTS = {
             "quantas reservas estao disponiveis", "quantas reservas estão disponíveis", "reservas disponiveis",
             "reservas disponíveis", "tem reserva disponivel", "tem reserva disponível",
             "quantos volantes temos", "quantos reservas tecnicas temos",
+            "quantas rts disponiveis", "quantas rts estao disponiveis", "rts disponiveis",
+            "quantos rts disponiveis", "quantos rts estao disponiveis", "tem rt disponivel",
         ),
         ("{total}"),
+    ),
+    "pcds_cadastrados": _query(
+        "Colaboradores PCD no cadastro",
+        "Conta os colaboradores marcados como PCD no cadastro atual, no escopo permitido, incluindo todas as situações.",
+        "Há {total} colaborador(es) marcado(s) como PCD no cadastro atual, no escopo selecionado (todas as situações).",
+        (
+            "quantos pcds possuimos", "quantos pcds possuimos hoje", "quantos pcds temos",
+            "quantos pcds temos hoje", "quantos pcd temos", "total de pcds",
+            "quantos colaboradores pcd temos", "quantas pessoas com deficiencia temos",
+        ),
+        ("{total}",),
     ),
 }
 
@@ -104,7 +117,8 @@ def _normalize_command(value):
     normalized = "".join(
         character for character in normalized if not unicodedata.combining(character)
     )
-    return re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 ANALYTICS_COMMANDS = {
