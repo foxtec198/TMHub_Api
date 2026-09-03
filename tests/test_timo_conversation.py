@@ -4,6 +4,8 @@ import subprocess
 import sys
 import unittest
 from types import SimpleNamespace
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 import requests
@@ -152,7 +154,7 @@ class ConversationRoutingTest(unittest.TestCase):
 
     def configuration(self, active=True):
         patcher = patch.object(self.service, "_configured_intent", return_value=SimpleNamespace(
-            ativo=active, resposta_template="{total} falta(s) {period_label}",
+            ativo=active, resposta_template="{total} falta(s) {period_label}", acao_tipo="none",
         ))
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -258,8 +260,49 @@ class ConversationRoutingTest(unittest.TestCase):
             "intent": "faltas_periodo", "period_text": "este mes",
         })
 
+    def test_new_operation_phrases_reach_correct_handlers(self):
+        self.configuration()
+        for text, expected in (
+            ("quantas reservas faltaram", "reservas_disponiveis"),
+            ("quantas RTs estão de apoio?", "reservas_disponiveis"),
+            ("quantas vagas abertas temos?", "vagas_abertas"),
+            ("quantas vagas completas essa semana?", "vagas_concluidas_periodo"),
+            ("total de vagas concluídas mês passado", "vagas_concluidas_periodo"),
+            ("resumo de admissões esse mês", "resumo_admissoes"),
+        ):
+            with self.subTest(text=text), \
+                    patch.object(self.service, "_intent_data", return_value=({}, None)) as data, \
+                    patch.object(self.service, "_action_for_user", return_value=None):
+                self.assertEqual(self.process(text)[1], 200)
+                self.assertEqual(data.call_args.args[0], expected)
+                if expected in {"resumo_admissoes", "vagas_concluidas_periodo"}:
+                    self.assertIn("period", data.call_args.args[1])
+        self.chat.assert_not_called()
 
-class PcdCountScopeTest(unittest.TestCase):
+    def test_instructions_do_not_trigger_navigation(self):
+        def configuration(intent):
+            item = self.service.INTENT_CATALOG[intent]
+            return SimpleNamespace(ativo=True, resposta_template=item["response"],
+                                   acao_tipo=item["action_type"], acao_valor=item["action_value"])
+        with patch.object(self.service, "_configured_intent", side_effect=configuration), \
+                patch("services.timo.has_permission", return_value=True):
+            for question, expected in (("como abrir um chamado?", "Novo chamado"),
+                                       ("como fazer uma requisição?", "Lançamento rápido")):
+                result, status = self.process(question)
+                self.assertEqual(status, 200)
+                self.assertIn(expected, result["message"])
+                self.assertIsNone(result["action"])
+            result, status = self.process("abra a tela de chamados")
+            self.assertEqual(status, 200)
+            self.assertEqual(result["action"], {"type": "navigate", "path": "/tickets"})
+        with patch.object(self.service, "_configured_intent", side_effect=configuration), \
+                patch("services.timo.has_permission", return_value=False):
+            self.assertEqual(self.process("abrir chamados")[1], 403)
+            self.assertEqual(self.process("como abrir um chamado?")[1], 403)
+        self.chat.assert_not_called()
+
+
+class TimoScopedDataTest(unittest.TestCase):
     def setUp(self):
         # Registra as relações existentes em um banco descartável, sem DB_URI.
         import migrations.startup  # noqa: F401
@@ -317,6 +360,74 @@ class PcdCountScopeTest(unittest.TestCase):
                 self.assertIsNone(error)
                 self.assertEqual(data["total"], expected)
                 self.assertEqual(data["total"], screen.get_json()["total"])
+
+    def test_reservation_summary_separates_absence_support_and_availability(self):
+        from models.reservas_tecnicas import Floaters
+        self.db.session.add_all([
+            Floaters(employee_id=1, disponivel=True),
+            Floaters(employee_id=2, disponivel=False, indisponibilidade_motivo="FALTA"),
+            Floaters(employee_id=3, disponivel=False, indisponibilidade_motivo="APOIO"),
+            Floaters(employee_id=4, disponivel=False, indisponibilidade_motivo="APOIO"),
+        ])
+        self.db.session.commit()
+        with self.app.test_request_context("/timo/process"):
+            result = TimoCommandService._reservation_data({"id": 2, "role": "SUPERVISOR"})
+        self.assertEqual((result["disponiveis"], result["faltas"], result["apoio"]), (1, 1, 1))
+        self.assertEqual(result["total_reservas"], 3)
+        self.assertEqual(result["indisponiveis"], 2)
+
+    def test_vacancy_totals_include_legacy_centers_and_count_completion_date(self):
+        from models.admissao import Vacancy, WorkSchedule
+        from timo.entities import extract_entities
+        now = datetime(2026, 9, 3, 10, tzinfo=ZoneInfo("America/Sao_Paulo"))
+        self.db.session.add(WorkSchedule(id=1, descricao="08:00 - 17:00", descricao_normalizada="08:00 - 17:00"))
+        self.db.session.flush()
+        common = dict(colaborador_id=1, tipo="substituicao", created_at=now.replace(tzinfo=None))
+        closed = dict(common, status="concluido", colaborador_entrada_id=2,
+                      data_inicio=now, concluido_por_usuario_id=1, horario_trabalho_id=1)
+        self.db.session.add_all([
+            Vacancy(**common, status="aberta"),  # Centro herdado do colaborador.
+            Vacancy(tipo="aditivo", centro_custo_id=20, status="aberta"),
+            Vacancy(**common, status="entrevista"),
+            Vacancy(**closed, concluido_em=now - timedelta(days=1)),
+            Vacancy(**closed, centro_custo_id=20, concluido_em=now),  # Outra filial.
+            Vacancy(**closed, concluido_em=now - timedelta(days=15)),
+        ])
+        self.db.session.commit()
+        token = {"id": 2, "role": "SUPERVISOR"}
+        with self.app.test_request_context("/timo/process"), patch("timo.entities.datetime") as clock:
+            clock.now.return_value = now
+            today = TimoCommandService._vacancy_data(extract_entities("hoje", "resumo_admissoes"), token)
+            yesterday = TimoCommandService._vacancy_data(extract_entities("ontem", "resumo_admissoes"), token)
+            last_month = TimoCommandService._vacancy_data(extract_entities("mês passado", "resumo_admissoes"), token)
+        self.assertEqual((today["abertas"], today["em_andamento"], today["entrevista"]), (1, 2, 1))
+        self.assertEqual(today["concluidas"], 0)  # Cadastro/início hoje não é conclusão hoje.
+        self.assertEqual(today["inicios"], 2)
+        self.assertEqual(yesterday["concluidas"], 1)
+        self.assertEqual(last_month["concluidas"], 1)
+
+
+class TimoPeriodTest(unittest.TestCase):
+    def test_requested_periods_in_sao_paulo(self):
+        from timo.entities import extract_period
+        with patch("timo.entities.datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 3, 10, tzinfo=ZoneInfo("America/Sao_Paulo"))
+            for phrase, start, end in (
+                ("hoje", "2026-09-03", "2026-09-03"),
+                ("ontem", "2026-09-02", "2026-09-02"),
+                ("essa semana", "2026-08-31", "2026-09-06"),
+                ("esse mês", "2026-09-01", "2026-09-30"),
+                ("deste mês", "2026-09-01", "2026-09-30"),
+                ("mês passado", "2026-08-01", "2026-08-31"),
+            ):
+                with self.subTest(phrase=phrase):
+                    period = extract_period(phrase)
+                    self.assertEqual((period["start"], period["end"]), (start, end))
+
+    def test_legacy_default_templates_gain_new_totals_without_overriding_custom_text(self):
+        result = TimoCommandService._response_text("Existem {total} vaga(s) aberta(s).", {"abertas": 2}, "Aberta: {abertas}")
+        self.assertEqual(result, "Aberta: 2")
+        self.assertEqual(TimoCommandService._response_text("Personalizado: {total}", {"total": 2}, "Outro"), "Personalizado: 2")
 
 
 if __name__ == "__main__":

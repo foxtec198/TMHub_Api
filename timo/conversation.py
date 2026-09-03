@@ -33,6 +33,7 @@ SYSTEM_PROMPT = (
 PERIOD_INTENTS = {
     "faltas_periodo", "reposicoes_periodo", "postos_descobertos",
     "absenteismo_periodo", "coberturas_periodo",
+    "vagas_concluidas_periodo", "resumo_admissoes",
 }
 
 
@@ -80,7 +81,7 @@ def clean_history(value):
 
 def _followup_period(command):
     match = re.fullmatch(
-        r"(?:e )?(?:(?:no|na|em) )?(hoje|ontem|mes passado|este mes|esse mes|neste mes|nesse mes|deste mes)",
+        r"(?:e )?(?:(?:no|na|em) )?(hoje|ontem|mes passado|este mes|esse mes|neste mes|nesse mes|deste mes|essa semana|esta semana|nesta semana|nessa semana)",
         normalize_command(command),
     )
     if not match:
@@ -100,7 +101,9 @@ def followup_query(command, history):
         previous = item["content"]
         if _followup_period(previous):
             continue
-        known = known_intent_for_command(previous)
+        from timo.analytics_catalog import analytics_intent_for_command
+        analytics = analytics_intent_for_command(previous)
+        known = {"intent": analytics} if analytics else known_intent_for_command(previous)
         if known and known["intent"] in PERIOD_INTENTS:
             return {"intent": known["intent"], "period_text": period}
         break  # Não pula uma mudança de assunto para reutilizar uma consulta antiga.

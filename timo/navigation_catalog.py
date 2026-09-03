@@ -21,6 +21,12 @@ def _screen(label, path, permission=None, *, admin_only=False, commands=()):
 
 
 NAVIGATION_SCREENS = {
+    "navegar_chamados": _screen(
+        "Chamados", "/tickets", "tickets", commands=(
+            "abrir chamados", "abrir chamado", "abre chamados", "abra chamados", "ir para chamados",
+            "abrir tela de chamados", "me leve para chamados",
+        ),
+    ),
     "navegar_inicio": _screen(
         "Início e suporte", "/init", commands=(
             "abrir inicio", "voltar ao inicio", "ir para inicio", "abrir painel inicial", "abrir suporte",
@@ -108,7 +114,7 @@ NAVIGATION_SCREENS = {
     ),
     "navegar_vagas": _screen(
         "Vagas de substituição", "/admissao/vagas", "admissoes", commands=(
-            "abrir vagas", "abrir vagas de substituicao", "ir para admissoes", "mostrar vagas abertas", "abrir controle de vagas",
+            "abrir vagas", "abrir vagas de substituicao", "ir para admissoes", "mostrar vagas abertas", "abrir controle de vagas", "abrir admissoes", "abrir admissao",
         ),
     ),
     "navegar_aditivos": _screen(
@@ -123,7 +129,7 @@ NAVIGATION_SCREENS = {
     ),
     "navegar_reservas": _screen(
         "Reservas técnicas", "/reposicoes/reservas", "reservas", commands=(
-            "abrir reservas", "abrir reservas tecnicas", "ir para reservas", "mostrar reservas", "abrir painel de reservas",
+            "abrir reservas", "abrir reservas tecnicas", "ir para reservas", "mostrar reservas", "abrir painel de reservas", "abrir rts",
         ),
     ),
     "navegar_historico_reposicoes": _screen(
@@ -218,7 +224,12 @@ def _normalize_command(value):
     normalized = "".join(
         character for character in normalized if not unicodedata.combining(character)
     )
-    return re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"^(?:por favor )?(?:(?:quero|pode|poderia) )?(?:abrir|abra|abre)\b", "abrir", normalized)
+    normalized = re.sub(r"^abrir (?:(?:a|o|as|os) )?(?:tela|pagina) (?:de |do |da |das |dos )?", "abrir ", normalized)
+    normalized = re.sub(r"^abrir (?:a|o|as|os) ", "abrir ", normalized)
+    normalized = re.sub(r"\s+por favor\s*$", "", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 NAVIGATION_COMMANDS = {

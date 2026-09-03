@@ -24,6 +24,7 @@ from models.timo_configuracoes import TimoCommandTrigger, TimoIntentConfiguratio
 from timo.analytics_catalog import ANALYTICS_INTENTS, analytics_intent_for_command
 from timo.command_catalog import known_intent_for_command
 from timo import conversation
+from timo.help_catalog import HELP_INTENTS, help_intent_for_command
 from timo.entities import extract_entities, extract_period
 from timo.navigation_catalog import (
     NAVIGATION_ACTION_PATHS,
@@ -55,6 +56,10 @@ class TimoCommandService:
     # Limiar mínimo (20%) para aceitar a previsão estatística do modelo.
     # Os catálogos determinísticos continuam tendo prioridade antes daqui.
     MIN_CONFIDENCE = 0.20
+    LEGACY_RESPONSES = {
+        "Temos {total} reserva(s) técnica(s) disponível(is) no escopo atual.",
+        "Existem {total} vaga(s) aberta(s).",
+    }
     ACTION_NONE = "none"
     ACTION_NAVIGATE = "navigate"
 
@@ -85,19 +90,20 @@ class TimoCommandService:
         "vagas_abertas": {
             "label": "Vagas abertas",
             "description": "Mostra a quantidade atual de vagas abertas.",
-            "response": "Existem {total} vaga(s) aberta(s).",
+            "response": "Há {abertas} vaga(s) no status Aberta e {em_andamento} em andamento no total: {entrevista} em Entrevista, {certidao} em Certidão, {aso} em ASO e {unico} em Único. Inclui substituições e aditivos no escopo atual.",
             "action_type": ACTION_NONE,
             "action_value": None,
         },
         **ANALYTICS_INTENTS,
         **NAVIGATION_INTENTS,
+        **HELP_INTENTS,
     }
 
     TEMPLATE_VARIABLES = {
         "faltas_periodo": ["{total}", "{period_label}"],
         "reposicoes_periodo": ["{total}", "{period_label}"],
         "postos_descobertos": ["{total}", "{period_label}"],
-        "vagas_abertas": ["{total}"],
+        "vagas_abertas": ["{total}", "{abertas}", "{em_andamento}", "{entrevista}", "{certidao}", "{aso}", "{unico}"],
         **{
             intent: definition["variables"]
             for intent, definition in ANALYTICS_INTENTS.items()
@@ -150,6 +156,9 @@ class TimoCommandService:
     @classmethod
     def _serialize_configuration(cls, row, definition=None):
         definition = definition or {}
+        response_template = row.resposta_template
+        if response_template in cls.LEGACY_RESPONSES:
+            response_template = definition.get("response") or response_template
         return {
             "intent": row.intent,
             "label": row.titulo or definition.get("label") or row.intent,
@@ -158,7 +167,7 @@ class TimoCommandService:
             "personalizado": bool(row.personalizado),
             "comandos": [command.frase for command in row.comandos],
             "ativo": bool(row.ativo),
-            "resposta_template": row.resposta_template or definition.get("response") or "Comando concluído.",
+            "resposta_template": response_template or definition.get("response") or "Comando concluído.",
             "acao_tipo": row.acao_tipo or cls.ACTION_NONE,
             "acao_valor": row.acao_valor,
             "categoria": (
@@ -442,7 +451,56 @@ class TimoCommandService:
         }
 
     @classmethod
+    def _vacancy_query(cls, token_data):
+        # Mesmo vínculo usado pela listagem: vagas legadas de substituição
+        # herdam o centro do colaborador, enquanto aditivos têm centro direto.
+        query = Vacancy.query.outerjoin(Employees, Employees.id == Vacancy.colaborador_id).join(
+            CostCenters, CostCenters.id == func.coalesce(Vacancy.centro_custo_id, Employees.centro_id),
+        )
+        return apply_cost_center_scope(query, CostCenters.id, token_data)
+
+    @classmethod
+    def _vacancy_data(cls, entities, token_data):
+        query = cls._vacancy_query(token_data)
+        counts = dict(query.with_entities(Vacancy.status, func.count(Vacancy.id)).group_by(Vacancy.status).all())
+        # A interface agrupa status legados/desconhecidos em Aberta.
+        stages = {key: counts.get(key, 0) for key in ("entrevista", "certidao", "aso", "unico")}
+        opened = sum(total for status, total in counts.items() if status not in {*stages, "concluido"})
+        result = {**stages, "total": opened, "abertas": opened, "em_andamento": opened + sum(stages.values())}
+        if "period" in entities:
+            start, end = cls._period_range(entities["period"])
+            aware_start, aware_end = start.replace(tzinfo=SAO_PAULO), end.replace(tzinfo=SAO_PAULO)
+            result.update({
+                "period_label": entities["period"]["label"],
+                "cadastradas": query.filter(Vacancy.created_at.between(start, end)).count(),
+                "concluidas": query.filter(Vacancy.status == "concluido", Vacancy.concluido_em.between(aware_start, aware_end)).count(),
+                "inicios": query.filter(Vacancy.status == "concluido", Vacancy.data_inicio.between(aware_start, aware_end)).count(),
+            })
+        return result
+
+    @classmethod
+    def _reservation_data(cls, token_data):
+        query = Floaters.query.join(Employees, Employees.id == Floaters.employee_id)
+        query = apply_cost_center_scope(query, Employees.centro_id, token_data)
+        rows = query.with_entities(Floaters.disponivel, Floaters.indisponibilidade_motivo, func.count(Floaters.id)).group_by(
+            Floaters.disponivel, Floaters.indisponibilidade_motivo,
+        ).all()
+        available = sum(count for available, _, count in rows if available)
+        absent = sum(count for available, reason, count in rows if not available and reason == "FALTA")
+        support = sum(count for available, reason, count in rows if not available and reason == "APOIO")
+        unavailable = sum(count for available, _, count in rows if not available)
+        other = unavailable - absent - support
+        return {"total": available, "disponiveis": available, "faltas": absent, "apoio": support,
+                "indisponiveis": unavailable, "total_reservas": available + unavailable,
+                "outras_label": f" Outras indisponibilidades: {other}." if other else ""}
+
+    @classmethod
     def _intent_data(cls, intent, entities, token_data):
+        if intent in HELP_INTENTS:
+            guide = HELP_INTENTS[intent]
+            if guide["permission"] and not has_permission(token_data, guide["permission"], guide["permission_action"]):
+                return None, "Você não possui permissão para essa operação. Peça acesso ao responsável pelo sistema."
+            return {}, None
         if intent == "absenteismo_periodo":
             if not (
                 has_permission(token_data, "dashboard_faltas", "view")
@@ -469,11 +527,7 @@ class TimoCommandService:
         if intent == "reservas_disponiveis":
             if not has_permission(token_data, "reservas", "view"):
                 return None, "Você não possui acesso às reservas técnicas."
-            query = Floaters.query.join(Employees, Employees.id == Floaters.employee_id).filter(
-                Floaters.disponivel.is_(True)
-            )
-            total = apply_cost_center_scope(query, Employees.centro_id, token_data).count()
-            return {"total": total}, None
+            return cls._reservation_data(token_data), None
 
         if intent == "pcds_cadastrados":
             if not has_permission(token_data, "indicador_pcd", "view"):
@@ -507,17 +561,17 @@ class TimoCommandService:
             total = apply_cost_center_scope(query, History.cc, token_data).count()
             return {"total": total, "period_label": entities["period"]["label"]}, None
 
-        if intent == "vagas_abertas":
+        if intent in {"vagas_abertas", "vagas_concluidas_periodo", "resumo_admissoes"}:
             if not has_permission(token_data, "admissoes", "view"):
                 return None, "Você não possui acesso às vagas."
-            query = Vacancy.query.filter(func.lower(Vacancy.status) == "aberta")
-            total = apply_cost_center_scope(query, Vacancy.centro_custo_id, token_data).count()
-            return {"total": total}, None
+            return cls._vacancy_data(entities, token_data), None
 
         return {}, None
 
     @classmethod
     def _response_text(cls, template, data, fallback):
+        if template in cls.LEGACY_RESPONSES:
+            template = fallback
         text = str(template or fallback or "Comando concluído.").strip()
         try:
             return text.format_map(SafeTemplateValues(data or {}))
@@ -571,46 +625,48 @@ class TimoCommandService:
         history = conversation.clean_history(body.get("history")) if conversational else []
         followup = conversation.followup_query(command, history) if conversational else None
         custom_configuration = self._custom_configuration_for_command(command)
-        navigation_intent = None if custom_configuration else navigation_intent_for_command(command)
+        direct_intent = None if custom_configuration else (
+            help_intent_for_command(command) or navigation_intent_for_command(command)
+        )
         analytics_intent = (
             None
-            if custom_configuration or navigation_intent
+            if custom_configuration or direct_intent
             else analytics_intent_for_command(command)
         )
         trained_learning_intent = (
             None
-            if custom_configuration or navigation_intent or analytics_intent
+            if custom_configuration or direct_intent or analytics_intent
             else self._trained_learning_intent_for_command(command)
         )
         known_command = (
             None
-            if custom_configuration or navigation_intent or analytics_intent or trained_learning_intent
+            if custom_configuration or direct_intent or analytics_intent or trained_learning_intent
             else known_intent_for_command(command)
         )
         if followup and not custom_configuration:
             known_command = {"intent": followup["intent"]}
             command = followup["period_text"]
         if conversational and not any((
-            custom_configuration, navigation_intent, analytics_intent,
+            custom_configuration, direct_intent, analytics_intent,
             trained_learning_intent, known_command,
         )):
             # Bate-papo não é exemplo de treino nem uma previsão estatística de ação.
             return jsonify(conversation.chat(raw_text, history)), 200
         prediction = (
             predictor.predict(command)
-            if not custom_configuration and not navigation_intent and not analytics_intent
+            if not custom_configuration and not direct_intent and not analytics_intent
             and not trained_learning_intent and not known_command
             else None
         )
         intent = (
             custom_configuration.intent
             if custom_configuration
-            else navigation_intent or analytics_intent or trained_learning_intent
+            else direct_intent or analytics_intent or trained_learning_intent
             or (known_command or {}).get("intent") or prediction["intent"]
         )
         confidence = (
             1.0
-            if custom_configuration or navigation_intent or analytics_intent or trained_learning_intent or known_command
+            if custom_configuration or direct_intent or analytics_intent or trained_learning_intent or known_command
             else prediction["confidence"]
         )
         definition = self.INTENT_CATALOG.get(intent)
@@ -650,6 +706,8 @@ class TimoCommandService:
         if error:
             return jsonify({"success": False, "message": error, "action": None}), 403
         action = self._action_for_user(configuration, token_data)
+        if configuration.acao_tipo == self.ACTION_NAVIGATE and action is None:
+            return jsonify({"success": False, "message": "Você não possui acesso à tela solicitada.", "action": None}), 403
         return jsonify({
             "success": True,
             "understood": True,

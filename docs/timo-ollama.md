@@ -25,6 +25,29 @@ por um aviso de que o TIMO não conseguiu responder. Esses ecos também são
 removidos do histórico enviado ao modelo. A detecção é heurística; não garante
 qualidade de todas as respostas livres do modelo de 0,6B.
 
+## Consultas operacionais e instruções
+
+- RTs: fotografia do cadastro atual com disponíveis, marcadas como FALTA, em
+  APOIO e total indisponível. Não é contagem histórica de ocorrências de falta.
+- Vagas abertas: mostra a coluna Aberta e o total em andamento, discriminando
+  Entrevista, Certidão, ASO e Único. O centro é o direto da vaga ou o do colaborador
+  substituído, como na listagem. Inclui substituições e aditivos.
+- Vagas completas/concluídas: status `concluido`, filtrado por `concluido_em`.
+- Resumo de admissões: vagas cadastradas por `created_at`, concluídas por
+  `concluido_em`, inícios informados por `data_inicio` das vagas concluídas e a
+  situação atual do funil. Não confunde início previsto com contratação efetivada.
+  Os totais são do cadastro `ad_vagas`, sem somar a planilha legada de entrevistas.
+- Períodos: hoje, ontem, essa semana (segunda a domingo), esse mês e mês passado,
+  no fuso de São Paulo. Sem período explícito, a consulta usa hoje.
+- `Como abrir um chamado?` e `Como fazer uma requisição?` retornam instruções
+  baseadas nos formulários existentes. Há orientações para reservas e vagas.
+- `Abrir chamados`, `abrir reservas` e outros comandos do catálogo retornam uma
+  rota autorizada. O frontend navega imediatamente, sem botão intermediário.
+  Pedidos de instrução não navegam e rotas sem permissão retornam 403.
+
+Templates antigos que ainda são exatamente os padrões de RTs e vagas recebem
+os novos totais na resposta; textos personalizados permanecem preservados.
+
 ## Configuração no servidor
 
 Os padrões abaixo já permitem o teste no servidor onde o Ollama está instalado:
@@ -72,8 +95,11 @@ Na tela `/timo`, testar:
 
 1. `Meu nome é João.` e depois `Qual é meu nome?`.
 2. `quantas faltas tivemos hoje` e depois `e ontem?`.
-3. `abrir chamados`, verificando o botão de navegação já existente.
+3. `como abrir um chamado?`, verificando as instruções sem navegar; depois
+   `abrir chamados`, verificando a abertura automática da tela.
 4. Trocar os filtros e repetir a consulta, sem reutilizar respostas do escopo anterior.
+5. `resumo das RTs`, `quantas vagas abertas temos?`, `quantas vagas completas essa
+   semana?` e `resumo de admissões mês passado`.
 
 Para desativar a integração, definir `TIMO_OLLAMA_ENABLED=false` no `.env` da API
 e executar `sudo systemctl restart tm`. Isso restaura o processamento anterior.
