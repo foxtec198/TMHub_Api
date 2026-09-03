@@ -81,15 +81,18 @@ ANALYTICS_INTENTS = {
     "reservas_disponiveis": _query(
         "Reservas técnicas disponíveis",
         "Mostra o total de reservas técnicas que podem ser utilizadas no escopo atual.",
-        "Temos {total} reserva(s) técnica(s) disponível(is) no escopo atual.",
+        "Situação atual das RTs no escopo selecionado: {disponiveis} disponível(is), {faltas} marcada(s) como FALTA e {apoio} em APOIO. Total: {total_reservas}; indisponíveis: {indisponiveis}.{outras_label}",
         (
             "quantas reservas estao disponiveis", "quantas reservas estão disponíveis", "reservas disponiveis",
             "reservas disponíveis", "tem reserva disponivel", "tem reserva disponível",
             "quantos volantes temos", "quantos reservas tecnicas temos",
             "quantas rts disponiveis", "quantas rts estao disponiveis", "rts disponiveis",
             "quantos rts disponiveis", "quantos rts estao disponiveis", "tem rt disponivel",
+            "resumo das reservas", "resumo das rts", "quantas reservas faltaram",
+            "quantas rts faltaram", "quantas reservas estao de apoio", "quantas rts estao de apoio",
+            "quantas reservas estao indisponiveis", "quantas reservas em apoio", "quantas rts em apoio",
         ),
-        ("{total}"),
+        ("{total}", "{disponiveis}", "{faltas}", "{apoio}", "{total_reservas}", "{indisponiveis}", "{outras_label}"),
     ),
     "pcds_cadastrados": _query(
         "Colaboradores PCD no cadastro",
@@ -101,6 +104,26 @@ ANALYTICS_INTENTS = {
             "quantos colaboradores pcd temos", "quantas pessoas com deficiencia temos",
         ),
         ("{total}",),
+    ),
+    "vagas_concluidas_periodo": _query(
+        "Vagas concluídas no período",
+        "Conta vagas com status Concluído pela data de conclusão, incluindo substituições e aditivos.",
+        "{period_label}: {concluidas} vaga(s) concluída(s), pela data de conclusão (substituições e aditivos).",
+        tuple(f"{phrase} {period}" for phrase in (
+            "quantas vagas foram concluidas", "quantas vagas foram completas", "quantas vagas completas",
+            "quantas vagas concluidas", "total de vagas completas", "total de vagas concluidas",
+            "quantas vagas completamos", "quantas vagas concluimos",
+        ) for period in ("hoje", "ontem", "essa semana", "esta semana", "esse mes", "este mes", "mes passado")),
+        ("{concluidas}", "{period_label}"),
+    ),
+    "resumo_admissoes": _query(
+        "Resumo de admissões",
+        "Resume cadastros, conclusões e inícios registrados no período, mais o andamento atual das vagas.",
+        "{period_label}: {cadastradas} vaga(s) cadastrada(s), {concluidas} concluída(s) e {inicios} início(s) de trabalho informado(s) para o período. Atualmente: {em_andamento} em andamento — {abertas} em Aberta, {entrevista} em Entrevista, {certidao} em Certidão, {aso} em ASO e {unico} em Único. Inclui substituições e aditivos.",
+        tuple(f"{phrase} {period}".strip() for phrase in (
+            "resumo de admissoes", "resumo das admissoes", "como estao as admissoes", "resumo de vagas",
+        ) for period in ("", "hoje", "ontem", "essa semana", "esse mes", "este mes", "mes passado")),
+        ("{period_label}", "{cadastradas}", "{concluidas}", "{inicios}", "{em_andamento}", "{abertas}", "{entrevista}", "{certidao}", "{aso}", "{unico}"),
     ),
 }
 
@@ -130,4 +153,18 @@ ANALYTICS_COMMANDS = {
 
 def analytics_intent_for_command(command):
     """Resolve frases analíticas oficiais antes do fallback estatístico."""
-    return ANALYTICS_COMMANDS.get(_normalize_command(command))
+    normalized = _normalize_command(command)
+    exact = ANALYTICS_COMMANDS.get(normalized)
+    if exact:
+        return exact
+    # Variações de consulta sem transformar pedidos de ajuda/navegação em contagens.
+    if re.match(r"^(?:quant\w*|total|resumo|como estao)\b", normalized):
+        if re.search(r"\bvagas?\b", normalized) and re.search(r"\b(?:complet\w*|conclu\w*)\b", normalized):
+            return "vagas_concluidas_periodo"
+        if "admisso" in normalized or ("resumo" in normalized and "vagas" in normalized):
+            return "resumo_admissoes"
+        if re.search(r"\b(?:rts?|reservas?)\b", normalized) and re.search(r"disponiv|apoio|falt\w*|resumo", normalized):
+            return "reservas_disponiveis"
+        if "vagas" in normalized and re.search(r"\babert\w*\b", normalized):
+            return "vagas_abertas"
+    return None
