@@ -127,7 +127,6 @@ ANALYTICS_INTENTS = {
     ),
 }
 
-
 ANALYTICS_TRAINING_EXAMPLES = [
     {"text": command, "intent": intent}
     for intent, definition in ANALYTICS_INTENTS.items()
