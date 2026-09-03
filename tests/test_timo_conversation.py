@@ -72,6 +72,36 @@ class ConversationClientTest(unittest.TestCase):
         }
         self.assertIsNone(conversation.chat("Oi", [])["action"])
 
+    def test_question_echo_is_not_presented_as_an_answer(self):
+        for question, answer in (
+            ('"quantos pcds possuimos?"', "Quantos PCDs possuímos hoje?"),
+            ("Quantas rts disponiveis", "Quantas RTs disponíveis?"),
+            ("Quantas impressoras temos?", "Quantas impressoras temos hoje?"),
+        ):
+            with self.subTest(question=question):
+                self.response.json.return_value = {"done": True, "message": {"content": answer}}
+                result = conversation.chat(question, [])
+                self.assertEqual(result["conversation_status"], "unanswered")
+                self.assertFalse(result["understood"])
+                self.assertIn("Não consegui responder", result["message"])
+
+    def test_greetings_and_actual_answers_are_not_echoes(self):
+        for question, answer in (("Oi", "Oi!"), ("Qual é meu nome?", "Seu nome é João."),
+                                 ("Quantas RTs disponíveis?", "Temos 42 reservas disponíveis.")):
+            self.assertFalse(conversation.is_question_echo(question, answer))
+
+    def test_old_echo_is_removed_from_history(self):
+        self.assertEqual(conversation.clean_history([
+            {"role": "user", "content": "Quantas RTs disponíveis?"},
+            {"role": "assistant", "content": "Quantas RTs disponíveis?"},
+            {"role": "user", "content": "Oi"},
+            {"role": "assistant", "content": "Oi!"},
+        ]), [
+            {"role": "user", "content": "Quantas RTs disponíveis?"},
+            {"role": "user", "content": "Oi"},
+            {"role": "assistant", "content": "Oi!"},
+        ])
+
     def test_busy_returns_without_contacting_ollama(self):
         with conversation.generation_slot() as acquired:
             self.assertTrue(acquired)
@@ -151,6 +181,28 @@ class ConversationRoutingTest(unittest.TestCase):
         self.assertEqual(data.call_args.args[2], self.token)
         self.chat.assert_not_called()
 
+    def test_screenshot_queries_reach_their_data_handlers(self):
+        self.configuration()
+        for text, expected in (
+            ('"quantos pcds possuimos?"', "pcds_cadastrados"),
+            ("Quantos PCDs possuímos hoje?", "pcds_cadastrados"),
+            ("Quantas rts disponiveis", "reservas_disponiveis"),
+            ("Quantas RTs disponíveis?", "reservas_disponiveis"),
+        ):
+            with self.subTest(text=text), \
+                    patch.object(self.service, "_intent_data", return_value=({"total": 2}, None)) as data, \
+                    patch.object(self.service, "_action_for_user", return_value=None):
+                self.assertEqual(self.process(text)[1], 200)
+                self.assertEqual(data.call_args.args[0], expected)
+        self.chat.assert_not_called()
+
+    def test_pcd_permission_is_checked_before_any_database_query(self):
+        with patch("services.timo.has_permission", return_value=False) as permission:
+            data, error = self.service._intent_data("pcds_cadastrados", {}, self.token)
+        self.assertIsNone(data)
+        self.assertIn("não possui acesso", error)
+        permission.assert_called_once_with(self.token, "indicador_pcd", "view")
+
     def test_period_followup_requeries_and_rechecks_permissions(self):
         self.configuration()
         with patch.object(self.service, "_intent_data", return_value=({}, "Sem permissão")) as data:
@@ -205,6 +257,66 @@ class ConversationRoutingTest(unittest.TestCase):
         self.assertEqual(conversation.followup_query("e neste mês?", history), {
             "intent": "faltas_periodo", "period_text": "este mes",
         })
+
+
+class PcdCountScopeTest(unittest.TestCase):
+    def setUp(self):
+        # Registra as relações existentes em um banco descartável, sem DB_URI.
+        import migrations.startup  # noqa: F401
+        from models.cidades import Cities  # noqa: F401
+        from services.pcd import PcdService  # noqa: F401
+        from models.centros_de_custo import CostCenters
+        from models.colaboradores import Employees
+        from models.empresas import Company
+        from models.filiais import Branch
+        from models.usuarios import Users
+        from utils.db import db
+
+        self.db = db
+        self.app = Flask(__name__)
+        self.app.config.update(SQLALCHEMY_DATABASE_URI="sqlite://", TESTING=True)
+        db.init_app(self.app)
+        self.context = self.app.app_context()
+        self.context.push()
+        db.create_all()
+        admin = Users(id=1, nome="Admin", role="ADMIN")
+        supervisor = Users(id=2, nome="Supervisor", role="SUPERVISOR")
+        company = Company(id=1, nome="Empresa de teste")
+        centers = [CostCenters(id=i, centro_id=i, nome=f"Centro {i}", empresa=company) for i in (10, 20)]
+        centers[0].supervisores_usuarios = [supervisor]
+        db.session.add_all([
+            Branch(id=2, nome="Filial A", usuarios=[admin, supervisor], centros_custo=[centers[0]]),
+            Branch(id=3, nome="Filial B", usuarios=[admin], centros_custo=[centers[1]]),
+        ])
+        db.session.add_all([
+            Employees(id=1, matricula=1, nome="PCD A", empresa=company, centro_id=10, pcd=True, situacao=1),
+            Employees(id=2, matricula=2, nome="PCD B", empresa=company, centro_id=10, pcd=True, situacao=7),
+            Employees(id=3, matricula=3, nome="PCD C", empresa=company, centro_id=20, pcd=True),
+            Employees(id=4, matricula=4, nome="Não PCD", empresa=company, centro_id=10, pcd=False),
+        ])
+        db.session.commit()
+
+    def tearDown(self):
+        self.db.session.remove()
+        self.db.drop_all()
+        self.context.pop()
+
+    def test_count_matches_pcd_screen_and_respects_branches_and_filters(self):
+        from services.pcd import PcdService
+        for token, headers, expected in (
+            ({"id": 1, "role": "ADMIN"}, {}, 3),
+            ({"id": 2, "role": "SUPERVISOR"}, {}, 2),
+            ({"id": 2, "role": "SUPERVISOR"}, {"X-Centro-Custo-Ids": "[20]"}, 0),
+            ({"id": 1, "role": "ADMIN"}, {"X-Centro-Custo-Ids": "[10]"}, 2),
+        ):
+            with self.subTest(token=token, headers=headers), \
+                    self.app.test_request_context("/timo/process", headers=headers), \
+                    patch("services.timo.has_permission", return_value=True):
+                data, error = TimoCommandService._intent_data("pcds_cadastrados", {}, token)
+                screen, _ = PcdService.read.__wrapped__(PcdService(), token)
+                self.assertIsNone(error)
+                self.assertEqual(data["total"], expected)
+                self.assertEqual(data["total"], screen.get_json()["total"])
 
 
 if __name__ == "__main__":

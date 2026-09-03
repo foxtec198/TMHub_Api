@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Lock
 
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 _local_lock = Lock()
 SYSTEM_PROMPT = (
     "Você é TIMO, assistente do TMHub. Converse em português brasileiro, de forma "
-    "breve, natural e útil. Use o histórico para acompanhar o assunto. "
+    "breve, natural e útil. Responda à pergunta, sem repeti-la ou reformulá-la. "
+    "Use o histórico para acompanhar o assunto. Se não souber, diga isso claramente. "
     "Você não tem acesso direto ao banco nem executa ações. Nunca invente números, "
     "dados de colaboradores ou ações concluídas. Para consultar dados atuais, "
     "oriente a usar os comandos do TMHub, como 'quantas faltas tivemos hoje', "
@@ -37,6 +39,17 @@ PERIOD_INTENTS = {
 def enabled():
     # Somente clientes que optam explicitamente por conversation=true usam isto.
     return os.getenv("TIMO_OLLAMA_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_question_echo(text, reply):
+    """Detecta cópia ou reformulação muito próxima, sem bloquear saudações curtas."""
+    question, answer = normalize_command(text), normalize_command(reply)
+    if len(question) < 12 or not answer:
+        return False
+    if question == answer:
+        return True
+    is_question = "?" in text or re.match(r"^(quant\w*|qual|quais|como|onde|quem|por que)\b", question)
+    return bool(is_question and SequenceMatcher(None, question, answer).ratio() >= 0.82)
 
 
 def clean_history(value):
@@ -56,7 +69,13 @@ def clean_history(value):
             break
         result.append({"role": item["role"], "content": content})
         remaining -= len(content)
-    return list(reversed(result))
+    cleaned = []
+    for item in reversed(result):
+        if (item["role"] == "assistant" and cleaned and cleaned[-1]["role"] == "user"
+                and is_question_echo(cleaned[-1]["content"], item["content"])):
+            continue  # Ecos antigos não devem virar exemplos para a próxima resposta.
+        cleaned.append(item)
+    return cleaned
 
 
 def _followup_period(command):
@@ -153,6 +172,16 @@ def chat(text, history):
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, str) or not content.strip() or body.get("done") is not True:
                 return _unavailable("unavailable")
+            if is_question_echo(text, content):
+                return {
+                    "success": False, "understood": False, "intent": None, "action": None,
+                    "source": "ollama", "conversation_status": "unanswered",
+                    "message": (
+                        "Não consegui responder a essa pergunta. Posso consultar faltas, reservas "
+                        "disponíveis, vagas e o total de PCDs cadastrados. Para outro assunto, "
+                        "me dê um pouco mais de contexto."
+                    ),
+                }
             return {
                 "success": True, "understood": True, "intent": None, "action": None,
                 "source": "ollama", "conversation_status": "ready", "message": content.strip()[:2000],
