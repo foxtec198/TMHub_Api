@@ -22,6 +22,11 @@ def automate_import():
     return service.automate_import()
 
 
+@journey_bp.get("/opcoes-filtros")
+def filter_options():
+    return service.filter_options()
+
+
 @journey_bp.patch("/<int:record_id>")
 def update_record(record_id):
     return service.update_record(record_id)
