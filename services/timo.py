@@ -23,6 +23,7 @@ from models.timo_aprendizados import TimoLearningExample
 from models.timo_configuracoes import TimoCommandTrigger, TimoIntentConfiguration
 from timo.analytics_catalog import ANALYTICS_INTENTS, analytics_intent_for_command
 from timo.command_catalog import known_intent_for_command
+from timo import conversation
 from timo.entities import extract_entities, extract_period
 from timo.navigation_catalog import (
     NAVIGATION_ACTION_PATHS,
@@ -540,12 +541,26 @@ class TimoCommandService:
             except Exception:
                 return jsonify("Credencial do Timo Voice Agent inválida ou revogada."), 401
         body = request.get_json(silent=True) or {}
-        command = self._normalize(body.get("text") or body.get("command"))
+        if not isinstance(body, dict):
+            return jsonify({"message": "Informe uma mensagem válida."}), 400
+        raw_text = body.get("text") or body.get("command") or ""
+        if not isinstance(raw_text, str):
+            return jsonify({"message": "Informe uma mensagem de texto."}), 400
+        raw_text = raw_text.strip()
+        command = self._normalize(raw_text)
         if not command:
             return jsonify({"success": False, "message": "Não entendi o comando.", "action": None}), 400
-        if len(command) > 500:
+        if len(raw_text) > 500:
             return jsonify({"success": False, "message": "Esse comando é muito longo.", "action": None}), 400
 
+        conversational = (
+            body.get("conversation") is True
+            and request.headers.get("X-Timo-Channel") == "web-text"
+            and token_data.get("typ") != "timo_voice_agent"
+            and conversation.enabled()
+        )
+        history = conversation.clean_history(body.get("history")) if conversational else []
+        followup = conversation.followup_query(command, history) if conversational else None
         custom_configuration = self._custom_configuration_for_command(command)
         navigation_intent = None if custom_configuration else navigation_intent_for_command(command)
         analytics_intent = (
@@ -563,6 +578,15 @@ class TimoCommandService:
             if custom_configuration or navigation_intent or analytics_intent or trained_learning_intent
             else known_intent_for_command(command)
         )
+        if followup and not custom_configuration:
+            known_command = {"intent": followup["intent"]}
+            command = followup["period_text"]
+        if conversational and not any((
+            custom_configuration, navigation_intent, analytics_intent,
+            trained_learning_intent, known_command,
+        )):
+            # Bate-papo não é exemplo de treino nem uma previsão estatística de ação.
+            return jsonify(conversation.chat(raw_text, history)), 200
         prediction = (
             predictor.predict(command)
             if not custom_configuration and not navigation_intent and not analytics_intent
