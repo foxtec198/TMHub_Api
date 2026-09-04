@@ -38,6 +38,7 @@ class MarketplaceService:
         {"codigo": "timo_cenario_christmas", "nome": "Oficina de Natal", "descricao": "Uma oficina iluminada, cercada por neve, presentes e o aconchego do Natal.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
         {"codigo": "timo_cenario_halloween", "nome": "Noite de Halloween", "descricao": "Laboratório noturno com abóboras, névoa e luzes misteriosamente divertidas.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
         {"codigo": "timo_cenario_muertos", "nome": "Jardim de Cempasúchil", "descricao": "Uma celebração luminosa de memórias entre flores, velas e cores vibrantes.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
+        {"codigo": "timo_cenario_cyber", "nome": "Laboratório Cyber", "descricao": "Futurista neon com tons de cyan e vermelho para o Timo Cyber.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
     )
 
     @staticmethod
