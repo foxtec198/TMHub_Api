@@ -35,6 +35,7 @@ class MarketplaceService:
         {"codigo": "adorno_orgulho", "nome": "Orgulho", "descricao": "Um aro multicolorido para personalizar a foto de perfil.", "categoria": "adorno", "preco": 80},
         {"codigo": "adorno_conquista", "nome": "Conquista", "descricao": "Estrelas douradas para celebrar metas e reconhecimentos.", "categoria": "adorno", "preco": 100},
         {"codigo": "timo_gold", "nome": "Timo Gold Premium", "descricao": "Metal escovado, brilho champanhe e acabamento premium para o Timo.", "categoria": "timo_skin", "preco": 20000, "destaque": True},
+        {"codigo": "timo_cyber", "nome": "Timo Cyber Premium", "descricao": "Acabamento neon cyan com detalhes em vermelho para o Timo.", "categoria": "timo_skin", "preco": 2000, "destaque": True},
         {"codigo": "timo_cenario_christmas", "nome": "Oficina de Natal", "descricao": "Uma oficina iluminada, cercada por neve, presentes e o aconchego do Natal.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
         {"codigo": "timo_cenario_halloween", "nome": "Noite de Halloween", "descricao": "Laboratório noturno com abóboras, névoa e luzes misteriosamente divertidas.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
         {"codigo": "timo_cenario_muertos", "nome": "Jardim de Cempasúchil", "descricao": "Uma celebração luminosa de memórias entre flores, velas e cores vibrantes.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
