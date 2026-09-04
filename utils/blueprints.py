@@ -41,6 +41,7 @@ from routes.timo_voice_agents import timo_voice_agents_bp
 from routes.tickets import tickets_bp
 from routes.dashboard_medidas_disciplinares import disciplinary_measures_dashboard_bp
 from routes.dashboard_experiencias import experience_dashboard_bp
+from routes.dashboard_jornadas import journey_dashboard_bp
 from routes.avaliacoes_experiencia import experience_evaluations_bp
 from routes.exames_periodicos import periodic_exams_bp
 from routes.uso_tmhub import usage_bp
@@ -72,6 +73,7 @@ blueprints = {
     termination_dashboard_bp: "/dash/rescisoes",
     disciplinary_measures_dashboard_bp: "/dash/medidas-disciplinares",
     experience_dashboard_bp: "/dash/experiencias",
+    journey_dashboard_bp: "/dash/jornadas",
     dashboard_reservas_bp: "/dash/reservas",
 
     #Estoque

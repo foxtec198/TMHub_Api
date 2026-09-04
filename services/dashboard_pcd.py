@@ -44,7 +44,17 @@ def _parse_branch_ids(raw_value):
         return None
 
 
-def _empty_pcd_dashboard(branches):
+def _requested_integers(name):
+    values = set()
+    for value in str(rq.args.get(name) or "").split(","):
+        try:
+            values.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _empty_pcd_dashboard(branches, departments=None):
     return {
         "filiais_disponiveis": [
             {"id": branch.id, "nome": branch.nome}
@@ -60,6 +70,7 @@ def _empty_pcd_dashboard(branches):
         },
         "filiais": [],
         "tipos_deficiencia": [],
+        "filtros": {"departamentos": sorted(departments or [], key=str)},
     }
 
 
@@ -211,9 +222,39 @@ class PcdDashboardService:
         selected_center_ids = set().union(
             *branch_centers.values(),
         )
+        department_options = {
+            str(department)
+            for department, in db.session.query(CostCenters.departamento)
+            .filter(
+                CostCenters.id.in_(selected_center_ids),
+                CostCenters.departamento.isnot(None),
+            )
+            .distinct()
+            .all()
+        }
+        selected_departments = _requested_integers("departamento")
+        requested_centers = _requested_integers("centro_custo_id")
+        if selected_departments or requested_centers:
+            structural_query = db.session.query(CostCenters.id).filter(
+                CostCenters.id.in_(selected_center_ids),
+            )
+            structural_conditions = []
+            if selected_departments:
+                structural_conditions.append(
+                    CostCenters.departamento.in_(selected_departments),
+                )
+            if requested_centers:
+                structural_conditions.append(CostCenters.id.in_(requested_centers))
+            scoped_center_ids = {
+                center_id
+                for center_id, in structural_query.filter(or_(*structural_conditions)).all()
+            }
+            selected_center_ids.intersection_update(scoped_center_ids)
+            for branch_center_ids in branch_centers.values():
+                branch_center_ids.intersection_update(scoped_center_ids)
         if not selected_center_ids:
             return jsonify(
-                _empty_pcd_dashboard(available_branches),
+                _empty_pcd_dashboard(available_branches, department_options),
             ), 200
 
         employees = (
@@ -284,4 +325,5 @@ class PcdDashboardService:
                     key=lambda item: (-item[1], item[0]),
                 )
             ],
+            "filtros": {"departamentos": sorted(department_options, key=str)},
         }), 200
