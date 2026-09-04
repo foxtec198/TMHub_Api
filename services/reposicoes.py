@@ -770,6 +770,14 @@ class RequestService:
         absent_employee = db.session.get(Employees, ausente_id)
         if not absent_employee:
             return jsonify("Colaborador ausente não encontrado."), 404
+        
+        # Verificar se o ausente é uma reserva e, se for, tratar como sem cobertura
+        floater = Floaters.query.filter(Floaters.employee_id == ausente_id).first()
+        if floater:
+            # O ausente é uma reserva; tratar como falta automaticamente
+            reserva_id = 0  # Sem cobertura
+            status = "reproved"  # Reprovada automaticamente
+        
         # Valida o vínculo real do ausente antes de aceitar um centro enviado
         # pelo cliente; trocar centro_id não pode contornar o escopo.
         if not can_access_cost_center(token_data, absent_employee.centro_id) or not is_supervisor_responsible_for_center(supervisor_usuario_id, absent_employee.centro_id):
@@ -882,18 +890,51 @@ class RequestService:
         db.session.add(new_rq)
         db.session.flush()
         if motivo not in self.ISNOTFAULT: AbsenceControlService.ensure_for_request(new_rq)
+        
+        # Criar histórico inicial quando a requisição é criada
+        from models.rp_historico import History
+        hist = History(
+            requisicao_id=new_rq.id,
+            ausente_id=new_rq.ausente_id,
+            reserva_id=new_rq.reserva_id,
+            cc=new_rq.cc,
+            supervisor_id=new_rq.supervisor_id,
+            supervisor_usuario_id=new_rq.supervisor_usuario_id,
+            status=new_rq.status,
+            created_at=new_rq.created_at,
+            motivo=new_rq.motivo,
+            obs=new_rq.obs,
+        )
+        db.session.add(hist)
+        print(f"[DEBUG] Histórico criado - Requisição ID: {new_rq.id}, Status: {new_rq.status}")
+        
+        # Verificar se o ausente é uma reserva para gerar histórico adequado
+        floater = Floaters.query.filter(Floaters.employee_id == ausente_id).first()
+        if floater:
+            # Histórico especial para falta de reserva
+            print(f"[DEBUG] Criando histórico para falta de reserva - Floater ID: {floater.id}")
+            TimelineService().create_event(
+                req=new_rq,
+                status="reproved",
+                tipo="Falta da reserva técnica",
+                obs=f"Reserva {floater.id} (colaborador {ausente_id}) marcada como indisponível. Requisição reprovada automaticamente.",
+                criado_por_usuario_id=token_data.get("id"),
+            )
+            print(f"[DEBUG] Timeline criado com sucesso!")
+        else:
+            # Histórico normal
+            TimelineService().create_event(
+                req=new_rq,
+                status=status,
+                tipo="Criação da requisição",
+                obs=obs,
+                criado_por_usuario_id=token_data.get("id"),
+            )
+        
         db.session.commit()
 
         disciplinary_context = self._disciplinary_context(
             absent_employee.id,
-        )
-
-        TimelineService().create_event(
-            req=new_rq,
-            status=status,
-            tipo="Criação da requisição",
-            obs=obs,
-            criado_por_usuario_id=token_data.get("id"),
         )
         
         socketio.emit("new_request")
@@ -1206,6 +1247,24 @@ class RequestService:
         init = day.replace(hour=0, minute=0, second=0, microsecond=0)
         end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+        # Filtrar por departamento se passado
+        departamento_param = request.args.get("departamento")
+        departamento_ids = None
+        if departamento_param:
+            try:
+                departamento_ids = [int(x) for x in departamento_param.split(",") if x.strip()]
+            except ValueError:
+                pass
+
+        # Filtrar por centro de custo se passado
+        centro_param = request.args.get("centro")
+        centro_ids = None
+        if centro_param:
+            try:
+                centro_ids = [int(x) for x in centro_param.split(",") if x.strip()]
+            except ValueError:
+                pass
+
         # Durações antigas não bloqueiam datas posteriores; somente o dia de abertura conta.
         used_ids = {
             row[0] for row in db.session.query(Requisicao.reserva_id)
@@ -1245,6 +1304,8 @@ class RequestService:
                 last_usage.c.ultimo_contrato,
                 Floaters.disponivel,
                 Floaters.indisponibilidade_motivo,
+                CostCenters.departamento.label("departamento"),
+                CostCenters.local.label("centro"),
             )
             .select_from(Floaters)
             .join(Employees, Employees.id == Floaters.employee_id)
@@ -1265,6 +1326,19 @@ class RequestService:
         reservation_query = apply_cost_center_scope(
             reservation_query, Employees.centro_id, token_data
         )
+        
+        # Aplicar filtros adicionais se fornecidos
+        if centro_ids:
+            # Filtrar por centros de custo primeiro
+            reservation_query = reservation_query.filter(
+                CostCenters.id.in_(centro_ids)
+            )
+        if departamento_ids:
+            # Filtrar por departamentos
+            reservation_query = reservation_query.filter(
+                CostCenters.departamento.in_(departamento_ids)
+            )
+        
         reservations = reservation_query.all()
         response = [{**row._asdict(), "usada": row.id in used_ids} for row in reservations]
         return jsonify({
@@ -1654,3 +1728,59 @@ class TimelineService:
         if requisicao_id: query = query.filter(Timeline.requisicao_id == requisicao_id)
         timelines = query.all()
         return jsonify([t._asdict() for t in timelines]), 200
+
+    @safe_route
+    def mark_reservation_absent(self, token_data):
+        """Lança falta em uma reserva e reprova a requisição automaticamente."""
+        bd = request.get_json(silent=True) or {}
+        
+        reserva_floater_id = bd.get("reserva_floater_id")
+        requisicao_id = bd.get("requisicao_id")
+        motivo_falta = bd.get("motivo_falta")
+        
+        if not reserva_floater_id or not requisicao_id:
+            return jsonify("Dados inválidos."), 400
+        
+        # Buscar a requisição
+        req = Requisicao.query.filter(Requisicao.id == requisicao_id).first()
+        if not req:
+            return jsonify("Requisição não encontrada."), 404
+        
+        # Verificar permissão
+        if not can_access_cost_center(token_data, req.cc):
+            return jsonify("Você não possui acesso à filial desta requisição."), 403
+        
+        # Atualizar a reserva como indisponível
+        reserva = Floaters.query.filter(Floaters.id == reserva_floater_id).first()
+        if not reserva:
+            return jsonify("Reserva não encontrada."), 404
+        
+        reserva.disponivel = False
+        reserva.motivo_indisponibilidade = motivo_falta or "FALTA"
+        
+        # Atualizar a requisição como sem cobertura
+        req.reserva_id = 0  # Sem cobertura
+        req.status = "reproved"
+        req.observacao = f"Falta lançada por {token_data.get('nome', 'usuário')}: {motivo_falta or 'FALTA'}"
+        
+        db.session.commit()
+        
+        # Registrar no histórico
+        history = History(
+            requisicao_id=requisicao_id,
+            ausente_id=req.ausente_id,
+            reserva_id=0,
+            supervisor_id=req.supervisor_id,
+            supervisor_usuario_id=token_data.get("id"),
+            motivo=motivo_falta or "FALTA",
+            obs=f"Falta lançada. Reserva marcada como indisponível.",
+            status="reproved"
+        )
+        db.session.add(history)
+        db.session.commit()
+        
+        # Emitir socket para atualizar em tempo real
+        socketio.emit("new_history")
+        socketio.emit("new_request")
+        
+        return jsonify({"message": "Falta lançada com sucesso."}), 200
