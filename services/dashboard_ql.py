@@ -10,6 +10,7 @@ from models.colaboradores import Employees
 from models.filiais import (
     Branch,
     filial_centros_custo,
+    filial_departamentos,
     filial_usuarios,
 )
 from models.empresas import Company
@@ -62,15 +63,34 @@ class QLDashboardService:
         if not mapping:
             return mapping
 
+        # Centros de custo diretamente vinculados à filial
         direct_rows = (
             db.session.query(
                 filial_centros_custo.c.filial_id,
                 filial_centros_custo.c.centro_custo_id,
             )
             .filter(filial_centros_custo.c.filial_id.in_(mapping))
+            .distinct()
             .all()
         )
         for branch_id, center_id in direct_rows:
+            mapping[branch_id].add(center_id)
+
+        # Departamentos diretamente vinculados à filial
+        department_rows = (
+            db.session.query(
+                filial_departamentos.c.filial_id,
+                CostCenters.id.label("centro_custo_id"),
+            )
+            .join(
+                CostCenters,
+                CostCenters.departamento == filial_departamentos.c.departamento,
+            )
+            .filter(filial_departamentos.c.filial_id.in_(mapping))
+            .distinct()
+            .all()
+        )
+        for branch_id, center_id in department_rows:
             mapping[branch_id].add(center_id)
 
         # O vínculo direto é a fonte oficial: o mesmo DPTO pode existir em
