@@ -1,11 +1,17 @@
 from services.reposicoes import HistoryService, RequestService, TimelineService
 from flask import Blueprint, request as rq
+from services.reposicoes import RequestService
+from flask import jsonify
+from utils.filial_scope import active_cost_center_ids_query
+from utils.db import db
+from models.centros_de_custo import CostCenters
 
 replace_bp = Blueprint("Reposições", __name__)
 
 history_service = HistoryService()
 rq_service = RequestService()
 timeline_service = TimelineService()
+
 
 # Aprova ou reprova uma requisição e registra o respectivo histórico.
 @replace_bp.route("", methods=["POST"])
@@ -52,6 +58,36 @@ def import_requests(): return rq_service.import_requests()
 
 @replace_bp.get("/reservas-uso")
 def daily_reservations(): return rq_service.daily_reservations()
+
+@replace_bp.post("/reserva/lancar-falta")
+def mark_reservation_absent():
+    """Lança falta em uma reserva e reprova a requisição automaticamente."""
+    bd = rq.get_json(silent=True) or {}
+    return RequestService().mark_reservation_absent(bd)
+
+@replace_bp.get("/opcoes-filtros")
+def filter_options():
+    """Retorna as opções de filtros para departamentos e centros de custo."""
+    
+    # Obter departamentos únicos dos centros de custo ativos
+    department_options = db.session.query(
+        CostCenters.departamento.label("value")
+    ).filter(
+        CostCenters.id.in_(active_cost_center_ids_query())
+    ).distinct().all()
+    
+    # Obter centros de custo ativos
+    cost_center_options = db.session.query(
+        CostCenters.id.label("value"),
+        CostCenters.local.label("label")
+    ).filter(
+        CostCenters.id.in_(active_cost_center_ids_query())
+    ).order_by(CostCenters.local).all()
+    
+    return jsonify({
+        "departamentos": [{"value": row.value, "label": f"DPTO. {row.value}"} for row in department_options],
+        "centros": [{"value": row.value, "label": row.label} for row in cost_center_options]
+    })
 
 # Timeline de auditoria da requisição.
 @replace_bp.route("/timeline", methods=["GET"])

@@ -44,6 +44,17 @@ def _selected_values(name):
     }
 
 
+def _selected_list(name):
+    """Lê parâmetros como lista de valores (não apenas números)."""
+    result = set()
+    for raw in request.args.getlist(name):
+        for value in str(raw).split(","):
+            stripped = str(value).strip()
+            if stripped:
+                result.add(stripped)
+    return result
+
+
 def _selected_company_departments():
     selected = set()
     for raw in request.args.getlist("departamento_empresa"):
@@ -408,6 +419,7 @@ class QLDashboardService:
 
         selected_departments = _selected_values("departamento")
         selected_companies = _selected_values("empresa")
+        selected_situacoes = _selected_list("situacao")
         global_company_ids = requested_company_ids()
         if global_company_ids is not None:
             selected_companies = global_company_ids
@@ -418,6 +430,7 @@ class QLDashboardService:
             if (not selected_departments or row.departamento in selected_departments)
             and (not selected_companies or row.empresa_id in selected_companies)
             and (not selected_company_departments or (row.empresa_id, row.departamento) in selected_company_departments)
+            and (not selected_situacoes or self._serialize_department(row)["situacao"] in selected_situacoes)
         ]
 
         month_days = self._month_days(reference_month)
@@ -479,6 +492,7 @@ class QLDashboardService:
 
         selected_departments = _selected_values("departamento")
         selected_companies = _selected_values("empresa")
+        selected_situacoes = _selected_list("situacao")
         global_company_ids = requested_company_ids()
         if global_company_ids is not None:
             selected_companies = global_company_ids
@@ -489,6 +503,7 @@ class QLDashboardService:
             if (not selected_departments or row.departamento in selected_departments)
             and (not selected_companies or row.empresa_id in selected_companies)
             and (not selected_company_departments or (row.empresa_id, row.departamento) in selected_company_departments)
+            and (not selected_situacoes or self._serialize_department(row)["situacao"] in selected_situacoes)
         ]
         expected_rows = [row for row in departments if row["capacidade_esperada"] is not None]
         summary = {

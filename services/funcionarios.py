@@ -10,6 +10,7 @@ from models.cargos import Cargos
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.empresas import Company
+from models.reservas_tecnicas import Floaters
 from models.situacoes import Situations
 from models.usuarios import Users
 from utils.db import db
@@ -38,12 +39,13 @@ class EmployeesService:
             CostCenters.local.label("centro_local"), CostCenters.departamento,
             Cargos.id.label("cargo_id"), Cargos.nome.label("cargo"),
             Situations.id.label("situacao_id"), Situations.tipo.label("situacao"),
+            Floaters.id.label("floater_id"),
         ]
         if include_cpf:
             columns.insert(3, Employees.cpf)
         return db.session.query(*columns).select_from(Employees).outerjoin(Company, Company.id == Employees.empresa_id).outerjoin(
             Cargos, Cargos.id == Employees.cargo).outerjoin(Situations, Situations.id == Employees.situacao).outerjoin(
-            CostCenters, CostCenters.id == Employees.centro_id)
+            CostCenters, CostCenters.id == Employees.centro_id).outerjoin(Floaters, Floaters.employee_id == Employees.id)
 
     @staticmethod
     def _apply_filters(query):
