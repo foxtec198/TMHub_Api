@@ -19,6 +19,7 @@ ONBOARDING_PATHS = {
 PUBLIC_PATHS = {"/", "/login", "/docs", "/openapi.json"}
 PUBLIC_PREFIXES = ("/updates/", "/oidc/")
 AGENT_ALLOWED_PATHS = {"/timo/process", "/timo/agentes/tema"}
+PONTOMAIS_RPA_ALLOWED_PATHS = {"/jornadas/importar"}
 
 
 def _maintenance_response():
@@ -54,8 +55,11 @@ def enforce_auth_state():
     except InvalidTokenError: return jsonify("Token de acesso inválido."), 401
 
     is_timo_voice_agent = token_data.get("typ") == "timo_voice_agent"
+    is_pontomais_rpa = token_data.get("typ") == "pontomais_rpa"
     if is_timo_voice_agent and normalized_path not in AGENT_ALLOWED_PATHS:
         return jsonify("A credencial do Timo Voice Agent não permite esta operação."), 403
+    if is_pontomais_rpa and normalized_path not in PONTOMAIS_RPA_ALLOWED_PATHS:
+        return jsonify("A credencial do agente Ponto Mais não permite esta operação."), 403
 
     user = db.session.get(Users, token_data.get("id"))
     if not user:
@@ -66,6 +70,10 @@ def enforce_auth_state():
     # do usuário. A validação completa (agente + proprietário) ocorre no serviço
     # do Timo antes de processar qualquer comando.
     if is_timo_voice_agent:
+        return None
+    if is_pontomais_rpa:
+        if int(token_data.get("ver", 0)) != int(user.token_version or 0):
+            return jsonify("A credencial temporária do agente foi invalidada."), 401
         return None
     if int(token_data.get("ver", 0)) != int(user.token_version or 0):
         return jsonify("Esta sessão foi invalidada. Entre novamente."), 401
