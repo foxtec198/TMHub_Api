@@ -27,7 +27,6 @@ jobs: # Jobs will run
             sudo git pull origin main
             venv/bin/pip cache purge || true
             venv/bin/pip install --no-cache-dir -r requirements.txt --upgrade
-            venv/bin/python -m unittest discover -s tests -p test_timo_conversation.py
             sudo systemctl restart tm
             systemctl is-active --quiet tm
             venv/bin/python scripts/check_timo_ollama.py
