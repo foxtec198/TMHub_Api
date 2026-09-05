@@ -742,8 +742,13 @@ class UserServices:
 
         if timo_cenario is not None:
             timo_cenario = str(timo_cenario).strip().lower()
+            # Compatibilidade com a primeira versão do front, que usava
+            # "cyberpunk" enquanto o produto do Marketplace sempre foi
+            # catalogado como timo_cenario_cyber.
+            if timo_cenario == "cyberpunk":
+                timo_cenario = "cyber"
             base_scenarios = {"workshop", "orbit", "garden"}
-            premium_scenarios = {"christmas", "halloween", "muertos"}
+            premium_scenarios = {"christmas", "halloween", "muertos", "cyber"}
             if timo_cenario not in base_scenarios | premium_scenarios:
                 return jsonify("Cenário do Timo inválido."), 400
             if timo_cenario in premium_scenarios:
