@@ -26,7 +26,7 @@ AGENT_CATALOG = (
         "name": "HK Bot",
         "category": "HK",
         "capability": "hk_adjust",
-        "active": False,
+        "active": True,
         "description": "Inativo: depende de resolução, foco de tela e imagens de interface.",
     },
 )
