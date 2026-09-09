@@ -1,12 +1,14 @@
 # Regras de negócio de estrutura.
 # Dependências externas.
 from flask import current_app, jsonify, request
+from sqlalchemy.orm import selectinload
 
 # Módulos internos da aplicação.
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.empresas import Company
 from models.estrutura import StructureAsset, StructureLocation
+from models.filiais import Branch, filial_departamentos
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
 from models.usuarios import Users
@@ -27,14 +29,123 @@ def _text(value):
 
 
 class StructureService:
+    @staticmethod
+    def _contract_payload(
+        center,
+        locations=None,
+        assets=None,
+        location_count=None,
+        asset_count=None,
+        fallback_branches=None,
+    ):
+        locations = locations or []
+        assets = assets or []
+        branches = list(center.filiais) or (fallback_branches or [])
+        return {
+            "id": center.id,
+            "numero": center.centro_id,
+            "contrato": center.local,
+            "empresa_id": center.empresa_id,
+            "empresa_nome": center.empresa.nome if center.empresa else "SEM EMPRESA",
+            "filiais": [{"id": item.id, "nome": item.nome} for item in branches],
+            "supervisor_usuario_id": center.supervisor_usuario_id,
+            "supervisor_usuario_ids": [item.id for item in center.supervisores_usuarios],
+            "supervisores": [{"id": item.id, "nome": item.nome} for item in center.supervisores_usuarios],
+            "supervisor": ", ".join(item.nome for item in center.supervisores_usuarios) or "SEM SUPERVISOR",
+            "locais": locations,
+            "estrutura": StructureService._location_tree(locations),
+            "ativos": assets,
+            "locais_count": len(locations) if location_count is None else location_count,
+            "ativos_count": len(assets) if asset_count is None else asset_count,
+        }
+
+    @staticmethod
+    def _fallback_branches_by_department(centers):
+        """Mantém a regra legada de filial por departamento na navegação."""
+        department_ids = {center.departamento for center in centers if center.departamento is not None}
+        if not department_ids:
+            return {}
+        rows = (
+            db.session.query(filial_departamentos.c.departamento, Branch)
+            .join(Branch, Branch.id == filial_departamentos.c.filial_id)
+            .filter(
+                filial_departamentos.c.departamento.in_(department_ids),
+                Branch.ativa.is_(True),
+            )
+            .order_by(Branch.nome)
+            .all()
+        )
+        branches_by_department = {}
+        for department, branch in rows:
+            branches_by_department.setdefault(department, []).append(branch)
+        return branches_by_department
+
+    @staticmethod
+    def _recent_routines_by_location(center_id, locations):
+        """Retorna uma amostra curta de rotinas ativas por local do contrato."""
+        location_ids = [item.get("id") for item in locations if item.get("id")]
+        if not location_ids:
+            return {}
+        rows = (
+            SchedularRoutine.query
+            .filter(
+                SchedularRoutine.centro_custo_id == center_id,
+                SchedularRoutine.local_id.in_(location_ids),
+                SchedularRoutine.ativa.is_(True),
+            )
+            .order_by(SchedularRoutine.updated_at.desc(), SchedularRoutine.id.desc())
+            .all()
+        )
+        label_by_type = {
+            "data": "Por data",
+            "dia": "Por dia",
+            "diaria": "Diária",
+            "horario": "Por horário",
+            "horas": "Intervalo de horas",
+            "semanal": "Semanal",
+        }
+        routines_by_location = {}
+        for routine in rows:
+            items = routines_by_location.setdefault(routine.local_id, [])
+            if len(items) >= 3:
+                continue
+            next_execution = routine.proxima_execucao
+            items.append({
+                "id": routine.id,
+                "nome": routine.nome,
+                "recorrencia_label": label_by_type.get(
+                    routine.recorrencia_tipo or routine.recorrencia,
+                    "Recorrência configurada",
+                ),
+                "proxima_execucao": next_execution.isoformat() if next_execution else None,
+            })
+        return routines_by_location
+
+    @staticmethod
+    def _departments_payload(centers, contract_for_center):
+        departments = {}
+        for center in centers:
+            department = str(center.departamento or "SEM DEPARTAMENTO")
+            departments.setdefault(department, []).append(contract_for_center(center))
+        return [
+            {"departamento": department, "contratos": contracts}
+            for department, contracts in departments.items()
+        ]
+
     @safe_route
     def read(self, token_data):
         centers = (
             apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
+            .options(
+                selectinload(CostCenters.empresa),
+                selectinload(CostCenters.filiais),
+                selectinload(CostCenters.supervisores_usuarios),
+            )
             .order_by(CostCenters.departamento, CostCenters.local)
             .all()
         )
         center_ids = [center.id for center in centers]
+        fallback_branches_by_department = self._fallback_branches_by_department(centers)
         locations = (
             StructureLocation.query
             .filter(StructureLocation.centro_custo_id.in_(center_ids))
@@ -56,30 +167,95 @@ class StructureService:
         for item in assets:
             assets_by_center.setdefault(item.centro_custo_id, []).append(item.to_dict())
 
-        departments = {}
-        for center in centers:
-            department = str(center.departamento or "SEM DEPARTAMENTO")
-            departments.setdefault(department, []).append({
-                "id": center.id,
-                "numero": center.centro_id,
-                "contrato": center.local,
-                "empresa_id": center.empresa_id,
-                "empresa_nome": center.empresa.nome if center.empresa else "SEM EMPRESA",
-                # O cadastro legado não define mais o responsável atual. Se o
-                # backfill não encontrou usuario_id, o contrato fica sem
-                # supervisor deliberadamente.
-                "supervisor_usuario_id": center.supervisor_usuario_id,
-                "supervisor_usuario_ids": [item.id for item in center.supervisores_usuarios],
-                "supervisores": [{"id": item.id, "nome": item.nome} for item in center.supervisores_usuarios],
-                "supervisor": ", ".join(item.nome for item in center.supervisores_usuarios) or "SEM SUPERVISOR",
-                "locais": locations_by_center.get(center.id, []),
-                "estrutura": self._location_tree(locations_by_center.get(center.id, [])),
-                "ativos": assets_by_center.get(center.id, []),
-            })
-        return jsonify([
-            {"departamento": department, "contratos": contracts}
-            for department, contracts in departments.items()
-        ])
+        return jsonify(self._departments_payload(
+            centers,
+            lambda center: self._contract_payload(
+                center,
+                locations_by_center.get(center.id, []),
+                assets_by_center.get(center.id, []),
+                fallback_branches=fallback_branches_by_department.get(center.departamento, []),
+            ),
+        ))
+
+    @safe_route
+    def read_navigator(self, token_data):
+        """Retorna somente os dados necessários para escolher um contrato."""
+        centers = (
+            apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
+            .options(
+                selectinload(CostCenters.empresa),
+                selectinload(CostCenters.filiais),
+                selectinload(CostCenters.supervisores_usuarios),
+            )
+            .order_by(CostCenters.departamento, CostCenters.local)
+            .all()
+        )
+        center_ids = [center.id for center in centers]
+        fallback_branches_by_department = self._fallback_branches_by_department(centers)
+        if not center_ids:
+            return jsonify([])
+
+        location_counts = dict(
+            db.session.query(StructureLocation.centro_custo_id, db.func.count(StructureLocation.id))
+            .filter(StructureLocation.centro_custo_id.in_(center_ids))
+            .group_by(StructureLocation.centro_custo_id)
+            .all()
+        )
+        asset_counts = dict(
+            db.session.query(StructureAsset.centro_custo_id, db.func.count(StructureAsset.id))
+            .filter(StructureAsset.centro_custo_id.in_(center_ids))
+            .group_by(StructureAsset.centro_custo_id)
+            .all()
+        )
+        return jsonify(self._departments_payload(
+            centers,
+            lambda center: self._contract_payload(
+                center,
+                location_count=location_counts.get(center.id, 0),
+                asset_count=asset_counts.get(center.id, 0),
+                fallback_branches=fallback_branches_by_department.get(center.departamento, []),
+            ),
+        ))
+
+    @safe_route
+    def read_contract(self, center_id, token_data):
+        center = (
+            apply_cost_center_scope(CostCenters.query, CostCenters.id, token_data)
+            .options(
+                selectinload(CostCenters.empresa),
+                selectinload(CostCenters.filiais),
+                selectinload(CostCenters.supervisores_usuarios),
+            )
+            .filter(CostCenters.id == center_id)
+            .first()
+        )
+        if not center:
+            return jsonify("Contrato não encontrado ou sem acesso."), 404
+
+        locations = [
+            item.to_dict()
+            for item in StructureLocation.query.filter_by(centro_custo_id=center.id)
+            .order_by(StructureLocation.ordem, StructureLocation.nome)
+            .all()
+        ]
+        assets = [
+            item.to_dict()
+            for item in StructureAsset.query.filter_by(centro_custo_id=center.id)
+            .order_by(StructureAsset.nome)
+            .all()
+        ]
+        recent_routines_by_location = self._recent_routines_by_location(center.id, locations)
+        for location in locations:
+            location["rotinas_recentes"] = recent_routines_by_location.get(location["id"], [])
+        fallback_branches_by_department = self._fallback_branches_by_department([center])
+        return jsonify({
+            "contrato": self._contract_payload(
+                center,
+                locations,
+                assets,
+                fallback_branches=fallback_branches_by_department.get(center.departamento, []),
+            ),
+        })
 
     @staticmethod
     def _location_tree(items):

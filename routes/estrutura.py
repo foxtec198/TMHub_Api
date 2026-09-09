@@ -25,6 +25,16 @@ def supervisors():
     return service.read_supervisors()
 
 
+@structure_bp.get("/navegador")
+def navigator():
+    return service.read_navigator()
+
+
+@structure_bp.get("/contratos/<int:center_id>")
+def contract(center_id):
+    return service.read_contract(center_id)
+
+
 @structure_bp.patch("/contratos/<int:center_id>/supervisor")
 def update_contract_supervisor(center_id):
     return service.update_contract_supervisor(center_id)
