@@ -573,7 +573,7 @@ class UserServices:
     def _apply_user_changes(self, user, body):
         from models.setores import Sector
 
-        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions", "setor_id")):
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions", "setor_id", "ativo")):
             return "Nenhuma alteração informada."
 
         if "nome" in body:
@@ -628,6 +628,9 @@ class UserServices:
 
         if "gerencia_faltas" in body:
             user.gerencia_faltas = bool(body.get("gerencia_faltas"))
+
+        if "ativo" in body:
+            user.ativo = bool(body.get("ativo"))
 
         refresh_user_requirements(user)
         return None
