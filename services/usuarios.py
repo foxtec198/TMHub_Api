@@ -122,6 +122,7 @@ class UserServices:
             "cpf": user.cpf if admin else None,
             "role": user.role,
             "gerencia_faltas": bool(user.gerencia_faltas),
+            "ativo": bool(user.ativo),
             "created_at": user.created_at,
             "last_login": user.last_login,
             "filial_ids": sorted(branch.id for branch in user.filiais),
