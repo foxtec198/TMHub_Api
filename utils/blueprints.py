@@ -18,6 +18,7 @@ from routes.produtos import produtos_bp
 from routes.movimentacoes_estoque import movimentos_bp
 from routes.movimentacoes_ativos import asset_movements_bp
 
+from routes.setores import setores_bp
 from routes.admissao import admissao_bp
 from routes.ponto48 import ponto48_bp
 from routes.pcd import pcd_bp
@@ -82,6 +83,9 @@ blueprints = {
     produtos_bp: "/estoque/produtos",
     movimentos_bp: "/estoque/movimentos",
     asset_movements_bp: "/estoque/movimentos/ativos",
+
+    # Setores
+    setores_bp: "/setores",
 
     #Admissão
     admissao_bp: "/admissao/vagas",

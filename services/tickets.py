@@ -6,11 +6,14 @@ from secrets import choice
 # Dependências externas.
 from flask import jsonify, request
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 
 # Módulos internos da aplicação.
 from models.tc_comentarios import TicketComment
+from models.tc_anexos import TicketAttachment
 from models.tc_historico import Ticket
 from models.tc_motivos import TicketReason
+from models.setores import Sector
 from models.filiais import Branch
 from models.usuarios import Users
 from utils.db import db
@@ -65,7 +68,11 @@ def _serialize_user(user):
 def _serialize_reason(reason):
     if not reason:
         return None
-    return {"id": reason.id, "nome": reason.nome, "ativo": bool(reason.ativo)}
+    result = {"id": reason.id, "nome": reason.nome, "ativo": bool(reason.ativo), "setor_id": reason.setor_id}
+    # Se o relacionamento setor estiver carregado, inclui o nome
+    if hasattr(reason, 'setor') and reason.setor:
+        result["setor"] = {"id": reason.setor.id, "nome": reason.setor.nome}
+    return result
 
 
 def _serialize_branch(branch):
@@ -264,7 +271,7 @@ class TicketService:
         include_inactive = str(request.args.get("include_inactive") or "").lower() in {"1", "true", "yes"}
         if include_inactive and not is_admin(token_data):
             return jsonify("Apenas administradores podem consultar motivos inativos."), 403
-        query = TicketReason.query
+        query = TicketReason.query.options(joinedload(TicketReason.setor))
         if not include_inactive:
             query = query.filter_by(ativo=True)
         reasons = query.order_by(TicketReason.nome).all()
@@ -280,7 +287,15 @@ class TicketService:
         duplicate = TicketReason.query.filter(db.func.lower(TicketReason.nome) == name.lower()).first()
         if duplicate:
             return jsonify("Esse motivo já está cadastrado."), 409
-        reason = TicketReason(nome=name[:120], ativo=True)
+        setor_id = (request.get_json(silent=True) or {}).get("setor_id")
+        # Validar setor se informado
+        if setor_id is not None:
+            setor = db.session.get(Sector, setor_id)
+            if not setor:
+                return jsonify("Setor não encontrado."), 404
+            if not setor.ativo:
+                return jsonify("Setor está inativo."), 400
+        reason = TicketReason(nome=name[:120], ativo=True, setor_id=setor_id)
         db.session.add(reason)
         db.session.commit()
         return jsonify(_serialize_reason(reason)), 201
@@ -304,6 +319,15 @@ class TicketService:
             reason.nome = name[:120]
         if "ativo" in body:
             reason.ativo = bool(body.get("ativo"))
+        if "setor_id" in body:
+            setor_id = body.get("setor_id")
+            if setor_id is not None:
+                setor = db.session.get(Sector, setor_id)
+                if not setor:
+                    return jsonify("Setor não encontrado."), 404
+                reason.setor_id = setor.id
+            else:
+                reason.setor_id = None
         db.session.commit()
         return jsonify(_serialize_reason(reason))
 
@@ -312,12 +336,16 @@ class TicketService:
         if not is_admin(token_data):
             return jsonify("Apenas administradores podem direcionar chamados."), 403
         term = str(request.args.get("q") or "").strip()
+        setor_id = request.args.get("setor_id", type=int)
         try:
             limit = min(max(int(request.args.get("limit") or 50), 1), 100)
         except (TypeError, ValueError):
             limit = 50
 
         query = Users.query
+        # Filtrar por setor se informado
+        if setor_id is not None:
+            query = query.filter(Users.setor_id == setor_id)
         if term:
             pattern = f"%{term}%"
             query = query.filter(or_(Users.nome.ilike(pattern), Users.email.ilike(pattern)))
@@ -365,6 +393,17 @@ class TicketService:
             return jsonify("Apenas administradores podem direcionar chamados."), 403
         if responsible_id is not None and not db.session.get(Users, responsible_id):
             return jsonify("Responsável do chamado não encontrado."), 404
+        
+        # Validar setor: motivo e responsável devem ter o mesmo setor
+        if reason_id is not None and responsible_id is not None:
+            reason = db.session.get(TicketReason, reason_id)
+            responsible = db.session.get(Users, responsible_id)
+            if reason and responsible:
+                # Permite setor_id nulo para compatibilidade
+                if reason.setor_id is not None and responsible.setor_id is not None:
+                    if reason.setor_id != responsible.setor_id:
+                        return jsonify("O responsável não pertence ao setor do motivo."), 400
+        
         branch_id = self._creation_branch_id(token_data)
         if not branch_id:
             return jsonify("Selecione uma única filial ativa antes de abrir o chamado."), 400
@@ -409,6 +448,14 @@ class TicketService:
             reason_id = body.get("reason_id")
             if reason_id is not None and not db.session.get(TicketReason, reason_id):
                 return jsonify("Motivo do chamado não encontrado."), 404
+            # Validar setor: se já houver responsável, verificar compatibilidade
+            if ticket.responsible_id is not None:
+                reason = db.session.get(TicketReason, reason_id)
+                responsible = db.session.get(Users, ticket.responsible_id)
+                if reason and responsible:
+                    if reason.setor_id is not None and responsible.setor_id is not None:
+                        if reason.setor_id != responsible.setor_id:
+                            return jsonify("O responsável atual não pertence ao setor do novo motivo. Selecione um novo responsável."), 400
             ticket.motivo_id = reason_id
             changes.append("Motivo atualizado")
         if "responsible_id" in body:
@@ -417,6 +464,14 @@ class TicketService:
             responsible_id = body.get("responsible_id")
             if responsible_id is not None and not db.session.get(Users, responsible_id):
                 return jsonify("Responsável do chamado não encontrado."), 404
+            # Validar setor: responsável deve pertencer ao setor do motivo
+            if ticket.motivo_id is not None:
+                reason = db.session.get(TicketReason, ticket.motivo_id)
+                responsible = db.session.get(Users, responsible_id)
+                if reason and responsible:
+                    if reason.setor_id is not None and responsible.setor_id is not None:
+                        if reason.setor_id != responsible.setor_id:
+                            return jsonify("O responsável não pertence ao setor do motivo."), 400
             ticket.responsible_id = responsible_id
             changes.append("Responsável atualizado")
         if "status" in body:
@@ -468,6 +523,139 @@ class TicketService:
         self._notify(ticket, "Novo comentário", description)
         socketio.emit("ticket_update", {"action": "commented", "id": ticket.id, "comment_id": comment.id})
         return jsonify(_serialize_comment(comment, ticket.created_by)), 201
+
+    @safe_route
+    def upload_attachment(self, ticket_id, token_data):
+        """Upload de anexo em um chamado."""
+        ticket = self._find_visible(ticket_id, token_data)
+        if not ticket:
+            return jsonify("Chamado não encontrado ou sem acesso."), 404
+
+        if "arquivo" not in request.files:
+            return jsonify("Nenhum arquivo foi enviado."), 400
+
+        file = request.files["arquivo"]
+        if not file.filename:
+            return jsonify("O arquivo está vazio."), 400
+
+        # Validação de tipo de arquivo
+        allowed_types = [
+            'application/pdf',
+            'image/png',
+            'image/jpeg',
+            'image/webp',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel'
+        ]
+        if file.content_type not in allowed_types:
+            return jsonify("Tipo de arquivo não suportado. Use PDF, PNG, JPG, WebP, XLS ou XLSX."), 400
+
+        # Validação de tamanho (15MB)
+        file.seek(0, 2)  # Move para o final para ler o tamanho
+        file_size = file.tell()
+        file.seek(0)  # Volta para o início
+        if file_size > 15 * 1024 * 1024:
+            return jsonify("O arquivo excede o limite de 15MB."), 400
+
+        # Salvar arquivo no sistema de arquivos
+        import os
+        from utils.db import db
+        from models.tc_historico import Ticket
+        
+        # Criar diretório se não existir
+        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Salvar arquivo
+        filename = file.filename
+        filepath = os.path.join(upload_dir, filename)
+        file.save(filepath)
+
+        # Criar registro no banco
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            arquivo=filename,
+            tamanho=file_size,
+            tipo=file.content_type,
+            created_by=token_data["id"]
+        )
+        db.session.add(attachment)
+        db.session.commit()
+
+        self._notify(ticket, "Novo anexo", f"Arquivo '{filename}' anexado ao chamado.")
+        socketio.emit("ticket_update", {"action": "attachment_added", "id": ticket.id, "attachment_id": attachment.id})
+
+        return jsonify({
+            "message": "Anexo anexado com sucesso.",
+            "attachment": {
+                "id": attachment.id,
+                "arquivo": attachment.arquivo,
+                "tamanho": attachment.tamanho,
+                "tipo": attachment.tipo,
+                "created_at": attachment.created_at.isoformat(),
+                "criador": _serialize_user(attachment.criador)
+            }
+        }), 201
+
+    @safe_route
+    def remove_attachment(self, ticket_id, attachment_id, token_data):
+        """Remover anexo de um chamado."""
+        ticket = self._find_visible(ticket_id, token_data)
+        if not ticket:
+            return jsonify("Chamado não encontrado ou sem acesso."), 404
+
+        attachment = TicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket_id).first()
+        if not attachment:
+            return jsonify("Anexo não encontrado."), 404
+
+        # Remover arquivo do sistema
+        import os
+        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
+        filepath = os.path.join(upload_dir, attachment.arquivo)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+        db.session.delete(attachment)
+        db.session.commit()
+
+        self._notify(ticket, "Anexo removido", f"Arquivo '{attachment.arquivo}' removido.")
+        socketio.emit("ticket_update", {"action": "attachment_removed", "id": ticket.id, "attachment_id": attachment_id})
+
+        return jsonify("Anexo removido com sucesso."), 200
+
+    @safe_route
+    def list_attachments(self, ticket_id, token_data):
+        """Listar anexos de um chamado."""
+        ticket = self._find_visible(ticket_id, token_data)
+        if not ticket:
+            return jsonify("Chamado não encontrado ou sem acesso."), 404
+
+        attachments = TicketAttachment.query.filter_by(ticket_id=ticket_id).all()
+        return jsonify([{
+            "id": a.id,
+            "arquivo": a.arquivo,
+            "tamanho": a.tamanho,
+            "tipo": a.tipo,
+            "created_at": a.created_at.isoformat(),
+            "criador": _serialize_user(a.criador)
+        } for a in attachments])
+
+    @safe_route
+    def get_attachment(self, ticket_id, filename, token_data):
+        """Baixar anexo de um chamado."""
+        ticket = self._find_visible(ticket_id, token_data)
+        if not ticket:
+            return jsonify("Chamado não encontrado ou sem acesso."), 404
+
+        attachment = TicketAttachment.query.filter_by(ticket_id=ticket_id, arquivo=filename).first()
+        if not attachment:
+            return jsonify("Anexo não encontrado."), 404
+
+        # Retornar arquivo
+        import os
+        from flask import send_from_directory
+        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
+        return send_from_directory(upload_dir, filename, as_attachment=True)
 
     @safe_route
     def test_email(self, token_data):

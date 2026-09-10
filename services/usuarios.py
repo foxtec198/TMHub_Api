@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw, ImageOps, ImageStat, UnidentifiedImageError
 # Módulos internos da aplicação.
 from models.filiais import Branch, filial_usuarios
 from models.colaboradores import Employees
+from models.setores import Sector
 from models.marketplace import MarketplaceProduct, MarketplacePurchase
 from utils.filial_scope import is_admin
 from utils.permissions import PERMISSION_CATALOG, replace_permissions, serialize_permissions
@@ -126,6 +127,8 @@ class UserServices:
             "filial_ids": sorted(branch.id for branch in user.filiais),
             "permissions": serialize_permissions(user),
             "assinatura_cadastrada": bool(user.assinatura_cadastrada),
+            "setor_id": user.setor_id,
+            **({"setor": {"id": user.setor.id, "nome": user.setor.nome}} if user.setor else {}),
             **({"foto_perfil": user.foto_perfil} if include_photo else {}),
         } for user in users]), 200
 
@@ -501,6 +504,16 @@ class UserServices:
         email = str(body.get("email") or "").strip().lower() or None
         role = str(body.get("role") or "USER").strip().upper()
         password = str(body.get("password") or "")
+        setor_id = body.get("setor_id")
+
+        # Validação de setor se informado
+        if setor_id is not None:
+            from models.setores import Sector
+            setor = db.session.get(Sector, setor_id)
+            if not setor:
+                return None, "Setor não encontrado."
+            if not setor.ativo:
+                return None, "Setor está inativo."
 
         # A seleção de colaborador é opcional e serve como origem segura para
         # preencher os dados básicos da nova conta. Campos informados
@@ -547,6 +560,7 @@ class UserServices:
             role=role,
             gerencia_faltas=bool(body.get("gerencia_faltas", False)),
             hash=hash_password(password),
+            setor_id=setor_id,
             primeiro_acesso=True,
             cpf_pendente=not bool(cpf),
             foto_pendente=False,
@@ -556,7 +570,9 @@ class UserServices:
         ), None
 
     def _apply_user_changes(self, user, body):
-        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions")):
+        from models.setores import Sector
+
+        if not any(key in body for key in ("nome", "cpf", "email", "role", "password", "filial_ids", "gerencia_faltas", "permissions", "setor_id")):
             return "Nenhuma alteração informada."
 
         if "nome" in body:
@@ -586,6 +602,18 @@ class UserServices:
             if role not in {"SUPERVISOR", "GERENTE", "USER", "ADMIN"}:
                 return "A role deve ser SUPERVISOR, GERENTE, USER ou ADMIN."
             user.role = role
+
+        if "setor_id" in body:
+            setor_id = body.get("setor_id")
+            if setor_id is not None:
+                setor = db.session.get(Sector, setor_id)
+                if not setor:
+                    return "Setor não encontrado."
+                if not setor.ativo:
+                    return "Setor está inativo."
+                user.setor_id = setor.id
+            else:
+                user.setor_id = None
 
         if body.get("password"):
             password = str(body["password"])

@@ -40,7 +40,7 @@ HOST = getenv("HOST")
 
 app = Flask(__name__)
 socketio.init_app(app, cors_allowed_origins="*", async_mode="gevent")
-CORS(app, allow_headers="*")  # Carrega os CORS security
+CORS(app, allow_headers=["*"], supports_credentials=True)  # Carrega os CORS security
 
 # Configs do APP
 app.config["SECRET_KEY"] = getenv("SECRET")
