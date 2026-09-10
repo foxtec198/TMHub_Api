@@ -33,6 +33,17 @@ def issue_user_token(user):
 
 class AuthService:
     def login(self):
+        from models.usuarios import Users
+        from models.setores import Sector
+        from utils.token import issue_user_token
+        from utils.password_security import verify_password, hash_password, is_default_password, is_strong_password
+        from utils.maintenance import maintenance_mode_enabled
+        from utils.user_requirements import refresh_user_requirements, auth_requirements
+        from utils.filial_scope import serialize_permissions
+        from utils.theme_access import effective_theme_for, available_themes_for
+        from utils.check_field import check_field
+        from utils.cpf import normalize_cpf
+        
         body = rq.get_json(silent=True) or {}
         username = str(body.get("username") or "").strip()
         password = str(body.get("password") or "")
@@ -47,6 +58,10 @@ class AuthService:
             user = Users.query.filter_by(cpf=normalize_cpf(username)).first()
         if not user:
             return jsonify("Usuário não encontrado!"), 404
+        
+        # Verificar se o usuário está ativo
+        if not user.ativo:
+            return jsonify("Usuário está inativo. Contate o administrador."), 403
 
         valid, legacy_hash, needs_rehash = verify_password(password, user.hash)
         if not valid:
