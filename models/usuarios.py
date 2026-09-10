@@ -63,6 +63,8 @@ class Users(BaseModel):
     )
     # Relationship com setor
     setor = db.relationship("Sector", foreign_keys=[setor_id])
+    # Indica se o usuário está ativo (inativos não podem acessar o sistema)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
     filiais = db.relationship("Branch", secondary="filial_usuarios", back_populates="usuarios")
     permissoes = db.relationship(
         "UserPermission",
