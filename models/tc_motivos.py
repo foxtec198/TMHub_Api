@@ -1,6 +1,7 @@
 # Modelo de dados de motivos de chamados.
 # Módulos internos da aplicação.
 from models.base_model import BaseModel
+from models.setores import Sector
 from utils.db import db
 
 
@@ -16,3 +17,12 @@ class TicketReason(BaseModel):
         nullable=False,
         server_default=db.func.now(),
     )
+    # Setor responsável por este motivo
+    setor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("setores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Relationship com setor
+    setor = db.relationship("Sector", foreign_keys=[setor_id])

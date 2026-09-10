@@ -2,6 +2,7 @@
 # Módulos internos da aplicação.
 from utils.db import db
 from models.base_model import BaseModel
+from models.setores import Sector
 # Biblioteca padrão.
 from datetime import datetime as dt
 
@@ -53,6 +54,15 @@ class Users(BaseModel):
     token_sem_expiracao = db.Column(db.Boolean, nullable=False, default=False)
     token_version = db.Column(db.Integer, nullable=False, default=0)
     senha_alterada_em = db.Column(db.DateTime)
+    # Setor do usuário (opcional para compatibilidade)
+    setor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("setores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Relationship com setor
+    setor = db.relationship("Sector", foreign_keys=[setor_id])
     filiais = db.relationship("Branch", secondary="filial_usuarios", back_populates="usuarios")
     permissoes = db.relationship(
         "UserPermission",

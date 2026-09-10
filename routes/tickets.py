@@ -58,3 +58,19 @@ def update(ticket_id):
 @tickets_bp.post("/<int:ticket_id>/comentarios")
 def add_comment(ticket_id):
     return service.add_comment(ticket_id)
+
+@tickets_bp.post("/<int:ticket_id>/anexos")
+def upload_attachment(ticket_id):
+    return service.upload_attachment(ticket_id)
+
+@tickets_bp.delete("/<int:ticket_id>/anexos/<int:attachment_id>")
+def remove_attachment(ticket_id, attachment_id):
+    return service.remove_attachment(ticket_id, attachment_id)
+
+@tickets_bp.get("/<int:ticket_id>/anexos")
+def list_attachments(ticket_id):
+    return service.list_attachments(ticket_id)
+
+@tickets_bp.get("/<int:ticket_id>/anexos/<filename>")
+def get_attachment(ticket_id, filename):
+    return service.get_attachment(ticket_id, filename)
