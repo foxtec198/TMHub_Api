@@ -1,12 +1,5 @@
-# Regras de negócio de autenticação.
-# Biblioteca padrão.
-from datetime import datetime as dt
-
-# Dependências externas.
+# ============================================= Utils
 from flask import jsonify, request as rq
-
-# Módulos internos da aplicação.
-from models.usuarios import Users, db
 from utils.check_field import check_field
 from utils.password_security import (
     hash_password,
@@ -14,12 +7,16 @@ from utils.password_security import (
     is_strong_password,
     verify_password,
 )
-from utils.permissions import serialize_permissions
-from utils.token import create_token
 from utils.user_requirements import auth_requirements, normalize_cpf, refresh_user_requirements
-from utils.maintenance import maintenance_mode_enabled
 from utils.theme_access import available_themes_for, effective_theme_for
+from utils.maintenance import maintenance_mode_enabled
+from utils.permissions import serialize_permissions
+from datetime import datetime as dt
+from utils.token import create_token
+from utils.limiter import limiter
 
+# =============================================  Models
+from models.usuarios import Users, db
 
 def issue_user_token(user):
     persistent = bool(user.token_sem_expiracao)
@@ -32,36 +29,30 @@ def issue_user_token(user):
 
 
 class AuthService:
+    @limiter.limit("3 per 5 minutes")
     def login(self):
         body = rq.get_json(silent=True) or {}
         username = str(body.get("username") or "").strip()
         password = str(body.get("password") or "")
 
         ok, error = check_field(usuario=username, senha=password)
-        if not ok:
-            return jsonify(error), 400
+        if not ok: return jsonify(error), 400
 
-        if "@" in username:
-            user = Users.query.filter(db.func.lower(Users.email) == username.lower()).first()
-        else:
-            user = Users.query.filter_by(cpf=normalize_cpf(username)).first()
-        if not user:
-            return jsonify("Usuário não encontrado!"), 404
+        if "@" in username: user = Users.query.filter(db.func.lower(Users.email) == username.lower()).first()
+        else: user = Users.query.filter_by(cpf=normalize_cpf(username)).first()
+        if not user: return jsonify("Usuário não encontrado!"), 404
         
         # Verificar se o usuário está ativo
-        if not user.ativo:
-            return jsonify("Usuário está inativo. Contate o administrador."), 403
+        if not user.ativo: return jsonify("Usuário está inativo. Contate o administrador."), 403
 
         valid, legacy_hash, needs_rehash = verify_password(password, user.hash)
-        if not valid:
-            return jsonify("Senha incorreta!"), 400
+        if not valid: return jsonify("Senha incorreta!"), 400
 
         maintenance_active = maintenance_mode_enabled()
         maintenance_blocked = maintenance_active and str(user.role or "").upper() != "ADMIN"
 
         hash_migrated = legacy_hash or needs_rehash
-        if hash_migrated:
-            user.hash = hash_password(password)
+        if hash_migrated: user.hash = hash_password(password)
 
         user.senha_padrao = is_default_password(password)
         user.troca_senha_obrigatoria = not is_strong_password(password) and not user.senha_padrao
