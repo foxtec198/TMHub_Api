@@ -9,6 +9,7 @@ from utils.db import db
 from utils.token import decode_token
 from utils.user_requirements import auth_requirements
 from utils.maintenance import maintenance_mode_enabled
+from utils.session_cookie import request_access_token
 
 ONBOARDING_PATHS = {
     "/usuarios/pendencias",
@@ -34,7 +35,7 @@ def enforce_auth_state():
     if normalized_path in {"/tm-ops", "/schedular"} or normalized_path.startswith(("/tm-ops/", "/schedular/")):
         if not maintenance_mode_enabled():
             return None
-        access_token = request.headers.get("Access-Token")
+        access_token = request_access_token()
         if not access_token:
             return _maintenance_response()
         try:
@@ -46,7 +47,7 @@ def enforce_auth_state():
             return _maintenance_response()
         return None
     if normalized_path in PUBLIC_PATHS or normalized_path.startswith(PUBLIC_PREFIXES): return None
-    access_token = request.headers.get("Access-Token")
+    access_token = request_access_token()
     if not access_token:
         return _maintenance_response() if maintenance_mode_enabled() else None
 

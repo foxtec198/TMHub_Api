@@ -2,11 +2,16 @@
 # Biblioteca padrão.
 from datetime import datetime, timedelta, timezone
 from secrets import choice
+from pathlib import Path
+from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 # Dependências externas.
-from flask import jsonify, request
+from flask import jsonify, request, send_from_directory
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
+from werkzeug.utils import secure_filename
+from PIL import Image, UnidentifiedImageError
 
 # Módulos internos da aplicação.
 from models.tc_comentarios import TicketComment
@@ -29,6 +34,34 @@ OPEN_STATUSES = {"ABERTO", "EM_ANDAMENTO", "ATRASADO"}
 FINAL_STATUSES = {"RESOLVIDO", "FECHADO", "CANCELADO"}
 VALID_STATUSES = OPEN_STATUSES | FINAL_STATUSES
 SLA = timedelta(days=1)
+TICKET_UPLOAD_DIR = Path(__file__).resolve().parents[1] / "uploads" / "tickets"
+ATTACHMENT_MIME_TYPES = {
+    "application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg",
+    "image/webp": ".webp", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-excel": ".xls",
+}
+OLE_FILE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
+
+
+def _is_valid_attachment_content(file, content_type):
+    """Confirma o conteúdo do arquivo antes de deixá-lo no disco."""
+    try:
+        if content_type == "application/pdf":
+            return file.read(5) == b"%PDF-"
+        if content_type.startswith("image/"):
+            image = Image.open(file)
+            image.verify()
+            return True
+        if content_type == "application/vnd.ms-excel":
+            return file.read(8) == OLE_FILE_SIGNATURE
+        if content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+            with ZipFile(file) as archive:
+                return "[Content_Types].xml" in archive.namelist()
+    except (BadZipFile, UnidentifiedImageError, OSError, ValueError):
+        return False
+    finally:
+        file.seek(0)
+    return False
 TIMO_RESOLUTION_ORIGIN = "timo:ticket-resolution"
 TIMO_USER = {
     "id": None,
@@ -88,7 +121,16 @@ def _serialize_comment(comment, requester_id=None):
         "title": comment.titulo,
         "description": comment.descricao,
         "description_origin": comment.descricao_origem,
-        "file": comment.arquivo,
+        "attachments": [
+            {
+                "id": item.id,
+                "filename": item.arquivo.split("__", 1)[-1],
+                "type": item.tipo,
+                "size": item.tamanho,
+                "url": f"/tickets/{comment.ticket_id}/anexos/{item.id}",
+            }
+            for item in TicketAttachment.query.filter_by(comentario_id=comment.id).all()
+        ],
         "status": comment.status,
         "created_by": (
             _serialize_user(comment.criador)
@@ -514,7 +556,6 @@ class TicketService:
             titulo=str(body.get("title") or "").strip()[:180] or None,
             descricao=description,
             descricao_origem=str(body.get("description_origin") or "").strip() or None,
-            arquivo=str(body.get("file") or "").strip()[:500] or None,
             created_by=token_data["id"],
         )
         db.session.add(comment)
@@ -525,11 +566,19 @@ class TicketService:
         return jsonify(_serialize_comment(comment, ticket.created_by)), 201
 
     @safe_route
-    def upload_attachment(self, ticket_id, token_data):
+    def upload_attachment(self, ticket_id, token_data, comment_id=None):
         """Upload de anexo em um chamado."""
         ticket = self._find_visible(ticket_id, token_data)
         if not ticket:
             return jsonify("Chamado não encontrado ou sem acesso."), 404
+        denied = self._permission(token_data, "edit")
+        if denied:
+            return denied
+        comment = None
+        if comment_id is not None:
+            comment = TicketComment.query.filter_by(id=comment_id, ticket_id=ticket.id).first()
+            if not comment:
+                return jsonify("Comentário não encontrado."), 404
 
         if "arquivo" not in request.files:
             return jsonify("Nenhum arquivo foi enviado."), 400
@@ -539,15 +588,7 @@ class TicketService:
             return jsonify("O arquivo está vazio."), 400
 
         # Validação de tipo de arquivo
-        allowed_types = [
-            'application/pdf',
-            'image/png',
-            'image/jpeg',
-            'image/webp',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-excel'
-        ]
-        if file.content_type not in allowed_types:
+        if file.content_type not in ATTACHMENT_MIME_TYPES:
             return jsonify("Tipo de arquivo não suportado. Use PDF, PNG, JPG, WebP, XLS ou XLSX."), 400
 
         # Validação de tamanho (15MB)
@@ -556,24 +597,23 @@ class TicketService:
         file.seek(0)  # Volta para o início
         if file_size > 15 * 1024 * 1024:
             return jsonify("O arquivo excede o limite de 15MB."), 400
+        if not _is_valid_attachment_content(file, file.content_type):
+            return jsonify("O conteúdo do arquivo não corresponde ao tipo informado."), 400
 
-        # Salvar arquivo no sistema de arquivos
-        import os
-        from utils.db import db
-        from models.tc_historico import Ticket
-        
-        # Criar diretório se não existir
-        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
-        os.makedirs(upload_dir, exist_ok=True)
-
-        # Salvar arquivo
-        filename = file.filename
-        filepath = os.path.join(upload_dir, filename)
+        original_name = secure_filename(file.filename)
+        if not original_name:
+            return jsonify("Nome de arquivo inválido."), 400
+        display_name = f"{Path(original_name).stem}{ATTACHMENT_MIME_TYPES[file.content_type]}"
+        filename = f"{uuid4().hex}__{display_name}"
+        upload_dir = TICKET_UPLOAD_DIR / str(ticket_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        filepath = upload_dir / filename
         file.save(filepath)
 
         # Criar registro no banco
         attachment = TicketAttachment(
             ticket_id=ticket.id,
+            comentario_id=comment.id if comment else None,
             arquivo=filename,
             tamanho=file_size,
             tipo=file.content_type,
@@ -589,7 +629,7 @@ class TicketService:
             "message": "Anexo anexado com sucesso.",
             "attachment": {
                 "id": attachment.id,
-                "arquivo": attachment.arquivo,
+                "arquivo": attachment.arquivo.split("__", 1)[-1],
                 "tamanho": attachment.tamanho,
                 "tipo": attachment.tipo,
                 "created_at": attachment.created_at.isoformat(),
@@ -600,6 +640,9 @@ class TicketService:
     @safe_route
     def remove_attachment(self, ticket_id, attachment_id, token_data):
         """Remover anexo de um chamado."""
+        denied = self._permission(token_data, "edit")
+        if denied:
+            return denied
         ticket = self._find_visible(ticket_id, token_data)
         if not ticket:
             return jsonify("Chamado não encontrado ou sem acesso."), 404
@@ -609,11 +652,9 @@ class TicketService:
             return jsonify("Anexo não encontrado."), 404
 
         # Remover arquivo do sistema
-        import os
-        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
-        filepath = os.path.join(upload_dir, attachment.arquivo)
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        filepath = TICKET_UPLOAD_DIR / str(ticket.id) / attachment.arquivo
+        if filepath.exists():
+            filepath.unlink()
 
         db.session.delete(attachment)
         db.session.commit()
@@ -652,10 +693,18 @@ class TicketService:
             return jsonify("Anexo não encontrado."), 404
 
         # Retornar arquivo
-        import os
-        from flask import send_from_directory
-        upload_dir = os.path.join("uploads", "tickets", str(ticket_id))
+        upload_dir = TICKET_UPLOAD_DIR / str(ticket_id)
         return send_from_directory(upload_dir, filename, as_attachment=True)
+
+    @safe_route
+    def get_attachment_by_id(self, ticket_id, attachment_id, token_data):
+        ticket = self._find_visible(ticket_id, token_data)
+        if not ticket:
+            return jsonify("Chamado não encontrado ou sem acesso."), 404
+        attachment = TicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket.id).first()
+        if not attachment:
+            return jsonify("Anexo não encontrado."), 404
+        return send_from_directory(TICKET_UPLOAD_DIR / str(ticket.id), attachment.arquivo, as_attachment=False)
 
     @safe_route
     def test_email(self, token_data):

@@ -12,6 +12,7 @@ from models.usuarios import Users
 from utils.db import db
 from utils.password_security import verify_password
 from utils.token import create_token, decode_token
+from utils.session_cookie import request_access_token
 
 
 def issue_tm_ops_token(employee):
@@ -66,7 +67,7 @@ def tm_ops_route(func):
 
 
 def tmhub_admin_session():
-    token = request.headers.get("Access-Token")
+    token = request_access_token()
     if not token:
         return None, (jsonify("Sessão administrativa obrigatória."), 401)
     try:

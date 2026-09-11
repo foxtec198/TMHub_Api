@@ -38,6 +38,7 @@ from utils.password_security import (
     verify_password,
 )
 from utils.token import create_token
+from utils.session_cookie import set_session_cookie
 from utils.maintenance import maintenance_mode_enabled, update_maintenance_mode
 from utils.theme_access import (
     CUSTOM_THEMES,
@@ -838,7 +839,11 @@ class UserServices:
                 )
         response = self._serialize(user)
         if nova_senha is not None:
-            response["access_token"] = self._issue_token(user)
+            token = self._issue_token(user)
+            response["access_token"] = None
+            return set_session_cookie(
+                jsonify(response), token, persistent=bool(user.token_sem_expiracao)
+            )
         return jsonify(response)
 
     @safe_route
@@ -946,10 +951,13 @@ class UserServices:
         user.senha_alterada_em = dt.now()
         db.session.commit()
         token = self._issue_token(user)
-        return jsonify({
-            "access_token": token,
+        response = jsonify({
+            "access_token": None,
             "requirements": auth_requirements(user),
         })
+        return set_session_cookie(
+            response, token, persistent=bool(user.token_sem_expiracao)
+        )
 
     @safe_route
     def ignore_default_password(self, token_data):

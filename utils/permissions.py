@@ -4,6 +4,7 @@ from models.permissoes import UserPermission
 from models.usuarios import Users
 from utils.db import db
 from utils.token import decode_token
+from utils.session_cookie import request_access_token
 
 PERMISSION_CATALOG = [
     {"key": "dashboard_reposicoes", "label": "Dashboard de Reposições", "group": "Dashboards", "actions": ["view"]},
@@ -241,7 +242,7 @@ def enforce_request_permission():
     required = request_permission(normalized_path, request.method)
     if not required:
         return None
-    access_token = request.headers.get("Access-Token")
+    access_token = request_access_token()
     if not access_token:
         return jsonify("Token de acesso obrigatório."), 401
     try:

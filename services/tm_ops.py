@@ -33,6 +33,7 @@ from models.estrutura import StructureLocation
 from utils.db import db
 from utils.password_security import hash_password, is_strong_password
 from utils.tm_ops_auth import (
+    decode_tm_ops_session,
     issue_tm_ops_token,
     tm_ops_route,
     tmhub_admin_session,
@@ -1437,10 +1438,26 @@ class TMOpsService:
         db.session.commit()
         return jsonify({"message": "Evidência registrada.", "tarefa": self._task_payload(task)})
 
-    @staticmethod
-    def serve_task_evidence(evidence_id):
+    def serve_task_evidence(self, evidence_id):
+        """Serve evidência somente ao executor vinculado ou a administrador."""
+        tm_ops_session, tm_ops_error = decode_tm_ops_session()
+        is_tm_ops_executor = tm_ops_session is not None
+        if not is_tm_ops_executor:
+            _, admin_error = tmhub_admin_session()
+            if admin_error:
+                return tm_ops_error
+
         evidence = db.session.get(SchedularTaskEvidence, evidence_id)
         if not evidence or evidence.tipo not in {"camera", "image", "signature"}:
+            return jsonify("Evidência não encontrada."), 404
+        response = db.session.get(SchedularTaskResponse, evidence.resposta_id)
+        task = db.session.get(SchedularTask, response.tarefa_id) if response else None
+        if not task:
+            return jsonify("Evidência não encontrada."), 404
+        if is_tm_ops_executor and not self._can_execute_task(
+            task,
+            tm_ops_session["employee"].id,
+        ):
             return jsonify("Evidência não encontrada."), 404
         safe_name = Path(evidence.valor).name
         if not safe_name or safe_name != evidence.valor:

@@ -14,6 +14,9 @@ from utils.permissions import serialize_permissions
 from datetime import datetime as dt
 from utils.token import create_token
 from utils.limiter import limiter
+from utils.session_cookie import clear_session_cookie, set_session_cookie
+
+_LOGIN_DUMMY_HASH = "$argon2id$v=19$m=19456,t=2,p=1$sGxPv8XHtNH/EzvxE/xblw$zO/7KP4eSRn7cT82Y6178rR8umyIYlyXux0dcMi9cmU"
 
 # =============================================  Models
 from models.usuarios import Users, db
@@ -40,13 +43,16 @@ class AuthService:
 
         if "@" in username: user = Users.query.filter(db.func.lower(Users.email) == username.lower()).first()
         else: user = Users.query.filter_by(cpf=normalize_cpf(username)).first()
-        if not user: return jsonify("Usuário não encontrado!"), 404
-        
-        # Verificar se o usuário está ativo
-        if not user.ativo: return jsonify("Usuário está inativo. Contate o administrador."), 403
 
-        valid, legacy_hash, needs_rehash = verify_password(password, user.hash)
-        if not valid: return jsonify("Senha incorreta!"), 400
+        valid, legacy_hash, needs_rehash = verify_password(
+            password,
+            user.hash if user else _LOGIN_DUMMY_HASH,
+        )
+
+        if legacy_hash:
+            verify_password(password, _LOGIN_DUMMY_HASH)
+        if not user or not user.ativo or not valid:
+            return jsonify("Credenciais inválidas."), 401
 
         maintenance_active = maintenance_mode_enabled()
         maintenance_blocked = maintenance_active and str(user.role or "").upper() != "ADMIN"
@@ -62,10 +68,11 @@ class AuthService:
         user.last_login = dt.now()
         db.session.commit()
 
-        return jsonify({
+        token = None if maintenance_blocked else issue_user_token(user)
+        response = jsonify({
             "id": user.id,
             "display_name": user.nome,
-            "access_token": None if maintenance_blocked else issue_user_token(user),
+            "access_token": None,
             "role": user.role,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
@@ -91,4 +98,10 @@ class AuthService:
             "interacao_pendente": requirements["interacao_pendente"],
             "manutencao_ativa": maintenance_active,
             "manutencao_bloqueada": maintenance_blocked,
-        }), 200
+        })
+        if token:
+            set_session_cookie(response, token, persistent=bool(user.token_sem_expiracao))
+        return response, 200
+
+    def logout(self):
+        return clear_session_cookie(jsonify("Sessão encerrada.")), 200

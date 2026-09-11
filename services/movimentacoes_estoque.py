@@ -189,6 +189,18 @@ class MovementService:
         return product, movement_type, quantity, recipients
 
     @staticmethod
+    def _can_update_movement(movement, token_data):
+        """Autoriza administradores ou o autor no escopo integral do registro."""
+        if is_admin(token_data):
+            return True
+        if movement.usuario_id is None or movement.usuario_id != token_data.get("id"):
+            return False
+        return all(
+            can_access_cost_center(token_data, recipient.centro_custo_id)
+            for recipient in movement.destinatarios
+        )
+
+    @staticmethod
     def _apply_stock(product, movement_type, quantity):
         current = int(product.quantidade or 0)
         if movement_type == "entrada":
@@ -256,6 +268,8 @@ class MovementService:
         )
         if not movement:
             return jsonify("Movimentação não encontrada."), 404
+        if not self._can_update_movement(movement, token_data):
+            return jsonify("Você não possui acesso para alterar esta movimentação."), 403
         body = rq.get_json(silent=True) or {}
         merged = {
             "item_id": body.get("item_id", movement.item_id),

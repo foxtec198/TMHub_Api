@@ -39,3 +39,6 @@ storage/
 .vscode/
 __pycache__/
 *.log
+
+# Arquivos enviados por usuários: armazenamento operacional, nunca versionado.
+/uploads/

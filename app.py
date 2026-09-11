@@ -17,6 +17,7 @@ from utils.auth_guard import enforce_auth_state
 from utils.openapi import build_openapi_spec
 from migrations import initialize_database
 from utils.token import decode_token
+from utils.session_cookie import request_access_token
 from utils.safe_route import ( 
     MUTATION_METHODS, 
     _data_channel, 
@@ -81,7 +82,7 @@ def emit_realtime_data_change(response):
     if normalized_path in REALTIME_NOTIFICATION_EXCLUSIONS: return response
 
     token_data = {}
-    access_token = request.headers.get("Access-Token")
+    access_token = request_access_token()
     if access_token:
         try: token_data = decode_token(access_token) or {}
         except Exception: token_data = {}
