@@ -63,6 +63,11 @@ def add_comment(ticket_id):
 def upload_attachment(ticket_id):
     return service.upload_attachment(ticket_id)
 
+
+@tickets_bp.post("/<int:ticket_id>/comentarios/<int:comment_id>/anexos")
+def upload_comment_attachment(ticket_id, comment_id):
+    return service.upload_attachment(ticket_id, comment_id=comment_id)
+
 @tickets_bp.delete("/<int:ticket_id>/anexos/<int:attachment_id>")
 def remove_attachment(ticket_id, attachment_id):
     return service.remove_attachment(ticket_id, attachment_id)

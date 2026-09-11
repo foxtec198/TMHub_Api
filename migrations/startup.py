@@ -439,6 +439,30 @@ def _migrate_cost_center_supervisors(table_names):
         ))
 
 
+def _migrate_ticket_comment_attachments(table_names):
+    """Habilita o vínculo de anexos com comentários de chamados."""
+    if not {"tc_anexos", "tc_comentarios"}.issubset(table_names):
+        return
+
+    _run_column_migration(
+        "tc_anexos",
+        "comentario_id",
+        (
+            "ALTER TABLE tc_anexos ADD COLUMN comentario_id INTEGER "
+            "REFERENCES tc_comentarios(id) ON DELETE CASCADE",
+            "CREATE INDEX IF NOT EXISTS ix_tc_anexos_comentario_id "
+            "ON tc_anexos (comentario_id)",
+        ),
+    )
+
+    # Instalações que receberam a coluna manualmente também ganham o índice.
+    with db.engine.begin() as connection:
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tc_anexos_comentario_id "
+            "ON tc_anexos (comentario_id)"
+        ))
+
+
 def initialize_database(app):
     """Cria tabelas ausentes e aplica as migrações aditivas de startup."""
     with app.app_context():
@@ -454,6 +478,7 @@ def initialize_database(app):
         _migrate_floaters()
         _migrate_ticket_branch(table_names)
         _migrate_usage_control(table_names)
+        _migrate_ticket_comment_attachments(table_names)
         _migrate_supervisor_users(table_names)
         table_names = set(inspect(db.engine).get_table_names())
         _migrate_cost_center_supervisors(table_names)

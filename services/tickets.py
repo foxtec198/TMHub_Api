@@ -81,6 +81,18 @@ def _serialize_branch(branch):
     return {"id": branch.id, "nome": branch.nome}
 
 
+def _serialize_attachment(attachment):
+    return {
+        "id": attachment.id,
+        "filename": attachment.arquivo,
+        "size": attachment.tamanho,
+        "content_type": attachment.tipo,
+        "comment_id": attachment.comentario_id,
+        "created_at": attachment.created_at.isoformat() if attachment.created_at else None,
+        "created_by": _serialize_user(attachment.criador),
+    }
+
+
 def _serialize_comment(comment, requester_id=None):
     is_timo = comment.descricao_origem == TIMO_RESOLUTION_ORIGIN
     return {
@@ -89,6 +101,7 @@ def _serialize_comment(comment, requester_id=None):
         "description": comment.descricao,
         "description_origin": comment.descricao_origem,
         "file": comment.arquivo,
+        "attachments": [_serialize_attachment(attachment) for attachment in comment.anexos],
         "status": comment.status,
         "created_by": (
             _serialize_user(comment.criador)
@@ -134,6 +147,13 @@ def _serialize_ticket(ticket, include_comments=False):
         "resolved_at": ticket.resolved_at.isoformat() if ticket.resolved_at else None,
         "due_at": due_at.isoformat() if due_at else None,
         "overdue": ticket.status == "ATRASADO",
+        "attachments": [
+            _serialize_attachment(attachment)
+            for attachment in TicketAttachment.query.filter_by(
+                ticket_id=ticket.id,
+                comentario_id=None,
+            ).order_by(TicketAttachment.created_at.asc()).all()
+        ],
     }
     if include_comments:
         payload["comments"] = [
@@ -525,11 +545,20 @@ class TicketService:
         return jsonify(_serialize_comment(comment, ticket.created_by)), 201
 
     @safe_route
-    def upload_attachment(self, ticket_id, token_data):
+    def upload_attachment(self, ticket_id, token_data, comment_id=None):
         """Upload de anexo em um chamado."""
         ticket = self._find_visible(ticket_id, token_data)
         if not ticket:
             return jsonify("Chamado não encontrado ou sem acesso."), 404
+
+        comment = None
+        if comment_id is not None:
+            denied = self._permission(token_data, "edit")
+            if denied:
+                return denied
+            comment = TicketComment.query.filter_by(id=comment_id, ticket_id=ticket.id).first()
+            if not comment:
+                return jsonify("Comentário não encontrado."), 404
 
         if "arquivo" not in request.files:
             return jsonify("Nenhum arquivo foi enviado."), 400
@@ -574,6 +603,7 @@ class TicketService:
         # Criar registro no banco
         attachment = TicketAttachment(
             ticket_id=ticket.id,
+            comentario_id=comment.id if comment else None,
             arquivo=filename,
             tamanho=file_size,
             tipo=file.content_type,
@@ -583,18 +613,11 @@ class TicketService:
         db.session.commit()
 
         self._notify(ticket, "Novo anexo", f"Arquivo '{filename}' anexado ao chamado.")
-        socketio.emit("ticket_update", {"action": "attachment_added", "id": ticket.id, "attachment_id": attachment.id})
+        socketio.emit("ticket_update", {"action": "attachment_added", "id": ticket.id, "attachment_id": attachment.id, "comment_id": comment.id if comment else None})
 
         return jsonify({
             "message": "Anexo anexado com sucesso.",
-            "attachment": {
-                "id": attachment.id,
-                "arquivo": attachment.arquivo,
-                "tamanho": attachment.tamanho,
-                "tipo": attachment.tipo,
-                "created_at": attachment.created_at.isoformat(),
-                "criador": _serialize_user(attachment.criador)
-            }
+            "attachment": _serialize_attachment(attachment)
         }), 201
 
     @safe_route
@@ -631,14 +654,7 @@ class TicketService:
             return jsonify("Chamado não encontrado ou sem acesso."), 404
 
         attachments = TicketAttachment.query.filter_by(ticket_id=ticket_id).all()
-        return jsonify([{
-            "id": a.id,
-            "arquivo": a.arquivo,
-            "tamanho": a.tamanho,
-            "tipo": a.tipo,
-            "created_at": a.created_at.isoformat(),
-            "criador": _serialize_user(a.criador)
-        } for a in attachments])
+        return jsonify([_serialize_attachment(attachment) for attachment in attachments])
 
     @safe_route
     def get_attachment(self, ticket_id, filename, token_data):
