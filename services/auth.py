@@ -68,11 +68,11 @@ class AuthService:
         user.last_login = dt.now()
         db.session.commit()
 
-        token = None if maintenance_blocked else issue_user_token(user)
+        token = issue_user_token(user)
         response = jsonify({
             "id": user.id,
             "display_name": user.nome,
-            "access_token": None,
+            "access_token": token,
             "role": user.role,
             "email": user.email,
             "foto_perfil": user.foto_perfil,
@@ -99,8 +99,7 @@ class AuthService:
             "manutencao_ativa": maintenance_active,
             "manutencao_bloqueada": maintenance_blocked,
         })
-        if token:
-            set_session_cookie(response, token, persistent=bool(user.token_sem_expiracao))
+        set_session_cookie(response, token, persistent=bool(user.token_sem_expiracao))
         return response, 200
 
     def logout(self):
