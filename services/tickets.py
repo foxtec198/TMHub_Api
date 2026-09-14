@@ -41,6 +41,7 @@ ATTACHMENT_MIME_TYPES = {
     "application/vnd.ms-excel": ".xls",
 }
 OLE_FILE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
+MAX_ATTACHMENT_IMAGE_PIXELS = 25_000_000
 
 
 def _is_valid_attachment_content(file, content_type):
@@ -50,6 +51,9 @@ def _is_valid_attachment_content(file, content_type):
             return file.read(5) == b"%PDF-"
         if content_type.startswith("image/"):
             image = Image.open(file)
+            width, height = image.size
+            if not width or not height or width * height > MAX_ATTACHMENT_IMAGE_PIXELS:
+                return False
             image.verify()
             return True
         if content_type == "application/vnd.ms-excel":
@@ -114,6 +118,50 @@ def _serialize_branch(branch):
     return {"id": branch.id, "nome": branch.nome}
 
 
+def _serialize_attachment(attachment):
+    """Expõe apenas os metadados necessários para buscar um anexo protegido."""
+    return {
+        "id": attachment.id,
+        "filename": attachment.arquivo.split("__", 1)[-1],
+        "type": attachment.tipo,
+        "size": attachment.tamanho,
+        "url": f"/tickets/{attachment.ticket_id}/anexos/{attachment.id}",
+    }
+
+
+def _protected_attachment_response(ticket, attachment, as_attachment):
+    response = send_from_directory(
+        TICKET_UPLOAD_DIR / str(ticket.id),
+        attachment.arquivo,
+        as_attachment=as_attachment,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _validate_attachment_upload(file):
+    """Valida o arquivo e prepara os metadados seguros para armazenamento."""
+    if not file or not file.filename:
+        raise ValueError("O arquivo está vazio.")
+    if file.content_type not in ATTACHMENT_MIME_TYPES:
+        raise ValueError("Tipo de arquivo não suportado. Use PDF, PNG, JPG, WebP, XLS ou XLSX.")
+
+    file.seek(0, 2)
+    file_size = file.tell()
+    file.seek(0)
+    if file_size > 15 * 1024 * 1024:
+        raise ValueError("O arquivo excede o limite de 15MB.")
+    if not _is_valid_attachment_content(file, file.content_type):
+        raise ValueError("O conteúdo do arquivo não corresponde ao tipo informado.")
+
+    original_name = secure_filename(file.filename)
+    if not original_name:
+        raise ValueError("Nome de arquivo inválido.")
+    display_name = f"{Path(original_name).stem}{ATTACHMENT_MIME_TYPES[file.content_type]}"
+    return display_name, f"{uuid4().hex}__{display_name}", file_size
+
+
 def _serialize_comment(comment, requester_id=None):
     is_timo = comment.descricao_origem == TIMO_RESOLUTION_ORIGIN
     return {
@@ -122,13 +170,7 @@ def _serialize_comment(comment, requester_id=None):
         "description": comment.descricao,
         "description_origin": comment.descricao_origem,
         "attachments": [
-            {
-                "id": item.id,
-                "filename": item.arquivo.split("__", 1)[-1],
-                "type": item.tipo,
-                "size": item.tamanho,
-                "url": f"/tickets/{comment.ticket_id}/anexos/{item.id}",
-            }
+            _serialize_attachment(item)
             for item in TicketAttachment.query.filter_by(comentario_id=comment.id).all()
         ],
         "status": comment.status,
@@ -584,54 +626,38 @@ class TicketService:
             return jsonify("Nenhum arquivo foi enviado."), 400
 
         file = request.files["arquivo"]
-        if not file.filename:
-            return jsonify("O arquivo está vazio."), 400
-
-        # Validação de tipo de arquivo
-        if file.content_type not in ATTACHMENT_MIME_TYPES:
-            return jsonify("Tipo de arquivo não suportado. Use PDF, PNG, JPG, WebP, XLS ou XLSX."), 400
-
-        # Validação de tamanho (15MB)
-        file.seek(0, 2)  # Move para o final para ler o tamanho
-        file_size = file.tell()
-        file.seek(0)  # Volta para o início
-        if file_size > 15 * 1024 * 1024:
-            return jsonify("O arquivo excede o limite de 15MB."), 400
-        if not _is_valid_attachment_content(file, file.content_type):
-            return jsonify("O conteúdo do arquivo não corresponde ao tipo informado."), 400
-
-        original_name = secure_filename(file.filename)
-        if not original_name:
-            return jsonify("Nome de arquivo inválido."), 400
-        display_name = f"{Path(original_name).stem}{ATTACHMENT_MIME_TYPES[file.content_type]}"
-        filename = f"{uuid4().hex}__{display_name}"
+        try:
+            display_name, filename, file_size = _validate_attachment_upload(file)
+        except ValueError as error:
+            return jsonify(str(error)), 400
         upload_dir = TICKET_UPLOAD_DIR / str(ticket_id)
         upload_dir.mkdir(parents=True, exist_ok=True)
         filepath = upload_dir / filename
         file.save(filepath)
 
-        # Criar registro no banco
-        attachment = TicketAttachment(
-            ticket_id=ticket.id,
-            comentario_id=comment.id if comment else None,
-            arquivo=filename,
-            tamanho=file_size,
-            tipo=file.content_type,
-            created_by=token_data["id"]
-        )
-        db.session.add(attachment)
-        db.session.commit()
+        try:
+            attachment = TicketAttachment(
+                ticket_id=ticket.id,
+                comentario_id=comment.id if comment else None,
+                arquivo=filename,
+                tamanho=file_size,
+                tipo=file.content_type,
+                created_by=token_data["id"]
+            )
+            db.session.add(attachment)
+            db.session.commit()
+        except Exception:
+            if filepath.exists():
+                filepath.unlink()
+            raise
 
-        self._notify(ticket, "Novo anexo", f"Arquivo '{filename}' anexado ao chamado.")
+        self._notify(ticket, "Novo anexo", f"Arquivo '{display_name}' anexado ao chamado.")
         socketio.emit("ticket_update", {"action": "attachment_added", "id": ticket.id, "attachment_id": attachment.id})
 
         return jsonify({
             "message": "Anexo anexado com sucesso.",
             "attachment": {
-                "id": attachment.id,
-                "arquivo": attachment.arquivo.split("__", 1)[-1],
-                "tamanho": attachment.tamanho,
-                "tipo": attachment.tipo,
+                **_serialize_attachment(attachment),
                 "created_at": attachment.created_at.isoformat(),
                 "criador": _serialize_user(attachment.criador)
             }
@@ -673,13 +699,10 @@ class TicketService:
 
         attachments = TicketAttachment.query.filter_by(ticket_id=ticket_id).all()
         return jsonify([{
-            "id": a.id,
-            "arquivo": a.arquivo,
-            "tamanho": a.tamanho,
-            "tipo": a.tipo,
-            "created_at": a.created_at.isoformat(),
-            "criador": _serialize_user(a.criador)
-        } for a in attachments])
+            **_serialize_attachment(attachment),
+            "created_at": attachment.created_at.isoformat(),
+            "created_by": _serialize_user(attachment.criador),
+        } for attachment in attachments])
 
     @safe_route
     def get_attachment(self, ticket_id, filename, token_data):
@@ -692,9 +715,7 @@ class TicketService:
         if not attachment:
             return jsonify("Anexo não encontrado."), 404
 
-        # Retornar arquivo
-        upload_dir = TICKET_UPLOAD_DIR / str(ticket_id)
-        return send_from_directory(upload_dir, filename, as_attachment=True)
+        return _protected_attachment_response(ticket, attachment, as_attachment=True)
 
     @safe_route
     def get_attachment_by_id(self, ticket_id, attachment_id, token_data):
@@ -704,7 +725,7 @@ class TicketService:
         attachment = TicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket.id).first()
         if not attachment:
             return jsonify("Anexo não encontrado."), 404
-        return send_from_directory(TICKET_UPLOAD_DIR / str(ticket.id), attachment.arquivo, as_attachment=False)
+        return _protected_attachment_response(ticket, attachment, as_attachment=False)
 
     @safe_route
     def test_email(self, token_data):
