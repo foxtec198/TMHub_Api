@@ -18,8 +18,8 @@ class MarketplaceProduct(BaseModel):
     reembolsavel = db.Column(db.Boolean, nullable=False, default=True)
     ativo = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=dt.now)
-
-
+    admin_only =  db.Column(db.Boolean, nullable=False, default=False, index=True)
+    
 class MarketplacePurchase(BaseModel):
     __tablename__ = "marketplace_compras"
 

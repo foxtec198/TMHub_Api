@@ -18,28 +18,32 @@ class MarketplaceService:
     # dos adornos para aplicar a personalização comprada.
     DEFAULT_PRODUCTS = (
         {"codigo": "tema_tmhub", "nome": "TMHub Original", "descricao": "A identidade institucional clássica do TMHub.", "categoria": "tema", "preco": 0, "destaque": False, "reembolsavel": False},
-        {"codigo": "tema_aurora", "nome": "Aurora", "descricao": "Índigo, violeta e verde-luz em uma atmosfera elegante.", "categoria": "tema", "preco": 120, "destaque": True},
-        {"codigo": "tema_cyberpunk", "nome": "Cyberpunk", "descricao": "Cyan, vermelho neon e alto contraste futurista.", "categoria": "tema", "preco": 140},
-        {"codigo": "tema_pride", "nome": "Orgulho", "descricao": "Uma identidade vibrante inspirada nas cores do orgulho.", "categoria": "tema", "preco": 100},
-        {"codigo": "tema_christmas", "nome": "Natal", "descricao": "Pinheiro, vinho e dourado para o fim de ano.", "categoria": "tema", "preco": 100},
-        {"codigo": "tema_ocean", "nome": "Ocean", "descricao": "Azul oceano e ciano para uma navegação serena.", "categoria": "tema", "preco": 120},
-        {"codigo": "tema_sunset", "nome": "Sunset", "descricao": "Âmbar, coral e tons noturnos de pôr do sol.", "categoria": "tema", "preco": 120},
-        {"codigo": "tema_forest", "nome": "Forest", "descricao": "Verde profundo, natureza e detalhes dourados.", "categoria": "tema", "preco": 120},
-        {"codigo": "tema_terminal", "nome": "Terminal", "descricao": "Grafite com verde fósforo para quem vive no código.", "categoria": "tema", "preco": 140},
-        {"codigo": "tema_paper", "nome": "Paper", "descricao": "Papel claro, tinta e uma leitura mais editorial.", "categoria": "tema", "preco": 100},
-        {"codigo": "tema_muertos", "nome": "Día de los Muertos", "descricao": "Vinho, violeta e cempasúchil em uma edição especial.", "categoria": "tema", "preco": 120},
-        {"codigo": "adorno_halloween", "nome": "Halloween", "descricao": "Moldura roxa e laranja com detalhes assustadoramente divertidos.", "categoria": "adorno", "preco": 90, "destaque": True},
-        {"codigo": "adorno_natal", "nome": "Natal", "descricao": "Neve, vermelho e verde ao redor da sua foto.", "categoria": "adorno", "preco": 90},
-        {"codigo": "adorno_gptw", "nome": "Great Place to Work", "descricao": "Adorno comemorativo azul e dourado para celebrar a conquista.", "categoria": "adorno", "preco": 110, "destaque": True},
+        {"codigo": "tema_aurora", "nome": "Aurora", "descricao": "Índigo, violeta e verde-luz em uma atmosfera elegante.", "categoria": "tema", "preco": 80, "destaque": True},
+        {"codigo": "tema_cyberpunk", "nome": "Cyberpunk", "descricao": "Cyan, vermelho neon e alto contraste futurista.", "categoria": "tema", "preco": 120},
+        {"codigo": "tema_pride", "nome": "Orgulho", "descricao": "Uma identidade vibrante inspirada nas cores do orgulho.", "categoria": "tema", "preco": 80},
+        {"codigo": "tema_christmas", "nome": "Natal", "descricao": "Pinheiro, vinho e dourado para o fim de ano.", "categoria": "tema", "preco": 80},
+        {"codigo": "tema_ocean", "nome": "Ocean", "descricao": "Azul oceano e ciano para uma navegação serena.", "categoria": "tema", "preco": 100},
+        {"codigo": "tema_sunset", "nome": "Sunset", "descricao": "Âmbar, coral e tons noturnos de pôr do sol.", "categoria": "tema", "preco": 100},
+        {"codigo": "tema_forest", "nome": "Forest", "descricao": "Verde profundo, natureza e detalhes dourados.", "categoria": "tema", "preco": 100},
+        {"codigo": "tema_terminal", "nome": "Terminal", "descricao": "Grafite com verde fósforo para quem vive no código.", "categoria": "tema", "preco": 120},
+        {"codigo": "tema_paper", "nome": "Paper", "descricao": "Papel claro, tinta e uma leitura mais editorial.", "categoria": "tema", "preco": 80},
+        {"codigo": "tema_muertos", "nome": "Día de los Muertos", "descricao": "Vinho, violeta e cempasúchil em uma edição especial.", "categoria": "tema", "preco": 100},
+        
+        {"codigo": "adorno_halloween", "nome": "Halloween", "descricao": "Moldura roxa e laranja com detalhes assustadoramente divertidos.", "categoria": "adorno", "preco": 70, "destaque": True},
+        {"codigo": "adorno_natal", "nome": "Natal", "descricao": "Neve, vermelho e verde ao redor da sua foto.", "categoria": "adorno", "preco": 70},
+        {"codigo": "adorno_gptw", "nome": "Great Place to Work", "descricao": "Adorno comemorativo azul e dourado para celebrar a conquista.", "categoria": "adorno", "preco": 90, "destaque": True},
         {"codigo": "adorno_aniversario", "nome": "Aniversário", "descricao": "Confetes e cores para deixar o seu dia em evidência.", "categoria": "adorno", "preco": 75},
-        {"codigo": "adorno_orgulho", "nome": "Orgulho", "descricao": "Um aro multicolorido para personalizar a foto de perfil.", "categoria": "adorno", "preco": 80},
-        {"codigo": "adorno_conquista", "nome": "Conquista", "descricao": "Estrelas douradas para celebrar metas e reconhecimentos.", "categoria": "adorno", "preco": 100},
-        {"codigo": "timo_gold", "nome": "Timo Gold Premium", "descricao": "Metal escovado, brilho champanhe e acabamento premium para o Timo.", "categoria": "timo_skin", "preco": 20000, "destaque": True},
-        {"codigo": "timo_cyber", "nome": "Timo Cyber Premium", "descricao": "Acabamento neon cyan com detalhes em vermelho para o Timo.", "categoria": "timo_skin", "preco": 2000, "destaque": True},
-        {"codigo": "timo_cenario_christmas", "nome": "Oficina de Natal", "descricao": "Uma oficina iluminada, cercada por neve, presentes e o aconchego do Natal.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
-        {"codigo": "timo_cenario_halloween", "nome": "Noite de Halloween", "descricao": "Laboratório noturno com abóboras, névoa e luzes misteriosamente divertidas.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
-        {"codigo": "timo_cenario_muertos", "nome": "Jardim de Cempasúchil", "descricao": "Uma celebração luminosa de memórias entre flores, velas e cores vibrantes.", "categoria": "timo_cenario", "preco": 500, "destaque": True},
-        {"codigo": "timo_cenario_cyber", "nome": "Escritório Cyberpunk", "descricao": "Escritório holográfico premium, com partículas digitais, glitches sutis e uma plataforma exclusiva para o Timo.", "categoria": "timo_cenario", "preco": 1200, "destaque": True},
+        {"codigo": "adorno_orgulho", "nome": "Orgulho", "descricao": "Um aro multicolorido para personalizar a foto de perfil.", "categoria": "adorno", "preco": 75},
+        {"codigo": "adorno_conquista", "nome": "Conquista", "descricao": "Estrelas douradas para celebrar metas e reconhecimentos.", "categoria": "adorno", "preco": 80},
+
+        {"codigo": "timo_gold", "nome": "Timo Gold Premium", "descricao": "Metal escovado, brilho champanhe e acabamento premium para o Timo.", "categoria": "timo_skin", "preco": 2000, "destaque": True},
+        {"codigo": "timo_cyber", "nome": "Timo Cyber Premium", "descricao": "Acabamento neon cyan com detalhes em vermelho para o Timo.", "categoria": "timo_skin", "preco": 2000},
+        {"codigo": "capetimo", "nome": "Timo C.", "descricao": "666", "categoria": "timo_skin", "preco": 0, "destaque": False, "admin_only": True},
+
+        {"codigo": "timo_cenario_christmas", "nome": "Oficina de Natal", "descricao": "Uma oficina iluminada, cercada por neve, presentes e o aconchego do Natal.", "categoria": "timo_cenario", "preco": 200, "destaque": True},
+        {"codigo": "timo_cenario_halloween", "nome": "Noite de Halloween", "descricao": "Laboratório noturno com abóboras, névoa e luzes misteriosamente divertidas.", "categoria": "timo_cenario", "preco": 200, "destaque": True},
+        {"codigo": "timo_cenario_muertos", "nome": "Jardim de Cempasúchil", "descricao": "Uma celebração luminosa de memórias entre flores, velas e cores vibrantes.", "categoria": "timo_cenario", "preco": 200, "destaque": True},
+        {"codigo": "timo_cenario_cyber", "nome": "Escritório Cyberpunk", "descricao": "Escritório holográfico premium, com partículas digitais, glitches sutis e uma plataforma exclusiva para o Timo.", "categoria": "timo_cenario", "preco": 300, "destaque": True},
     )
 
     @staticmethod
@@ -73,6 +77,7 @@ class MarketplaceService:
             row.preco_edinhos = definition["preco"]
             row.destaque = bool(definition.get("destaque"))
             row.reembolsavel = bool(definition.get("reembolsavel", True))
+            row.admin_only = bool(definition.get("admin_only", False))
             row.ativo = True
         db.session.commit()
 
@@ -101,6 +106,7 @@ class MarketplaceService:
             "preco_edinhos": product.preco_edinhos, "destaque": bool(product.destaque),
             "reembolsavel": bool(product.reembolsavel), "ativo": bool(product.ativo),
             "adquirido": owned, "equipado": bool(user and cls._is_equipped(product, user)),
+            "admin_only": bool(product.admin_only),
         }
 
     @classmethod
@@ -195,6 +201,7 @@ class MarketplaceService:
         self._ensure_catalog()
         body = request.get_json(silent=True) or {}
         raw_ids = body.get("produto_ids")
+        
         if raw_ids is None:
             raw_ids = [body.get("produto_id")]
         if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > 30:
