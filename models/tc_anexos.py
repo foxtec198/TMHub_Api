@@ -1,11 +1,8 @@
 # =============================== Utils
 from utils.db import db
-from datetime import datetime as dt
 
 # =============================== Models
 from models.base_model import BaseModel
-from models.tc_historico import Ticket
-from models.usuarios import Users
 
 
 # Define os anexos dos chamados
@@ -17,6 +14,12 @@ class TicketAttachment(BaseModel):
         db.Integer,
         db.ForeignKey("tc_historico.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    comentario_id = db.Column(
+        db.Integer,
+        db.ForeignKey("tc_comentarios.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     arquivo = db.Column(db.String(255), nullable=False)
@@ -32,4 +35,5 @@ class TicketAttachment(BaseModel):
 
     # Relationships
     ticket = db.relationship("Ticket", foreign_keys=[ticket_id])
+    comentario = db.relationship("TicketComment", foreign_keys=[comentario_id])
     criador = db.relationship("Users", foreign_keys=[created_by])

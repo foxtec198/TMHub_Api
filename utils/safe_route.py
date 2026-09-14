@@ -10,6 +10,7 @@ from jwt import ExpiredSignatureError
 # Módulos internos da aplicação.
 from utils.socket import socketio
 from utils.token import decode_token
+from utils.session_cookie import request_access_token
 
 
 MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -98,7 +99,7 @@ def _emit_data_change(token_data, channel):
 def safe_route(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        access_token = rq.headers.get("Access-Token")
+        access_token = request_access_token()
         if not access_token: return jsonify("Token de acesso obrigatorio"), 400
         try:
             token_data = decode_token(access_token)

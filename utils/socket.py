@@ -8,6 +8,7 @@ from utils.token import decode_token
 from models.usuarios import Users
 from utils.db import db
 from utils.user_requirements import auth_requirements
+from utils.session_cookie import request_access_token
 
 socketio = SocketIO()
 
@@ -24,7 +25,7 @@ def register_authenticated_client(auth=None):
             return True
         except Exception:
             return False
-    token = (auth or {}).get("token")
+    token = (auth or {}).get("token") or request_access_token()
     if not token:
         return
     try:

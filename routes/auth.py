@@ -10,3 +10,7 @@ service = AuthService()
 # Encaminha a requisição para o fluxo principal do módulo.
 @auth_bp.route("", methods=["POST"])
 def root(): return service.login()
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout(): return service.logout()
