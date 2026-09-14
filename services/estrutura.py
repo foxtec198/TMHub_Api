@@ -1,5 +1,7 @@
 # Regras de negócio de estrutura.
 # Dependências externas.
+from math import isfinite
+
 from flask import current_app, jsonify, request
 from sqlalchemy.orm import selectinload
 
@@ -7,8 +9,9 @@ from sqlalchemy.orm import selectinload
 from models.centros_de_custo import CostCenters
 from models.colaboradores import Employees
 from models.empresas import Company
-from models.estrutura import StructureAsset, StructureLocation
+from models.estrutura import StructureAsset, StructureLocation, StructureLocationProduct
 from models.filiais import Branch, filial_departamentos
+from models.produtos import Product
 from models.schedular_rotinas import SchedularRoutine, SchedularRoutineStructure
 from models.schedular_tarefas import SchedularTask
 from models.usuarios import Users
@@ -28,7 +31,42 @@ def _text(value):
     return str(value or "").strip()
 
 
+def _number(value, *, default=0, minimum=0):
+    try:
+        normalized = float(default if value in (None, "") else value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if isfinite(normalized) and normalized >= minimum else None
+
+
+def _identifier(value, *, default=None, minimum=0):
+    normalized = _number(value, default=default, minimum=minimum)
+    if normalized is None or not normalized.is_integer():
+        return None
+    return int(normalized)
+
+
 class StructureService:
+    @staticmethod
+    def _location_for_access(location_id, token_data):
+        location = db.session.get(StructureLocation, location_id)
+        if not location:
+            return None, (jsonify("Local não encontrado."), 404)
+        if not can_access_cost_center(token_data, location.centro_custo_id):
+            return None, (jsonify("Você não possui acesso à filial deste local."), 403)
+        return location, None
+
+    @staticmethod
+    def _location_product_payload(link, product):
+        return {
+            **link.to_dict(),
+            "produto": {
+                "id": product.id,
+                "nome": product.nome,
+                "unidade": product.unidade,
+            },
+        }
+
     @staticmethod
     def _contract_payload(
         center,
@@ -566,5 +604,104 @@ class StructureService:
                 return jsonify("Ordem invÃ¡lida."), 400
         if body.get("nome"):
             location.nome = _text(body.get("nome")).upper()
+        if "descricao" in body:
+            location.descricao = _text(body.get("descricao")) or None
         db.session.commit()
         return jsonify({"message": "Estrutura atualizada com sucesso.", "item": location.to_dict()})
+
+    @safe_route
+    def read_location_products(self, location_id, token_data):
+        location, error = self._location_for_access(location_id, token_data)
+        if error:
+            return error
+        rows = (
+            db.session.query(StructureLocationProduct, Product)
+            .join(Product, Product.id == StructureLocationProduct.produto_id)
+            .filter(StructureLocationProduct.local_id == location.id)
+            .order_by(Product.nome, StructureLocationProduct.id)
+            .all()
+        )
+        return jsonify([self._location_product_payload(link, product) for link, product in rows])
+
+    @safe_route
+    def create_location_product(self, location_id, token_data):
+        location, error = self._location_for_access(location_id, token_data)
+        if error:
+            return error
+        body = request.get_json(silent=True) or {}
+        product_id = _identifier(body.get("produto_id"), minimum=1)
+        quantity = _number(body.get("quantidade_desejada"), default=1, minimum=0)
+        if product_id is None or quantity is None or quantity <= 0:
+            return jsonify("Informe um produto e uma quantidade válidos."), 400
+        area = _number(body.get("metragem_disponivel"), default=0, minimum=0)
+        if quantity < 1 or area is None:
+            return jsonify("Quantidade deve ser maior que zero e metragem não pode ser negativa."), 400
+        product = db.session.get(Product, product_id)
+        if not product:
+            return jsonify("Produto não encontrado."), 404
+        if StructureLocationProduct.query.filter_by(local_id=location.id, produto_id=product.id).first():
+            return jsonify("Este produto já está vinculado ao local."), 409
+
+        link = StructureLocationProduct(
+            local_id=location.id,
+            produto_id=product.id,
+            quantidade_desejada=quantity,
+            metragem_disponivel=area,
+            observacao=_text(body.get("observacao")) or None,
+        )
+        db.session.add(link)
+        db.session.commit()
+        return jsonify({
+            "message": "Produto vinculado ao local com sucesso.",
+            "item": self._location_product_payload(link, product),
+        }), 201
+
+    @safe_route
+    def update_location_product(self, location_id, location_product_id, token_data):
+        location, error = self._location_for_access(location_id, token_data)
+        if error:
+            return error
+        link = db.session.get(StructureLocationProduct, location_product_id)
+        if not link or link.local_id != location.id:
+            return jsonify("Vínculo de produto não encontrado neste local."), 404
+
+        body = request.get_json(silent=True) or {}
+        product_id = _identifier(body.get("produto_id", link.produto_id), minimum=1)
+        quantity = _number(body.get("quantidade_desejada"), default=link.quantidade_desejada, minimum=0)
+        if product_id is None or quantity is None or quantity <= 0:
+            return jsonify("Informe um produto e uma quantidade válidos."), 400
+        area = _number(body.get("metragem_disponivel"), default=link.metragem_disponivel, minimum=0)
+        if quantity < 1 or area is None:
+            return jsonify("Quantidade deve ser maior que zero e metragem não pode ser negativa."), 400
+        product = db.session.get(Product, product_id)
+        if not product:
+            return jsonify("Produto não encontrado."), 404
+        duplicate = StructureLocationProduct.query.filter(
+            StructureLocationProduct.local_id == location.id,
+            StructureLocationProduct.produto_id == product.id,
+            StructureLocationProduct.id != link.id,
+        ).first()
+        if duplicate:
+            return jsonify("Este produto já está vinculado ao local."), 409
+
+        link.produto_id = product.id
+        link.quantidade_desejada = quantity
+        link.metragem_disponivel = area
+        link.observacao = _text(body.get("observacao")) or None
+        db.session.commit()
+        return jsonify({
+            "message": "Produto do local atualizado com sucesso.",
+            "item": self._location_product_payload(link, product),
+        })
+
+    @safe_route
+    def delete_location_product(self, location_id, location_product_id, token_data):
+        location, error = self._location_for_access(location_id, token_data)
+        if error:
+            return error
+        link = db.session.get(StructureLocationProduct, location_product_id)
+        if not link or link.local_id != location.id:
+            return jsonify("Vínculo de produto não encontrado neste local."), 404
+        db.session.delete(link)
+        db.session.commit()
+        return jsonify("Produto removido do local com sucesso.")
