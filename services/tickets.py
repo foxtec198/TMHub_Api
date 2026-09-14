@@ -220,6 +220,10 @@ def _serialize_ticket(ticket, include_comments=False):
         "overdue": ticket.status == "ATRASADO",
     }
     if include_comments:
+        payload["attachments"] = [
+            _serialize_attachment(item)
+            for item in TicketAttachment.query.filter_by(ticket_id=ticket.id, comentario_id=None).all()
+        ]
         payload["comments"] = [
             _serialize_comment(item, ticket.created_by)
             for item in ticket.comentarios
@@ -464,15 +468,19 @@ class TicketService:
         denied = self._permission(token_data, "create")
         if denied:
             return denied
-        body = request.get_json(silent=True) or {}
+        is_multipart = request.mimetype == "multipart/form-data"
+        body = request.form if is_multipart else request.get_json(silent=True) or {}
         name = str(body.get("name") or "").strip()
         observation = str(body.get("observation") or "").strip()
         if not name or not observation:
             return jsonify("Informe o título e a descrição do chamado."), 400
-        reason_id = body.get("reason_id")
+        try:
+            reason_id = int(body["reason_id"]) if body.get("reason_id") not in (None, "") else None
+            responsible_id = int(body["responsible_id"]) if body.get("responsible_id") not in (None, "") else None
+        except (TypeError, ValueError):
+            return jsonify("Motivo ou responsável do chamado inválido."), 400
         if reason_id is not None and not db.session.get(TicketReason, reason_id):
             return jsonify("Motivo do chamado não encontrado."), 404
-        responsible_id = body.get("responsible_id")
         if responsible_id is not None and not is_admin(token_data):
             return jsonify("Apenas administradores podem direcionar chamados."), 403
         if responsible_id is not None and not db.session.get(Users, responsible_id):
@@ -491,6 +499,16 @@ class TicketService:
         branch_id = self._creation_branch_id(token_data)
         if not branch_id:
             return jsonify("Selecione uma única filial ativa antes de abrir o chamado."), 400
+
+        uploaded_files = request.files.getlist("arquivos") if is_multipart else []
+        prepared_files = []
+        for file in uploaded_files:
+            try:
+                display_name, filename, file_size = _validate_attachment_upload(file)
+            except ValueError as error:
+                return jsonify(str(error)), 400
+            prepared_files.append((file, display_name, filename, file_size))
+
         ticket = Ticket(
             nome=name[:180],
             observacao=observation,
@@ -501,7 +519,29 @@ class TicketService:
             filial_id=branch_id,
         )
         db.session.add(ticket)
-        db.session.commit()
+        saved_paths = []
+        try:
+            if prepared_files:
+                db.session.flush()
+                upload_dir = TICKET_UPLOAD_DIR / str(ticket.id)
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                for file, _display_name, filename, file_size in prepared_files:
+                    filepath = upload_dir / filename
+                    saved_paths.append(filepath)
+                    file.save(filepath)
+                    db.session.add(TicketAttachment(
+                        ticket_id=ticket.id,
+                        arquivo=filename,
+                        tamanho=file_size,
+                        tipo=file.content_type,
+                        created_by=token_data["id"],
+                    ))
+            db.session.commit()
+        except Exception:
+            for filepath in saved_paths:
+                if filepath.exists():
+                    filepath.unlink()
+            raise
         self._notify(ticket, "Novo chamado aberto", "Um novo chamado foi registrado e está aguardando tratativa.")
         socketio.emit("ticket_update", {"action": "created", "id": ticket.id})
         return jsonify(_serialize_ticket(ticket)), 201
