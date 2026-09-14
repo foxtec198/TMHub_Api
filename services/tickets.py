@@ -99,6 +99,7 @@ def _serialize_user(user):
         "nome": user.nome,
         "email": user.email,
         "foto_perfil": user.foto_perfil,
+        "adorno_foto": user.adorno_foto,
     }
 
 
