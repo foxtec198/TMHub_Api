@@ -143,6 +143,16 @@ def request_permission(path, method):
     method = method.upper()
     path_parts = path.strip("/").split("/")
     if (
+        len(path_parts) in {4, 5}
+        and path_parts[0] == "estrutura"
+        and path_parts[1] == "locais"
+        and path_parts[2].isdigit()
+        and path_parts[3] == "produtos"
+        and (len(path_parts) == 4 or path_parts[4].isdigit())
+    ):
+        action = {"GET": "view", "POST": "edit", "PATCH": "edit", "DELETE": "edit"}.get(method)
+        return ("estrutura", action) if action else None
+    if (
         len(path_parts) == 3
         and path_parts[0] == "tickets"
         and path_parts[1].isdigit()

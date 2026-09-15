@@ -47,3 +47,26 @@ class StructureAsset(BaseModel):
     patrimonio = db.Column(db.String(50), nullable=False, unique=True, index=True)
     descricao = db.Column(db.Text)
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), nullable=False)
+
+
+class StructureLocationProduct(BaseModel):
+    """Produto configurado para uso em um local da estrutura."""
+    __tablename__ = "estrutura_local_produtos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    local_id = db.Column(
+        db.Integer,
+        db.ForeignKey("estrutura_locais.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    produto_id = db.Column(
+        db.Integer,
+        db.ForeignKey("es_produtos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    quantidade_desejada = db.Column(db.Numeric(12, 2, asdecimal=False), nullable=False, default=1)
+    metragem_disponivel = db.Column(db.Numeric(12, 2, asdecimal=False), nullable=False, default=0)
+    observacao = db.Column(db.Text)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), nullable=False)

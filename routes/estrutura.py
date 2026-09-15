@@ -48,3 +48,17 @@ def update_contract_company(center_id):
 @structure_bp.patch("/locais/<int:location_id>")
 def update_location(location_id):
     return service.update_location(location_id)
+
+
+@structure_bp.route("/locais/<int:location_id>/produtos", methods=["GET", "POST"])
+def location_products(location_id):
+    if request.method == "GET":
+        return service.read_location_products(location_id)
+    return service.create_location_product(location_id)
+
+
+@structure_bp.route("/locais/<int:location_id>/produtos/<int:location_product_id>", methods=["PATCH", "DELETE"])
+def location_product(location_id, location_product_id):
+    if request.method == "PATCH":
+        return service.update_location_product(location_id, location_product_id)
+    return service.delete_location_product(location_id, location_product_id)
